@@ -2,6 +2,7 @@ import { failure } from "@atlas-kb/schema";
 import { cors } from "@elysiajs/cors";
 import { Elysia } from "elysia";
 import { isApiHttpError } from "@atlas-kb/errors";
+import { authRoutes } from "./routes/auth";
 import { healthRoutes } from "./routes/health";
 import { knowledgeRoutes } from "./routes/knowledge";
 
@@ -33,9 +34,10 @@ export function createApp() {
       cors({
         origin: [/^https?:\/\/localhost:\d+$/, /^https?:\/\/127\.0\.0\.1:\d+$/],
         methods: ["GET", "POST", "OPTIONS"],
-        allowedHeaders: ["Content-Type"],
+        allowedHeaders: ["Authorization", "Content-Type"],
       }),
     )
+    .use(authRoutes)
     .use(healthRoutes)
     .use(knowledgeRoutes);
 }

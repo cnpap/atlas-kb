@@ -15,6 +15,7 @@
     "build": "mastra build"
   },
   "dependencies": {
+    "@atlas-kb/errors": "workspace:*",
     "@atlas-kb/schema": "workspace:*",
     "@mastra/core": "*",
     "@mastra/libsql": "*"

@@ -30,13 +30,13 @@
             <span class="metric-value mono">bun + mastra + elysia + vue</span>
           </div>
           <div class="metric">
-            <span class="metric-label">Knowledge Seed</span>
-            <span class="metric-value">2 spaces / 4 documents</span>
+            <span class="metric-label">Access</span>
+            <span class="metric-value">JWT auth + protected KB routes</span>
           </div>
           <div class="metric">
-            <span class="metric-label">Ask Fallback</span>
+            <span class="metric-label">Retrieval</span>
             <span class="metric-value"
-              >Grounded mock answer if no model key</span
+              >Qdrant vectors with lexical fallback</span
             >
           </div>
         </div>
@@ -48,18 +48,18 @@
         <article class="card">
           <h2>What ships in v1</h2>
           <p>
-            Shared Zod schemas, API error handling, seeded spaces and documents,
-            simple ranking search, an ask endpoint with citations, and a thin
-            web client that only talks through the typed API client.
+            Shared Zod schemas, login, protected knowledge routes, space
+            creation, file upload, persisted documents, Qdrant-backed vector
+            search, and grounded ask responses with citations.
           </p>
         </article>
 
         <article class="card">
-          <h2>What stays out for now</h2>
+          <h2>Current upload focus</h2>
           <p>
-            No file upload, no auth, no vector database, and no background
-            indexing. The project is meant to be runnable immediately and
-            extensible later.
+            The ingestion path currently targets text-like documents such as
+            plain text, markdown, HTML, JSON, CSV, XML, and YAML so the vector
+            index stays predictable in local development.
           </p>
         </article>
       </div>
@@ -68,10 +68,9 @@
         <article class="card">
           <h3>Suggested next moves</h3>
           <p>
-            Replace the seeded document list with your ingestion source, keep
-            the shared schema package as the contract boundary, and swap the
-            search helper for vector retrieval only when the corpus justifies
-            it.
+            Add richer parsers for PDF or Office files if your corpus needs
+            them, keep the shared schema package as the contract boundary, and
+            extend the management model beyond the default admin session.
           </p>
         </article>
       </aside>

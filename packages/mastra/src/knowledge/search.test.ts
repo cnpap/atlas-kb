@@ -1,14 +1,70 @@
-import { describe, expect, it } from "bun:test";
-import { answerKnowledgeQuestion, searchKnowledge } from "./search";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  answerKnowledgeQuestion,
+  resetKnowledgeRepository,
+  resetKnowledgeVectorState,
+  searchKnowledge,
+} from "./index";
 
 describe("@atlas-kb/mastra knowledge search", () => {
-  it("returns hits for onboarding queries", () => {
-    const result = searchKnowledge({
+  let knowledgeDataDir = "";
+  const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
+  const originalDashScopeApiKey = process.env.DASHSCOPE_API_KEY;
+  const originalDashScopeBaseUrl = process.env.DASHSCOPE_BASE_URL;
+  const originalDashScopeEmbeddingModel = process.env.DASHSCOPE_EMBEDDING_MODEL;
+
+  beforeEach(async () => {
+    knowledgeDataDir = await mkdtemp(join(tmpdir(), "atlas-kb-mastra-test-"));
+    process.env.ATLAS_KB_DATA_DIR = knowledgeDataDir;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.DASHSCOPE_API_KEY;
+    delete process.env.DASHSCOPE_BASE_URL;
+    delete process.env.DASHSCOPE_EMBEDDING_MODEL;
+    resetKnowledgeRepository();
+    resetKnowledgeVectorState();
+  });
+
+  afterEach(async () => {
+    resetKnowledgeRepository();
+    resetKnowledgeVectorState();
+
+    if (originalDataDir === undefined) {
+      delete process.env.ATLAS_KB_DATA_DIR;
+    } else {
+      process.env.ATLAS_KB_DATA_DIR = originalDataDir;
+    }
+    if (originalDashScopeApiKey === undefined) {
+      delete process.env.DASHSCOPE_API_KEY;
+    } else {
+      process.env.DASHSCOPE_API_KEY = originalDashScopeApiKey;
+    }
+    if (originalDashScopeBaseUrl === undefined) {
+      delete process.env.DASHSCOPE_BASE_URL;
+    } else {
+      process.env.DASHSCOPE_BASE_URL = originalDashScopeBaseUrl;
+    }
+    if (originalDashScopeEmbeddingModel === undefined) {
+      delete process.env.DASHSCOPE_EMBEDDING_MODEL;
+    } else {
+      process.env.DASHSCOPE_EMBEDDING_MODEL = originalDashScopeEmbeddingModel;
+    }
+
+    if (knowledgeDataDir) {
+      await rm(knowledgeDataDir, { force: true, recursive: true });
+    }
+  });
+
+  it("returns hits for onboarding queries", async () => {
+    const result = await searchKnowledge({
       query: "customer onboarding",
     });
 
     expect(result.total).toBeGreaterThan(0);
     expect(result.hits[0]?.title).toContain("Onboarding");
+    expect(result.engine).toBe("lexical");
   });
 
   it("returns a mock answer without a model key", async () => {
@@ -17,6 +73,7 @@ describe("@atlas-kb/mastra knowledge search", () => {
     });
 
     expect(result.mode).toBe("mock");
+    expect(result.engine).toBe("lexical");
     expect(result.citations.length).toBeGreaterThan(0);
     expect(result.answer).toContain("Atlas KB");
   });
@@ -28,6 +85,7 @@ describe("@atlas-kb/mastra knowledge search", () => {
       },
       {
         apiKey: "test-key",
+        baseUrl: "https://gateway.example/v1",
         fetchImpl: async () =>
           new Response(
             JSON.stringify({

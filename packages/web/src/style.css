@@ -99,6 +99,17 @@ button {
   gap: 0.5rem;
 }
 
+.session-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.session-button {
+  min-height: 2.4rem;
+  padding: 0.55rem 0.85rem;
+}
+
 .nav-links a {
   padding: 0.45rem 0.8rem;
   border-radius: 999px;
@@ -366,6 +377,10 @@ button {
   resize: vertical;
 }
 
+.textarea-compact {
+  min-height: 7rem;
+}
+
 .input:focus,
 .select:focus,
 .textarea:focus {
@@ -379,6 +394,13 @@ button {
   border-radius: 16px;
   border: 1px solid var(--line);
   background: rgba(255, 252, 246, 0.78);
+}
+
+.meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
 .status-error {
@@ -422,6 +444,10 @@ button {
   .app-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .session-strip {
+    flex-wrap: wrap;
   }
 
   .app-main {

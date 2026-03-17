@@ -1,12 +1,12 @@
 <script setup lang="ts">
-  import type {
-    AskKnowledgeResult,
-    KnowledgeSpace,
-    KnowledgeSpacesData,
-  } from "@atlas-kb/schema";
+  import type { AskKnowledgeResult, KnowledgeSpace } from "@atlas-kb/schema";
   import { onMounted, ref } from "vue";
   import { useRoute } from "vue-router";
-  import { api, getErrorMessage, unwrapSuccess } from "@/lib/api-client";
+  import {
+    askKnowledgeQuestion,
+    getErrorMessage,
+    getKnowledgeSpaces,
+  } from "@/lib/api-client";
 
   const route = useRoute();
 
@@ -20,10 +20,10 @@
 
   async function loadSpaces() {
     spacesLoading.value = true;
+    errorMessage.value = "";
 
     try {
-      const response = await api.api.kb.spaces.get();
-      const data = unwrapSuccess<KnowledgeSpacesData>(response.data);
+      const data = await getKnowledgeSpaces();
       spaces.value = data.spaces;
 
       const querySpaceId = route.query.spaceId;
@@ -42,12 +42,11 @@
     errorMessage.value = "";
 
     try {
-      const response = await api.api.kb.ask.post({
+      result.value = await askKnowledgeQuestion({
         question: question.value,
         spaceId: selectedSpaceId.value || undefined,
         limit: 3,
       });
-      result.value = unwrapSuccess<AskKnowledgeResult>(response.data);
     } catch (error) {
       result.value = null;
       errorMessage.value = getErrorMessage(error);
@@ -119,6 +118,10 @@
               <strong>Mode:</strong>
               <span class="mono">{{ result.mode }}</span>
             </div>
+            <div class="status">
+              <strong>Retrieval:</strong>
+              <span class="mono">{{ result.engine }}</span>
+            </div>
             <p class="result-answer">{{ result.answer }}</p>
             <div class="citation-list">
               <article
@@ -132,8 +135,7 @@
             </div>
           </div>
           <div v-else class="status">
-            Submit a question to inspect the answer envelope and citation
-            output.
+            Submit a question to inspect the grounded answer and retrieval mode.
           </div>
         </div>
       </aside>

@@ -37,6 +37,7 @@
         "@atlas-kb/schema": "workspace:*",
         "@elysiajs/cors": "*",
         "elysia": "*",
+        "jose": "6.2.1",
       },
     },
     "packages/errors": {
@@ -51,6 +52,7 @@
       "name": "@atlas-kb/mastra",
       "version": "0.0.1",
       "dependencies": {
+        "@atlas-kb/errors": "workspace:*",
         "@atlas-kb/schema": "workspace:*",
         "@mastra/core": "*",
         "@mastra/libsql": "*",

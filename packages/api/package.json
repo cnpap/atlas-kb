@@ -18,6 +18,7 @@
     "@atlas-kb/mastra": "workspace:*",
     "@atlas-kb/schema": "workspace:*",
     "@elysiajs/cors": "*",
-    "elysia": "*"
+    "elysia": "*",
+    "jose": "6.2.1"
   }
 }

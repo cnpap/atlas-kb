@@ -1,7 +1,6 @@
 import { z } from "zod/v4";
 import { createApiSuccessResponseSchema } from "./api";
-
-const TimestampSchema = z.iso.datetime();
+import { TimestampSchema } from "./utils";
 
 export const HealthDataSchema = z.object({
   status: z.literal("ok"),
@@ -24,12 +23,31 @@ export const KnowledgeDocumentSchema = z.object({
   excerpt: z.string().trim().min(1),
   content: z.string().trim().min(1),
   tags: z.array(z.string().trim().min(1)),
+  source: z.enum(["seed", "upload"]),
+  sourceFilename: z.string().trim().min(1).optional(),
+  mimeType: z.string().trim().min(1).optional(),
+  byteSize: z.number().int().positive().optional(),
+  createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
 
 export const KnowledgeSpaceIdParamsSchema = z.object({
   spaceId: z.string().trim().min(1),
 });
+
+export const KnowledgeSpaceCreateRequestSchema = z.object({
+  id: z.string().trim().min(1).max(64).optional(),
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().min(1).max(280),
+});
+
+export const KnowledgeUploadMetadataSchema = z.object({
+  title: z.string().trim().min(1).max(200).optional(),
+  summary: z.string().trim().min(1).max(400).optional(),
+  tags: z.array(z.string().trim().min(1).max(64)).max(20).optional(),
+});
+
+export const KnowledgeRetrievalEngineSchema = z.enum(["lexical", "vector"]);
 
 export const SearchKnowledgeRequestSchema = z.object({
   query: z.string().trim().min(1),
@@ -49,6 +67,7 @@ export const SearchKnowledgeHitSchema = z.object({
 
 export const SearchKnowledgeResultSchema = z.object({
   query: z.string().trim().min(1),
+  engine: KnowledgeRetrievalEngineSchema,
   total: z.number().int().nonnegative(),
   hits: z.array(SearchKnowledgeHitSchema),
 });
@@ -71,6 +90,7 @@ export const AskKnowledgeResultSchema = z.object({
   question: z.string().trim().min(1),
   answer: z.string().trim().min(1),
   mode: AskKnowledgeModeSchema,
+  engine: KnowledgeRetrievalEngineSchema,
   citations: z.array(AskKnowledgeCitationSchema),
 });
 
@@ -83,6 +103,17 @@ export const KnowledgeDocumentsDataSchema = z.object({
   documents: z.array(KnowledgeDocumentSchema),
 });
 
+export const KnowledgeSpaceMutationDataSchema = z.object({
+  space: KnowledgeSpaceSchema,
+});
+
+export const KnowledgeUploadDataSchema = z.object({
+  space: KnowledgeSpaceSchema,
+  document: KnowledgeDocumentSchema,
+  indexed: z.boolean(),
+  engine: KnowledgeRetrievalEngineSchema,
+});
+
 export const HealthResponseSchema =
   createApiSuccessResponseSchema(HealthDataSchema);
 export const KnowledgeSpacesResponseSchema = createApiSuccessResponseSchema(
@@ -90,6 +121,11 @@ export const KnowledgeSpacesResponseSchema = createApiSuccessResponseSchema(
 );
 export const KnowledgeDocumentsResponseSchema = createApiSuccessResponseSchema(
   KnowledgeDocumentsDataSchema,
+);
+export const KnowledgeSpaceMutationResponseSchema =
+  createApiSuccessResponseSchema(KnowledgeSpaceMutationDataSchema);
+export const KnowledgeUploadResponseSchema = createApiSuccessResponseSchema(
+  KnowledgeUploadDataSchema,
 );
 export const SearchKnowledgeResponseSchema = createApiSuccessResponseSchema(
   SearchKnowledgeResultSchema,
@@ -104,6 +140,15 @@ export type KnowledgeDocument = z.infer<typeof KnowledgeDocumentSchema>;
 export type KnowledgeSpaceIdParams = z.infer<
   typeof KnowledgeSpaceIdParamsSchema
 >;
+export type KnowledgeSpaceCreateRequest = z.infer<
+  typeof KnowledgeSpaceCreateRequestSchema
+>;
+export type KnowledgeUploadMetadata = z.infer<
+  typeof KnowledgeUploadMetadataSchema
+>;
+export type KnowledgeRetrievalEngine = z.infer<
+  typeof KnowledgeRetrievalEngineSchema
+>;
 export type SearchKnowledgeRequest = z.infer<
   typeof SearchKnowledgeRequestSchema
 >;
@@ -117,3 +162,7 @@ export type KnowledgeSpacesData = z.infer<typeof KnowledgeSpacesDataSchema>;
 export type KnowledgeDocumentsData = z.infer<
   typeof KnowledgeDocumentsDataSchema
 >;
+export type KnowledgeSpaceMutationData = z.infer<
+  typeof KnowledgeSpaceMutationDataSchema
+>;
+export type KnowledgeUploadData = z.infer<typeof KnowledgeUploadDataSchema>;

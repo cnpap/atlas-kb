@@ -26,6 +26,50 @@ export class BadRequestError extends ApiHttpError {
   }
 }
 
+export class UnauthorizedError extends ApiHttpError {
+  constructor(message = "Unauthorized", cause?: unknown) {
+    super({
+      message,
+      statusCode: 401,
+      code: "UNAUTHORIZED",
+      cause,
+    });
+  }
+}
+
+export class ForbiddenError extends ApiHttpError {
+  constructor(message = "Forbidden", cause?: unknown) {
+    super({
+      message,
+      statusCode: 403,
+      code: "FORBIDDEN",
+      cause,
+    });
+  }
+}
+
+export class ConflictError extends ApiHttpError {
+  constructor(message = "Conflict", cause?: unknown) {
+    super({
+      message,
+      statusCode: 409,
+      code: "CONFLICT",
+      cause,
+    });
+  }
+}
+
+export class UpstreamServiceError extends ApiHttpError {
+  constructor(message = "Upstream service request failed", cause?: unknown) {
+    super({
+      message,
+      statusCode: 502,
+      code: "UPSTREAM_SERVICE_ERROR",
+      cause,
+    });
+  }
+}
+
 export class NotFoundError extends ApiHttpError {
   constructor(message = "Resource not found", cause?: unknown) {
     super({

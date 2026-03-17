@@ -1,3 +1,4 @@
+import { UpstreamServiceError } from "@atlas-kb/errors";
 import {
   type AskKnowledgeCitation,
   type AskKnowledgeRequest,
@@ -8,12 +9,12 @@ import {
   SearchKnowledgeRequestSchema,
   type SearchKnowledgeResult,
 } from "@atlas-kb/schema";
-import { listKnowledgeDocuments } from "./seed";
+import { getOpenAIModel, getOpenAIUrl } from "./config";
+import { listKnowledgeDocuments } from "./repository";
+import { searchKnowledgeVectors } from "./qdrant";
 
 const DEFAULT_SEARCH_LIMIT = 5;
 const DEFAULT_ASK_LIMIT = 3;
-const OPENAI_CHAT_COMPLETIONS_URL =
-  "https://api.openai.com/v1/chat/completions";
 
 interface OpenAIChatCompletionResponse {
   choices?: Array<{
@@ -158,6 +159,7 @@ async function tryGenerateModelAnswer(params: {
   question: string;
   citations: AskKnowledgeCitation[];
   apiKey: string;
+  baseUrl?: string;
   model?: string;
   fetchImpl?: typeof fetch;
 }): Promise<string | undefined> {
@@ -174,57 +176,77 @@ async function tryGenerateModelAnswer(params: {
     .join("\n\n");
 
   try {
-    const response = await fetchImpl(OPENAI_CHAT_COMPLETIONS_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${params.apiKey}`,
-        "Content-Type": "application/json",
+    const response = await fetchImpl(
+      getOpenAIUrl("chat/completions", params.baseUrl),
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${params.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: params.model ?? getOpenAIModel(),
+          temperature: 0.2,
+          messages: [
+            {
+              role: "system",
+              content:
+                "Answer using only the supplied knowledge citations. Keep the answer concise and grounded.",
+            },
+            {
+              role: "user",
+              content: `Question: ${params.question}\n\nContext:\n${context}`,
+            },
+          ],
+        }),
+        signal: AbortSignal.timeout(15_000),
       },
-      body: JSON.stringify({
-        model: params.model ?? "gpt-4.1-mini",
-        temperature: 0.2,
-        messages: [
-          {
-            role: "system",
-            content:
-              "Answer using only the supplied knowledge citations. Keep the answer concise and grounded.",
-          },
-          {
-            role: "user",
-            content: `Question: ${params.question}\n\nContext:\n${context}`,
-          },
-        ],
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
+    );
 
     if (!response.ok) {
-      return undefined;
+      throw new UpstreamServiceError(
+        `Configured OpenAI provider rejected the ask request with status ${response.status}`,
+      );
     }
 
     const payload = (await response.json()) as OpenAIChatCompletionResponse;
-    return getMessageText(payload);
-  } catch {
-    return undefined;
+    const answer = getMessageText(payload);
+
+    if (!answer) {
+      throw new UpstreamServiceError(
+        "Configured OpenAI provider returned an empty ask response",
+      );
+    }
+
+    return answer;
+  } catch (error) {
+    if (error instanceof UpstreamServiceError) {
+      throw error;
+    }
+
+    throw new UpstreamServiceError(
+      "Configured OpenAI provider request failed",
+      error,
+    );
   }
 }
 
-export function searchKnowledge(
+async function lexicalSearch(
   input: SearchKnowledgeRequest,
-): SearchKnowledgeResult {
-  const parsedInput = SearchKnowledgeRequestSchema.parse(input);
-  const tokens = normalizeTokens(parsedInput.query);
-  const limit = parsedInput.limit ?? DEFAULT_SEARCH_LIMIT;
+): Promise<SearchKnowledgeResult> {
+  const tokens = normalizeTokens(input.query);
+  const limit = input.limit ?? DEFAULT_SEARCH_LIMIT;
 
   if (tokens.length === 0) {
     return {
-      query: parsedInput.query,
+      query: input.query,
+      engine: "lexical",
       total: 0,
       hits: [],
     };
   }
 
-  const hits = listKnowledgeDocuments(parsedInput.spaceId)
+  const hits = (await listKnowledgeDocuments(input.spaceId))
     .map((document) => {
       const score = scoreDocument(document, tokens);
       if (score <= 0) {
@@ -251,23 +273,38 @@ export function searchKnowledge(
     });
 
   return {
-    query: parsedInput.query,
+    query: input.query,
+    engine: "lexical",
     total: hits.length,
     hits: hits.slice(0, limit),
   };
+}
+
+export async function searchKnowledge(
+  input: SearchKnowledgeRequest,
+): Promise<SearchKnowledgeResult> {
+  const parsedInput = SearchKnowledgeRequestSchema.parse(input);
+  const vectorResult = await searchKnowledgeVectors(parsedInput);
+
+  if (vectorResult) {
+    return vectorResult;
+  }
+
+  return lexicalSearch(parsedInput);
 }
 
 export async function answerKnowledgeQuestion(
   input: AskKnowledgeRequest,
   options: {
     apiKey?: string;
+    baseUrl?: string;
     model?: string;
     fetchImpl?: typeof fetch;
   } = {},
 ): Promise<AskKnowledgeResult> {
   const parsedInput = AskKnowledgeRequestSchema.parse(input);
   const limit = parsedInput.limit ?? DEFAULT_ASK_LIMIT;
-  const searchResult = searchKnowledge({
+  const searchResult = await searchKnowledge({
     query: parsedInput.question,
     spaceId: parsedInput.spaceId,
     limit,
@@ -277,6 +314,7 @@ export async function answerKnowledgeQuestion(
     question: parsedInput.question,
     citations,
     apiKey: options.apiKey ?? "",
+    baseUrl: options.baseUrl,
     model: options.model,
     fetchImpl: options.fetchImpl,
   });
@@ -285,6 +323,7 @@ export async function answerKnowledgeQuestion(
     question: parsedInput.question,
     answer: modelAnswer ?? buildMockAnswer(parsedInput.question, citations),
     mode: modelAnswer ? "model" : "mock",
+    engine: searchResult.engine,
     citations,
   };
 }
