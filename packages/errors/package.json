@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@atlas-kb/errors",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@atlas-kb/schema": "workspace:*",
+    "zod": "*"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@atlas-kb/web",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@atlas-kb/api": "workspace:*",
+    "@atlas-kb/schema": "workspace:*",
+    "@elysiajs/eden": "*",
+    "elysia": "*",
+    "vue": "*",
+    "vue-router": "*"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "*",
+    "typescript": "*",
+    "vite": "*",
+    "vue-tsc": "*"
+  }
+}

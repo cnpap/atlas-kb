@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@atlas-kb/mastra",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./knowledge": "./src/knowledge/index.ts"
+  },
+  "scripts": {
+    "dev": "mastra dev",
+    "start": "mastra start",
+    "build": "mastra build"
+  },
+  "dependencies": {
+    "@atlas-kb/schema": "workspace:*",
+    "@mastra/core": "*",
+    "@mastra/libsql": "*"
+  }
+}
