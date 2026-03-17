@@ -239,6 +239,10 @@ button {
   gap: 0.9rem;
 }
 
+.cta-row-tight {
+  gap: 0.65rem;
+}
+
 .button {
   display: inline-flex;
   align-items: center;
@@ -262,6 +266,11 @@ button {
 .button-secondary {
   background: rgba(255, 255, 255, 0.5);
   border-color: var(--line);
+}
+
+.button-inline {
+  min-height: 2.4rem;
+  padding: 0.5rem 0.8rem;
 }
 
 .button:hover {
@@ -424,6 +433,8 @@ button {
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.55);
   border: 1px solid rgba(28, 26, 22, 0.08);
+  display: grid;
+  gap: 0.7rem;
 }
 
 .mono {

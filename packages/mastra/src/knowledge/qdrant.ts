@@ -14,11 +14,16 @@ import {
   getQdrantUrl,
 } from "./config";
 import {
+  getDocumentById,
   getDocumentsPendingVectorIndex,
   listStoredKnowledgeDocuments,
   markDocumentVectorIndexed,
   type StoredKnowledgeDocument,
 } from "./repository";
+import {
+  buildSearchSnippet,
+  getKnowledgeDocumentSourceMetadata,
+} from "./search-utils";
 
 const CHUNK_OVERLAP = 160;
 const CHUNK_SIZE = 900;
@@ -59,36 +64,6 @@ function getErrorMessage(error: unknown): string {
   }
 
   return "Unknown error";
-}
-
-function normalizeTokens(input: string): string[] {
-  return input
-    .toLowerCase()
-    .split(/[^a-z0-9]+/i)
-    .map((token) => token.trim())
-    .filter(Boolean);
-}
-
-function buildSnippet(
-  content: string,
-  query: string,
-  fallback: string,
-): string {
-  const tokens = normalizeTokens(query);
-  const normalizedContent = content.toLowerCase();
-
-  for (const token of tokens) {
-    const index = normalizedContent.indexOf(token);
-    if (index < 0) {
-      continue;
-    }
-
-    const start = Math.max(0, index - 72);
-    const end = Math.min(content.length, index + token.length + 148);
-    return content.slice(start, end).trim();
-  }
-
-  return fallback;
 }
 
 function normalizeWhitespace(input: string): string {
@@ -286,10 +261,14 @@ function toSearchHit(params: {
     spaceId: params.payload.spaceId,
     title: params.payload.title,
     summary: params.payload.summary,
-    snippet: buildSnippet(
+    snippet: buildSearchSnippet(
       params.payload.text,
       params.query,
       params.payload.text.slice(0, 220),
+      {
+        leadingContext: 72,
+        trailingContext: 148,
+      },
     ),
     tags: [...params.payload.tags],
     score: params.score,
@@ -324,6 +303,25 @@ function vectorResult(
     total: hits.length,
     hits,
   };
+}
+
+async function enrichVectorHits(
+  hits: SearchKnowledgeHit[],
+): Promise<SearchKnowledgeHit[]> {
+  return Promise.all(
+    hits.map(async (hit) => {
+      const document = await getDocumentById(hit.documentId);
+
+      if (!document) {
+        return hit;
+      }
+
+      return {
+        ...hit,
+        ...getKnowledgeDocumentSourceMetadata(document),
+      };
+    }),
+  );
 }
 
 export async function indexKnowledgeDocument(
@@ -442,26 +440,28 @@ export async function searchKnowledgeVectors(
     }
 
     const payload = (await response.json()) as QdrantQueryResponse;
-    const hits = dedupeHits(
-      (payload.result?.points ?? [])
-        .map((point) => {
-          const chunkPayload = point.payload as
-            | KnowledgeChunkPayload
-            | undefined;
-          const score = point.score ?? 0;
+    const hits = await enrichVectorHits(
+      dedupeHits(
+        (payload.result?.points ?? [])
+          .map((point) => {
+            const chunkPayload = point.payload as
+              | KnowledgeChunkPayload
+              | undefined;
+            const score = point.score ?? 0;
 
-          if (!chunkPayload || score <= 0) {
-            return undefined;
-          }
+            if (!chunkPayload || score <= 0) {
+              return undefined;
+            }
 
-          return toSearchHit({
-            payload: chunkPayload,
-            query: input.query,
-            score,
-          });
-        })
-        .filter((hit): hit is SearchKnowledgeHit => Boolean(hit)),
-      input.limit ?? 5,
+            return toSearchHit({
+              payload: chunkPayload,
+              query: input.query,
+              score,
+            });
+          })
+          .filter((hit): hit is SearchKnowledgeHit => Boolean(hit)),
+        input.limit ?? 5,
+      ),
     );
 
     if (hits.length === 0) {

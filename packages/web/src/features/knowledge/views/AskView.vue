@@ -4,6 +4,7 @@
   import { useRoute } from "vue-router";
   import {
     askKnowledgeQuestion,
+    downloadKnowledgeDocumentRequest,
     getErrorMessage,
     getKnowledgeSpaces,
   } from "@/lib/api-client";
@@ -11,6 +12,7 @@
   const route = useRoute();
 
   const loading = ref(false);
+  const downloadingCitationId = ref("");
   const spacesLoading = ref(true);
   const errorMessage = ref("");
   const question = ref("How should answers cite evidence?");
@@ -52,6 +54,30 @@
       errorMessage.value = getErrorMessage(error);
     } finally {
       loading.value = false;
+    }
+  }
+
+  async function downloadCitation(params: {
+    documentId: string;
+    downloadUrl?: string;
+    sourceFilename?: string;
+  }) {
+    if (!params.downloadUrl) {
+      return;
+    }
+
+    downloadingCitationId.value = params.documentId;
+    errorMessage.value = "";
+
+    try {
+      await downloadKnowledgeDocumentRequest({
+        downloadUrl: params.downloadUrl,
+        filename: params.sourceFilename,
+      });
+    } catch (error) {
+      errorMessage.value = getErrorMessage(error);
+    } finally {
+      downloadingCitationId.value = "";
     }
   }
 
@@ -131,6 +157,30 @@
               >
                 <strong>{{ citation.title }}</strong>
                 <p class="muted">{{ citation.snippet }}</p>
+                <div
+                  v-if="citation.sourceFilename || citation.downloadUrl"
+                  class="meta-row"
+                >
+                  <span class="muted">
+                    {{ citation.sourceFilename ?? "Stored source" }}
+                  </span>
+                  <button
+                    v-if="citation.downloadUrl"
+                    class="button button-secondary button-inline"
+                    type="button"
+                    @click="
+                      downloadCitation({
+                        documentId: citation.documentId,
+                        downloadUrl: citation.downloadUrl,
+                        sourceFilename: citation.sourceFilename,
+                      })
+                    "
+                  >
+                    {{ downloadingCitationId === citation.documentId
+                        ? "Downloading..."
+                        : "Download source" }}
+                  </button>
+                </div>
               </article>
             </div>
           </div>

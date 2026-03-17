@@ -1,6 +1,7 @@
 import {
   answerKnowledgeQuestion,
   createKnowledgeSpace,
+  getKnowledgeDocumentDownload,
   getKnowledgeSpaceDocuments,
   listKnowledgeSpaces,
   searchKnowledge,
@@ -10,6 +11,7 @@ import {
   AskKnowledgeRequestSchema,
   AskKnowledgeResponseSchema,
   AuthorizationHeadersSchema,
+  KnowledgeDocumentDownloadParamsSchema,
   KnowledgeDocumentsResponseSchema,
   KnowledgeSpaceCreateRequestSchema,
   KnowledgeSpaceMutationResponseSchema,
@@ -80,6 +82,31 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
       headers: AuthorizationHeadersSchema,
       params: KnowledgeSpaceIdParamsSchema,
       response: KnowledgeDocumentsResponseSchema,
+    },
+  )
+  .get(
+    "/spaces/:spaceId/documents/:documentId/download",
+    async ({ headers, params }) => {
+      await requireAuthenticatedSession(headers.authorization);
+
+      const download = await getKnowledgeDocumentDownload(params);
+      const encodedFilename = encodeURIComponent(download.filename);
+      const responseBody = new Uint8Array(download.body);
+
+      return new Response(
+        new Blob([responseBody], { type: download.mimeType }),
+        {
+          headers: {
+            "Content-Disposition": `attachment; filename="${download.filename}"; filename*=UTF-8''${encodedFilename}`,
+            "Content-Length": String(download.body.byteLength),
+            "Content-Type": download.mimeType,
+          },
+        },
+      );
+    },
+    {
+      headers: AuthorizationHeadersSchema,
+      params: KnowledgeDocumentDownloadParamsSchema,
     },
   )
   .post(

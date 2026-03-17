@@ -3,7 +3,9 @@
   import { ref, watch } from "vue";
   import { RouterLink, useRoute } from "vue-router";
   import {
+    downloadKnowledgeDocumentRequest,
     getErrorMessage,
+    getKnowledgeDocumentDownloadUrl,
     getKnowledgeDocuments,
     uploadKnowledgeDocumentRequest,
   } from "@/lib/api-client";
@@ -11,7 +13,9 @@
   const route = useRoute();
   const loading = ref(true);
   const uploading = ref(false);
+  const downloadingDocumentId = ref("");
   const errorMessage = ref("");
+  const downloadError = ref("");
   const uploadError = ref("");
   const uploadStatus = ref("");
   const uploadTitle = ref("");
@@ -81,6 +85,33 @@
     }
   }
 
+  function canDownloadDocument(document: KnowledgeDocument) {
+    return document.source === "upload";
+  }
+
+  async function downloadDocument(document: KnowledgeDocument) {
+    if (!canDownloadDocument(document)) {
+      return;
+    }
+
+    downloadingDocumentId.value = document.id;
+    downloadError.value = "";
+
+    try {
+      await downloadKnowledgeDocumentRequest({
+        downloadUrl: getKnowledgeDocumentDownloadUrl({
+          documentId: document.id,
+          spaceId: document.spaceId,
+        }),
+        filename: document.sourceFilename,
+      });
+    } catch (error) {
+      downloadError.value = getErrorMessage(error);
+    } finally {
+      downloadingDocumentId.value = "";
+    }
+  }
+
   watch(
     () => route.params.spaceId,
     (spaceId) => {
@@ -129,6 +160,9 @@
 
       <div class="content-grid">
         <div class="content-main list">
+          <div v-if="downloadError" class="status status-error">
+            {{ downloadError }}
+          </div>
           <article
             v-for="document in documents"
             :key="document.id"
@@ -149,6 +183,21 @@
                 {{ document.sourceFilename ?? "Inline document" }}
               </span>
               <span class="muted">{{ document.updatedAt.slice(0, 10) }}</span>
+            </div>
+
+            <div
+              v-if="canDownloadDocument(document)"
+              class="cta-row cta-row-tight"
+            >
+              <button
+                class="button button-secondary"
+                type="button"
+                @click="downloadDocument(document)"
+              >
+                {{ downloadingDocumentId === document.id
+                    ? "Downloading..."
+                    : "Download original file" }}
+              </button>
             </div>
 
             <div class="tag-row">

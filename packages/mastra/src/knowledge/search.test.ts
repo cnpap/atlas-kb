@@ -3,10 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  createKnowledgeSpace,
   answerKnowledgeQuestion,
   resetKnowledgeRepository,
   resetKnowledgeVectorState,
   searchKnowledge,
+  uploadKnowledgeDocument,
 } from "./index";
 
 describe("@atlas-kb/mastra knowledge search", () => {
@@ -110,5 +112,39 @@ describe("@atlas-kb/mastra knowledge search", () => {
 
     expect(result.mode).toBe("model");
     expect(result.answer).toContain("cite the document title");
+  });
+
+  it("returns uploaded source metadata for Chinese department queries", async () => {
+    await createKnowledgeSpace({
+      id: "departments",
+      name: "部门职责库",
+      description: "用于部门归口判断的样本知识库",
+    });
+
+    await uploadKnowledgeDocument({
+      file: new File(
+        [
+          "# 人力资源部职责\n\n人力资源部负责员工入职手续办理、社保开户、劳动合同管理、试用期转正流转和员工档案维护。凡是与员工雇佣关系建立、社保增减员、入转调离手续相关的事项，均由人力资源部牵头受理。",
+        ],
+        "hr-department.md",
+        {
+          type: "text/markdown",
+        },
+      ),
+      metadata: {
+        title: "人力资源部职责",
+      },
+      spaceId: "departments",
+    });
+
+    const result = await searchKnowledge({
+      query: "员工入职社保开户应该找哪个部门",
+      spaceId: "departments",
+    });
+
+    expect(result.engine).toBe("lexical");
+    expect(result.hits[0]?.title).toContain("人力资源部");
+    expect(result.hits[0]?.sourceFilename).toBe("hr-department.md");
+    expect(result.hits[0]?.downloadUrl).toContain("/api/kb/spaces/departments");
   });
 });

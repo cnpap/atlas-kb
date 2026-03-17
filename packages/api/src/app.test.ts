@@ -208,6 +208,68 @@ describe("@atlas-kb/api", () => {
     ).toBeTrue();
   });
 
+  it("downloads an uploaded document and rejects seeded downloads", async () => {
+    const app = createApp();
+    const authHeaders = await loginAndGetAuthHeader(app);
+    const form = new FormData();
+
+    form.append(
+      "file",
+      new File(
+        [
+          "# Incident Notes\n\nEscalate to the incident commander within ten minutes and capture mitigations in the status channel.",
+        ],
+        "incident-notes.md",
+        {
+          type: "text/markdown",
+        },
+      ),
+    );
+    form.append("title", "Incident Notes");
+
+    const uploadResponse = await app.handle(
+      new Request("http://localhost/api/kb/spaces/ops/documents/upload", {
+        method: "POST",
+        headers: authHeaders,
+        body: form,
+      }),
+    );
+    const uploadPayload = await readJson(uploadResponse);
+    const uploadData = uploadPayload.data as {
+      document: {
+        id: string;
+      };
+    };
+    const downloadResponse = await app.handle(
+      new Request(
+        `http://localhost/api/kb/spaces/ops/documents/${uploadData.document.id}/download`,
+        {
+          headers: authHeaders,
+        },
+      ),
+    );
+
+    expect(downloadResponse.status).toBe(200);
+    expect(downloadResponse.headers.get("Content-Type")).toBe("text/markdown");
+    expect(downloadResponse.headers.get("Content-Disposition")).toContain(
+      "incident-notes.md",
+    );
+    expect(await downloadResponse.text()).toContain("incident commander");
+
+    const seedDownloadResponse = await app.handle(
+      new Request(
+        "http://localhost/api/kb/spaces/ops/documents/ops-oncall-playbook/download",
+        {
+          headers: authHeaders,
+        },
+      ),
+    );
+    const seedDownloadPayload = await readJson(seedDownloadResponse);
+
+    expect(seedDownloadResponse.status).toBe(400);
+    expect(seedDownloadPayload.success).toBeFalse();
+  });
+
   it("returns a mock ask response without a model key", async () => {
     const app = createApp();
     const authHeaders = await loginAndGetAuthHeader(app);
@@ -234,6 +296,91 @@ describe("@atlas-kb/api", () => {
     expect(data.mode).toBe("mock");
     expect(data.engine).toBe("lexical");
     expect(data.citations.length).toBeGreaterThan(0);
+  });
+
+  it("returns downloadable citation metadata for uploaded documents", async () => {
+    const app = createApp();
+    const authHeaders = await loginAndGetAuthHeader(app);
+    const createSpaceResponse = await app.handle(
+      new Request("http://localhost/api/kb/spaces", {
+        method: "POST",
+        headers: {
+          ...authHeaders,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: "departments",
+          name: "Department Routing",
+          description: "Department responsibility samples",
+        }),
+      }),
+    );
+
+    expect(createSpaceResponse.status).toBe(200);
+
+    const form = new FormData();
+
+    form.append(
+      "file",
+      new File(
+        [
+          "# Human Resources Department\n\nThe human resources department owns employee onboarding, social insurance enrollment, labor contract administration, probation reviews, and personnel records. New employee onboarding packets and social insurance enrollment requests should be routed to human resources first.",
+        ],
+        "human-resources.md",
+        {
+          type: "text/markdown",
+        },
+      ),
+    );
+    form.append("title", "Human Resources Department");
+
+    const uploadResponse = await app.handle(
+      new Request(
+        "http://localhost/api/kb/spaces/departments/documents/upload",
+        {
+          method: "POST",
+          headers: authHeaders,
+          body: form,
+        },
+      ),
+    );
+    const uploadPayload = await readJson(uploadResponse);
+    const uploadData = uploadPayload.data as {
+      document: {
+        id: string;
+      };
+    };
+    const askResponse = await app.handle(
+      new Request("http://localhost/api/kb/ask", {
+        method: "POST",
+        headers: {
+          ...authHeaders,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          question:
+            "Which department handles employee onboarding and social insurance enrollment?",
+          spaceId: "departments",
+        }),
+      }),
+    );
+    const askPayload = await readJson(askResponse);
+    const askData = askPayload.data as {
+      citations: Array<{
+        documentId: string;
+        downloadUrl?: string;
+        sourceFilename?: string;
+        spaceId: string;
+      }>;
+    };
+
+    expect(askResponse.status).toBe(200);
+    expect(askData.citations[0]?.documentId).toBe(uploadData.document.id);
+    expect(askData.citations[0]?.spaceId).toBe("departments");
+    expect(askData.citations[0]?.sourceFilename).toBe("human-resources.md");
+    expect(askData.citations[0]?.downloadUrl).toContain(
+      `/api/kb/spaces/departments/documents/${uploadData.document.id}/download`,
+    );
   });
 
   it("returns a model ask response when the provider call succeeds", async () => {

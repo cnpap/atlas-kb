@@ -35,6 +35,11 @@ export const KnowledgeSpaceIdParamsSchema = z.object({
   spaceId: z.string().trim().min(1),
 });
 
+export const KnowledgeDocumentDownloadParamsSchema = z.object({
+  documentId: z.string().trim().min(1),
+  spaceId: z.string().trim().min(1),
+});
+
 export const KnowledgeSpaceCreateRequestSchema = z.object({
   id: z.string().trim().min(1).max(64).optional(),
   name: z.string().trim().min(1).max(120),
@@ -61,6 +66,8 @@ export const SearchKnowledgeHitSchema = z.object({
   title: z.string().trim().min(1),
   summary: z.string().trim().min(1),
   snippet: z.string().trim().min(1),
+  sourceFilename: z.string().trim().min(1).optional(),
+  downloadUrl: z.string().trim().min(1).optional(),
   tags: z.array(z.string().trim().min(1)),
   score: z.number().nonnegative(),
 });
@@ -82,8 +89,11 @@ export const AskKnowledgeRequestSchema = z.object({
 
 export const AskKnowledgeCitationSchema = z.object({
   documentId: z.string().trim().min(1),
+  spaceId: z.string().trim().min(1),
   title: z.string().trim().min(1),
   snippet: z.string().trim().min(1),
+  sourceFilename: z.string().trim().min(1).optional(),
+  downloadUrl: z.string().trim().min(1).optional(),
 });
 
 export const AskKnowledgeResultSchema = z.object({
@@ -137,6 +147,9 @@ export const AskKnowledgeResponseSchema = createApiSuccessResponseSchema(
 export type HealthData = z.infer<typeof HealthDataSchema>;
 export type KnowledgeSpace = z.infer<typeof KnowledgeSpaceSchema>;
 export type KnowledgeDocument = z.infer<typeof KnowledgeDocumentSchema>;
+export type KnowledgeDocumentDownloadParams = z.infer<
+  typeof KnowledgeDocumentDownloadParamsSchema
+>;
 export type KnowledgeSpaceIdParams = z.infer<
   typeof KnowledgeSpaceIdParamsSchema
 >;

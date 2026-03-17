@@ -1,3 +1,5 @@
+export { getKnowledgeDocumentDownload } from "./download";
+export { runKnowledgeAgentQuestion } from "./agent";
 export { uploadKnowledgeDocument } from "./ingest";
 export { resetKnowledgeVectorState } from "./qdrant";
 export {

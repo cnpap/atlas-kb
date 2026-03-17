@@ -11,17 +11,33 @@ Rules:
 - Keep answers concise and grounded in retrieved snippets.
 - If retrieval is weak, say that evidence is limited.
 - Cite the supporting document title in the answer.
+- If the question is asking which department should handle an issue, name the primary department first, then explain the handoff briefly.
 `.trim();
 
-export function createKnowledgeAgent() {
+function buildInstructions(spaceId?: string): string {
+  if (!spaceId) {
+    return KNOWLEDGE_AGENT_PROMPT;
+  }
+
+  return `${KNOWLEDGE_AGENT_PROMPT}
+
+Use only the bound knowledge space "${spaceId}" for retrieval. Do not answer from another space.`;
+}
+
+export function createKnowledgeAgent(
+  options: { searchLimit?: number; spaceId?: string } = {},
+) {
   return new Agent({
     id: KNOWLEDGE_AGENT_ID,
     name: "Knowledge Assistant",
     description: "Answers questions from Atlas KB using retrieved snippets.",
-    instructions: KNOWLEDGE_AGENT_PROMPT,
+    instructions: buildInstructions(options.spaceId),
     model: createRuntimeModel(),
     tools: {
-      search_knowledge: createSearchKnowledgeTool(),
+      search_knowledge: createSearchKnowledgeTool({
+        defaultLimit: options.searchLimit,
+        lockedSpaceId: options.spaceId,
+      }),
     },
   });
 }

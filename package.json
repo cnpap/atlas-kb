@@ -11,6 +11,8 @@
     "api:dev": "bun --env-file=.env run --filter @atlas-kb/api dev",
     "api:start": "bun --env-file=.env run --filter @atlas-kb/api start",
     "api:build": "bun run --filter @atlas-kb/api build",
+    "fixtures:import": "bun --env-file=.env run --filter @atlas-kb/mastra fixtures:import",
+    "agent:smoke": "bun --env-file=.env run --filter @atlas-kb/mastra agent:smoke",
     "dev": "bun --env-file=.env run --filter @atlas-kb/mastra dev",
     "start": "bun --env-file=.env run --filter @atlas-kb/mastra start",
     "build": "bun run --filter @atlas-kb/mastra build",

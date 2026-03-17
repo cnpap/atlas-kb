@@ -42,6 +42,24 @@ function createAuthHeaders(): { authorization: string } {
   };
 }
 
+function resolveApiUrl(path: string): string {
+  return new URL(path, getApiBaseUrl()).toString();
+}
+
+function parseDownloadFilename(headerValue: string | null): string | undefined {
+  if (!headerValue) {
+    return undefined;
+  }
+
+  const utf8Match = headerValue.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1]);
+  }
+
+  const basicMatch = headerValue.match(/filename="([^"]+)"/i);
+  return basicMatch?.[1];
+}
+
 export function unwrapSuccess<T>(payload: unknown): T {
   const envelope = payload as SuccessEnvelope<T> | FailureEnvelope | null;
 
@@ -105,6 +123,15 @@ export async function getKnowledgeDocuments(
   return unwrapSuccess<KnowledgeDocumentsData>(response.data);
 }
 
+export function getKnowledgeDocumentDownloadUrl(params: {
+  documentId: string;
+  spaceId: string;
+}): string {
+  return resolveApiUrl(
+    `/api/kb/spaces/${encodeURIComponent(params.spaceId)}/documents/${encodeURIComponent(params.documentId)}/download`,
+  );
+}
+
 export async function uploadKnowledgeDocumentRequest(params: {
   file: File;
   spaceId: string;
@@ -127,6 +154,46 @@ export async function uploadKnowledgeDocumentRequest(params: {
     );
 
   return unwrapSuccess<KnowledgeUploadData>(response.data);
+}
+
+export async function downloadKnowledgeDocumentRequest(params: {
+  downloadUrl: string;
+  filename?: string;
+}): Promise<void> {
+  const response = await fetch(resolveApiUrl(params.downloadUrl), {
+    headers: createAuthHeaders(),
+  });
+
+  if (!response.ok) {
+    let errorMessage = "Document download failed";
+
+    try {
+      const payload = (await response.json()) as FailureEnvelope;
+      if (!payload.success) {
+        errorMessage = payload.error.message;
+      }
+    } catch {
+      errorMessage = `Document download failed with status ${response.status}`;
+    }
+
+    throw new Error(errorMessage);
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const resolvedFilename =
+    params.filename ||
+    parseDownloadFilename(response.headers.get("Content-Disposition")) ||
+    "download";
+
+  link.href = objectUrl;
+  link.download = resolvedFilename;
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
 }
 
 export async function askKnowledgeQuestion(

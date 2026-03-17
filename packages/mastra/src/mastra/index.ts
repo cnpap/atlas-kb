@@ -1,3 +1,4 @@
+import { createAgents } from "../agents";
 import { memory } from "../memory";
 import { apiRoutes } from "../routes";
 import { tools } from "../tools";
@@ -37,6 +38,7 @@ export const defaultStorage = new LibSQLStore({
 });
 
 export const mastra = new Mastra({
+  agents: createAgents(),
   tools,
   storage: defaultStorage,
   memory,

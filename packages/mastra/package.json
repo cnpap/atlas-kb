@@ -12,7 +12,9 @@
   "scripts": {
     "dev": "mastra dev",
     "start": "mastra start",
-    "build": "mastra build"
+    "build": "mastra build",
+    "fixtures:import": "bun run src/scripts/import-department-fixtures.ts",
+    "agent:smoke": "bun run src/scripts/run-department-agent-smoke.ts"
   },
   "dependencies": {
     "@atlas-kb/errors": "workspace:*",

@@ -12,6 +12,11 @@ import {
 import { getOpenAIModel, getOpenAIUrl } from "./config";
 import { listKnowledgeDocuments } from "./repository";
 import { searchKnowledgeVectors } from "./qdrant";
+import {
+  buildSearchSnippet,
+  getKnowledgeDocumentSourceMetadata,
+  normalizeSearchTokens,
+} from "./search-utils";
 
 const DEFAULT_SEARCH_LIMIT = 5;
 const DEFAULT_ASK_LIMIT = 3;
@@ -27,14 +32,6 @@ interface OpenAIChatCompletionResponse {
           }>;
     };
   }>;
-}
-
-function normalizeTokens(input: string): string[] {
-  return input
-    .toLowerCase()
-    .split(/[^a-z0-9]+/i)
-    .map((token) => token.trim())
-    .filter(Boolean);
 }
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -56,27 +53,6 @@ function countOccurrences(haystack: string, needle: string): number {
   }
 
   return count;
-}
-
-function buildSnippet(
-  content: string,
-  tokens: string[],
-  fallback: string,
-): string {
-  const normalizedContent = content.toLowerCase();
-
-  for (const token of tokens) {
-    const index = normalizedContent.indexOf(token);
-    if (index < 0) {
-      continue;
-    }
-
-    const start = Math.max(0, index - 56);
-    const end = Math.min(content.length, index + token.length + 104);
-    return content.slice(start, end).trim();
-  }
-
-  return fallback;
 }
 
 function scoreDocument(
@@ -111,8 +87,11 @@ function scoreDocument(
 function toCitation(hit: SearchKnowledgeHit): AskKnowledgeCitation {
   return {
     documentId: hit.documentId,
+    spaceId: hit.spaceId,
     title: hit.title,
     snippet: hit.snippet,
+    sourceFilename: hit.sourceFilename,
+    downloadUrl: hit.downloadUrl,
   };
 }
 
@@ -171,7 +150,7 @@ async function tryGenerateModelAnswer(params: {
   const context = params.citations
     .map(
       (citation, index) =>
-        `${index + 1}. ${citation.title}\n${citation.snippet}`,
+        `${index + 1}. ${citation.title}\n${citation.snippet}${citation.sourceFilename ? `\nFile: ${citation.sourceFilename}` : ""}`,
     )
     .join("\n\n");
 
@@ -191,7 +170,7 @@ async function tryGenerateModelAnswer(params: {
             {
               role: "system",
               content:
-                "Answer using only the supplied knowledge citations. Keep the answer concise and grounded.",
+                "Answer using only the supplied knowledge citations. Keep the answer concise, grounded, and explicitly mention supporting document titles when relevant.",
             },
             {
               role: "user",
@@ -234,7 +213,7 @@ async function tryGenerateModelAnswer(params: {
 async function lexicalSearch(
   input: SearchKnowledgeRequest,
 ): Promise<SearchKnowledgeResult> {
-  const tokens = normalizeTokens(input.query);
+  const tokens = normalizeSearchTokens(input.query);
   const limit = input.limit ?? DEFAULT_SEARCH_LIMIT;
 
   if (tokens.length === 0) {
@@ -258,7 +237,12 @@ async function lexicalSearch(
         spaceId: document.spaceId,
         title: document.title,
         summary: document.summary,
-        snippet: buildSnippet(document.content, tokens, document.excerpt),
+        snippet: buildSearchSnippet(
+          document.content,
+          input.query,
+          document.excerpt,
+        ),
+        ...getKnowledgeDocumentSourceMetadata(document),
         tags: [...document.tags],
         score,
       } satisfies SearchKnowledgeHit;
