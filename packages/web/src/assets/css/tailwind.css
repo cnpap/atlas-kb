@@ -1,0 +1,178 @@
+@import "tailwindcss" theme(static);
+@import "@nuxt/ui";
+
+@theme static {
+  --font-sans: "Public Sans", "SF Pro Display", "Segoe UI", sans-serif;
+
+  --color-green-50: #effdf5;
+  --color-green-100: #d9fbe8;
+  --color-green-200: #b3f5d1;
+  --color-green-300: #75edae;
+  --color-green-400: #00dc82;
+  --color-green-500: #00c16a;
+  --color-green-600: #00a155;
+  --color-green-700: #007f45;
+  --color-green-800: #016538;
+  --color-green-900: #0a5331;
+  --color-green-950: #052e16;
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --atlas-bg: #f5f7fb;
+    --atlas-bg-elevated: #ffffff;
+    --atlas-bg-muted: #eef2f7;
+    --atlas-bg-soft: #f8fafc;
+    --atlas-line: #dbe3ee;
+    --atlas-line-strong: #c8d4e3;
+    --atlas-text: #0f172a;
+    --atlas-text-muted: #5b667a;
+    --atlas-text-dim: #7f8a9f;
+    --atlas-primary-soft: #e8faf1;
+    --atlas-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+    --atlas-shadow-md: 0 16px 32px rgba(15, 23, 42, 0.06);
+    --atlas-shadow-lg: 0 24px 48px rgba(15, 23, 42, 0.08);
+    --ui-bg: #ffffff;
+    --ui-bg-muted: #f8fafc;
+    --ui-bg-elevated: #ffffff;
+    --ui-bg-accented: #eef2f7;
+    --ui-border: #dbe3ee;
+    --ui-border-muted: #dbe3ee;
+    --ui-border-accented: #c8d4e3;
+    --ui-text: #0f172a;
+    --ui-text-dimmed: #7f8a9f;
+    --ui-text-muted: #5b667a;
+    --ui-text-toned: #334155;
+    --ui-text-highlighted: #0f172a;
+    --ui-text-inverted: #ffffff;
+    --ui-error: #dc2626;
+  }
+
+  html,
+  body,
+  #app {
+    min-height: 100%;
+  }
+
+  html {
+    background: var(--atlas-bg);
+  }
+
+  body {
+    @apply font-sans antialiased text-[var(--atlas-text)];
+    background:
+      radial-gradient(circle at top, rgba(0, 193, 106, 0.06), transparent 24%),
+      linear-gradient(180deg, #f8fafc 0%, var(--atlas-bg) 24%, #f3f6fb 100%);
+  }
+
+  input,
+  textarea,
+  select {
+    color: var(--atlas-text);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--atlas-text-dim);
+  }
+
+  a,
+  button,
+  input,
+  textarea,
+  select {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::selection {
+    background: rgba(0, 193, 106, 0.18);
+    color: var(--atlas-text);
+  }
+}
+
+@layer components {
+  .atlas-app-shell {
+    @apply min-h-screen;
+  }
+
+  .atlas-shell-grid {
+    @apply mx-auto flex min-h-screen max-w-[1680px] gap-4 px-3 py-3 sm:px-4 sm:py-4;
+  }
+
+  .atlas-sidebar {
+    @apply flex h-[calc(100vh-1.5rem)] w-72 shrink-0 flex-col rounded-[28px] border bg-[var(--atlas-bg-elevated)] shadow-[var(--atlas-shadow-md)] sm:h-[calc(100vh-2rem)];
+    border-color: var(--atlas-line);
+  }
+
+  .atlas-workspace {
+    @apply flex min-w-0 flex-1 flex-col overflow-hidden rounded-[28px] border bg-[var(--atlas-bg-elevated)] shadow-[var(--atlas-shadow-md)];
+    border-color: var(--atlas-line);
+  }
+
+  .atlas-panel {
+    @apply rounded-[24px] border bg-[var(--atlas-bg-elevated)] shadow-[var(--atlas-shadow-sm)];
+    border-color: var(--atlas-line);
+  }
+
+  .atlas-panel-muted {
+    @apply rounded-[24px] border bg-[var(--atlas-bg-soft)];
+    border-color: var(--atlas-line);
+  }
+
+  .atlas-card {
+    @apply rounded-[22px] border bg-white shadow-[var(--atlas-shadow-sm)] transition-all;
+    border-color: var(--atlas-line);
+  }
+
+  .atlas-card-hover {
+    @apply hover:-translate-y-0.5 hover:shadow-[var(--atlas-shadow-md)];
+    border-color: var(--atlas-line);
+  }
+
+  .atlas-chip {
+    @apply inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium;
+    border-color: var(--atlas-line);
+    background: var(--atlas-bg-soft);
+    color: var(--atlas-text-muted);
+  }
+
+  .atlas-label {
+    @apply text-[11px] font-semibold uppercase tracking-[0.22em];
+    color: var(--atlas-text-dim);
+  }
+
+  .atlas-action-secondary {
+    @apply border;
+    border-color: var(--atlas-line);
+    background: #fff;
+    color: var(--atlas-text);
+  }
+
+  .atlas-action-secondary:hover {
+    border-color: var(--atlas-line-strong);
+    background: var(--atlas-bg-soft);
+    color: var(--atlas-text);
+  }
+
+  .atlas-action-danger {
+    @apply border;
+    border-color: #fecaca;
+    background: #fff5f5;
+    color: #b91c1c;
+  }
+
+  .atlas-action-danger:hover {
+    border-color: #fca5a5;
+    background: #fee2e2;
+    color: #991b1b;
+  }
+
+  .atlas-page {
+    @apply flex h-full min-h-0 flex-col;
+  }
+
+  .atlas-page-scroll {
+    @apply min-h-0 flex-1 overflow-y-auto;
+  }
+}

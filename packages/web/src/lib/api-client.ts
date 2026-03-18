@@ -34,7 +34,7 @@ function createAuthHeaders(): { authorization: string } {
   const token = getAuthToken();
 
   if (!token) {
-    throw new Error("Please sign in first");
+    throw new Error("请先登录");
   }
 
   return {
@@ -47,39 +47,23 @@ function resolveApiUrl(path: string): string {
 }
 
 function parseDownloadFilename(headerValue: string | null): string | undefined {
-  if (!headerValue) {
-    return undefined;
-  }
-
+  if (!headerValue) return undefined;
   const utf8Match = headerValue.match(/filename\*=UTF-8''([^;]+)/i);
-  if (utf8Match?.[1]) {
-    return decodeURIComponent(utf8Match[1]);
-  }
-
+  if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1]);
   const basicMatch = headerValue.match(/filename="([^"]+)"/i);
   return basicMatch?.[1];
 }
 
 export function unwrapSuccess<T>(payload: unknown): T {
   const envelope = payload as SuccessEnvelope<T> | FailureEnvelope | null;
-
-  if (!envelope) {
-    throw new Error("Empty response payload");
-  }
-
-  if (!envelope.success) {
-    throw new Error(envelope.error.message);
-  }
-
+  if (!envelope) throw new Error("空响应载荷");
+  if (!envelope.success) throw new Error(envelope.error.message);
   return envelope.data;
 }
 
 export function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return "Request failed";
+  if (error instanceof Error) return error.message;
+  return "请求失败";
 }
 
 export async function loginRequest(body: LoginRequest): Promise<LoginResult> {
@@ -91,7 +75,6 @@ export async function fetchCurrentSession(): Promise<Session> {
   const response = await api.api.auth.me.get({
     headers: createAuthHeaders(),
   });
-
   return unwrapSuccess<Session>(response.data);
 }
 
@@ -99,7 +82,6 @@ export async function getKnowledgeSpaces(): Promise<KnowledgeSpacesData> {
   const response = await api.api.kb.spaces.get({
     headers: createAuthHeaders(),
   });
-
   return unwrapSuccess<KnowledgeSpacesData>(response.data);
 }
 
@@ -109,7 +91,6 @@ export async function createKnowledgeSpaceRequest(
   const response = await api.api.kb.spaces.post(body, {
     headers: createAuthHeaders(),
   });
-
   return unwrapSuccess<KnowledgeSpaceMutationData>(response.data);
 }
 
@@ -119,7 +100,6 @@ export async function getKnowledgeDocuments(
   const response = await api.api.kb.spaces({ spaceId }).documents.get({
     headers: createAuthHeaders(),
   });
-
   return unwrapSuccess<KnowledgeDocumentsData>(response.data);
 }
 
@@ -152,7 +132,6 @@ export async function uploadKnowledgeDocumentRequest(params: {
         headers: createAuthHeaders(),
       },
     );
-
   return unwrapSuccess<KnowledgeUploadData>(response.data);
 }
 
@@ -165,17 +144,13 @@ export async function downloadKnowledgeDocumentRequest(params: {
   });
 
   if (!response.ok) {
-    let errorMessage = "Document download failed";
-
+    let errorMessage = "文档下载失败";
     try {
       const payload = (await response.json()) as FailureEnvelope;
-      if (!payload.success) {
-        errorMessage = payload.error.message;
-      }
+      if (!payload.success) errorMessage = payload.error.message;
     } catch {
-      errorMessage = `Document download failed with status ${response.status}`;
+      errorMessage = `文档下载失败 (状态码: ${response.status})`;
     }
-
     throw new Error(errorMessage);
   }
 
@@ -202,6 +177,5 @@ export async function askKnowledgeQuestion(
   const response = await api.api.kb.ask.post(body, {
     headers: createAuthHeaders(),
   });
-
   return unwrapSuccess<AskKnowledgeResult>(response.data);
 }

@@ -7,42 +7,31 @@ const router = createRouter({
     {
       path: "/",
       name: "landing",
-      component: () => import("../features/landing/views/LandingView.vue"),
-    },
-    {
-      path: "/kb",
-      name: "knowledge-spaces",
-      meta: {
-        requiresAuth: true,
-      },
-      component: () =>
-        import("../features/knowledge/views/KnowledgeSpacesView.vue"),
-    },
-    {
-      path: "/kb/:spaceId",
-      name: "knowledge-space-detail",
-      meta: {
-        requiresAuth: true,
-      },
-      component: () =>
-        import("../features/knowledge/views/SpaceDetailView.vue"),
-    },
-    {
-      path: "/ask",
-      name: "knowledge-ask",
-      meta: {
-        requiresAuth: true,
-      },
-      component: () => import("../features/knowledge/views/AskView.vue"),
+      component: () => import("@/features/landing/views/LandingView.vue"),
     },
     {
       path: "/login",
       name: "login",
-      component: () => import("../features/auth/views/LoginView.vue"),
+      component: () => import("@/features/auth/views/LoginView.vue"),
     },
     {
-      path: "/:pathMatch(.*)*",
-      redirect: "/",
+      path: "/kb",
+      name: "knowledge-spaces",
+      component: () =>
+        import("@/features/knowledge/views/KnowledgeSpacesView.vue"),
+      meta: { requiresAuth: true, title: "知识库列表" },
+    },
+    {
+      path: "/kb/:spaceId",
+      name: "space-detail",
+      component: () => import("@/features/knowledge/views/SpaceDetailView.vue"),
+      meta: { requiresAuth: true, title: "知识库管理" },
+    },
+    {
+      path: "/ask",
+      name: "ask-knowledge",
+      component: () => import("@/features/knowledge/views/AskView.vue"),
+      meta: { requiresAuth: true, title: "智能问答" },
     },
   ],
 });

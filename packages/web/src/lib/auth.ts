@@ -12,7 +12,6 @@ function readStoredToken(): string {
   if (!isBrowser()) {
     return "";
   }
-
   return window.localStorage.getItem(TOKEN_STORAGE_KEY) ?? "";
 }
 
@@ -20,13 +19,8 @@ function readStoredSession(): Session | null {
   if (!isBrowser()) {
     return null;
   }
-
   const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
-
-  if (!raw) {
-    return null;
-  }
-
+  if (!raw) return null;
   try {
     return JSON.parse(raw) as Session;
   } catch {
@@ -36,28 +30,20 @@ function readStoredSession(): Session | null {
 }
 
 function writeStoredToken(token: string): void {
-  if (!isBrowser()) {
-    return;
-  }
-
+  if (!isBrowser()) return;
   if (token) {
     window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
     return;
   }
-
   window.localStorage.removeItem(TOKEN_STORAGE_KEY);
 }
 
 function writeStoredSession(session: Session | null): void {
-  if (!isBrowser()) {
-    return;
-  }
-
+  if (!isBrowser()) return;
   if (session) {
     window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
     return;
   }
-
   window.localStorage.removeItem(SESSION_STORAGE_KEY);
 }
 

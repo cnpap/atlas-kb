@@ -14,6 +14,11 @@
     "indentStyle": "space",
     "indentWidth": 2
   },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
   "linter": {
     "enabled": true,
     "rules": {
@@ -52,6 +57,21 @@
             "noUnknownPseudoClass": "off"
           }
         }
+      }
+    },
+    {
+      "includes": [
+        "packages/web/auto-imports.d.ts",
+        "packages/web/components.d.ts"
+      ],
+      "assist": {
+        "enabled": false
+      },
+      "formatter": {
+        "enabled": false
+      },
+      "linter": {
+        "enabled": false
       }
     }
   ]
