@@ -20,33 +20,6 @@ async function readJson(response: Response) {
   return (await response.json()) as Record<string, unknown>;
 }
 
-async function loginAndGetAuthHeader(
-  app: ReturnType<typeof createApp>,
-): Promise<Record<string, string>> {
-  const response = await app.handle(
-    new Request("http://localhost/api/auth/login", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        email: "admin@atlas-kb.local",
-        password: "atlas-kb-dev",
-      }),
-    }),
-  );
-  const payload = await readJson(response);
-  const data = payload.data as {
-    token: string;
-  };
-
-  expect(response.status).toBe(200);
-
-  return {
-    Authorization: `Bearer ${data.token}`,
-  };
-}
-
 describe("@atlas-kb/api", () => {
   let knowledgeDataDir = "";
 
@@ -65,26 +38,31 @@ describe("@atlas-kb/api", () => {
 
   afterEach(async () => {
     process.env.OPENAI_API_KEY = originalApiKey;
+
     if (originalBaseUrl === undefined) {
       delete process.env.OPENAI_BASE_URL;
     } else {
       process.env.OPENAI_BASE_URL = originalBaseUrl;
     }
+
     if (originalDashScopeApiKey === undefined) {
       delete process.env.DASHSCOPE_API_KEY;
     } else {
       process.env.DASHSCOPE_API_KEY = originalDashScopeApiKey;
     }
+
     if (originalDashScopeBaseUrl === undefined) {
       delete process.env.DASHSCOPE_BASE_URL;
     } else {
       process.env.DASHSCOPE_BASE_URL = originalDashScopeBaseUrl;
     }
+
     if (originalDashScopeEmbeddingModel === undefined) {
       delete process.env.DASHSCOPE_EMBEDDING_MODEL;
     } else {
       process.env.DASHSCOPE_EMBEDDING_MODEL = originalDashScopeEmbeddingModel;
     }
+
     globalThis.fetch = originalFetch;
     resetKnowledgeRepository();
     resetKnowledgeVectorState();
@@ -111,452 +89,369 @@ describe("@atlas-kb/api", () => {
     expect(payload.success).toBeTrue();
   });
 
-  it("returns a session for valid login credentials", async () => {
+  it("creates a collection, imports text, and finds it through search", async () => {
     const app = createApp();
-    const authHeaders = await loginAndGetAuthHeader(app);
-    const response = await app.handle(
-      new Request("http://localhost/api/auth/me", {
-        headers: authHeaders,
+    const createResponse = await app.handle(
+      new Request("http://localhost/api/kb/collections", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: "personal-research",
+          name: "个人研究",
+          description: "研究资料与访谈记录",
+        }),
       }),
     );
-    const payload = await readJson(response);
-    const data = payload.data as {
-      user: {
-        email: string;
-        role: string;
+    const createPayload = await readJson(createResponse);
+    const createData = createPayload.data as {
+      collection: {
+        id: string;
       };
     };
 
-    expect(response.status).toBe(200);
-    expect(data.user.email).toBe("admin@atlas-kb.local");
-    expect(data.user.role).toBe("admin");
-  });
+    expect(createResponse.status).toBe(200);
+    expect(createData.collection.id).toBe("personal-research");
 
-  it("returns 404 for an unknown knowledge space", async () => {
-    const app = createApp();
-    const authHeaders = await loginAndGetAuthHeader(app);
-    const response = await app.handle(
-      new Request("http://localhost/api/kb/spaces/unknown/documents", {
-        headers: authHeaders,
-      }),
-    );
-    const payload = await readJson(response);
-
-    expect(response.status).toBe(404);
-    expect(payload.success).toBeFalse();
-  });
-
-  it("uploads a document into a knowledge space", async () => {
-    const app = createApp();
-    const authHeaders = await loginAndGetAuthHeader(app);
-    const form = new FormData();
-
-    form.append(
-      "file",
-      new File(
-        [
-          "# Incident Notes\n\nEscalate to the incident commander within ten minutes and capture mitigations in the status channel.",
-        ],
-        "incident-notes.md",
+    const importResponse = await app.handle(
+      new Request(
+        "http://localhost/api/kb/collections/personal-research/imports/text",
         {
-          type: "text/markdown",
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title: "访谈行动法",
+            content:
+              "先把访谈记录拆成主题，再提炼成行动项，最后映射到长期项目列表。",
+            tags: ["research", "workflow"],
+          }),
         },
       ),
     );
-    form.append("tags", "incident, operations");
-    form.append("title", "Incident Notes");
-
-    const uploadResponse = await app.handle(
-      new Request("http://localhost/api/kb/spaces/ops/documents/upload", {
-        method: "POST",
-        headers: authHeaders,
-        body: form,
-      }),
-    );
-    const uploadPayload = await readJson(uploadResponse);
-    const uploadData = uploadPayload.data as {
-      document: {
+    const importPayload = await readJson(importResponse);
+    const importData = importPayload.data as {
+      source: {
         id: string;
-        title: string;
+        status: string;
       };
-      engine: string;
-      indexed: boolean;
     };
 
-    expect(uploadResponse.status).toBe(200);
-    expect(uploadData.document.title).toBe("Incident Notes");
-    expect(uploadData.indexed).toBeFalse();
-    expect(uploadData.engine).toBe("lexical");
+    expect(importResponse.status).toBe(200);
+    expect(importData.source.status).toBe("ready");
 
     const listResponse = await app.handle(
-      new Request("http://localhost/api/kb/spaces/ops/documents", {
-        headers: authHeaders,
-      }),
+      new Request(
+        "http://localhost/api/kb/collections/personal-research/sources",
+      ),
     );
     const listPayload = await readJson(listResponse);
     const listData = listPayload.data as {
-      documents: Array<{
+      sources: Array<{
         id: string;
       }>;
     };
 
     expect(listResponse.status).toBe(200);
     expect(
-      listData.documents.some(
-        (document) => document.id === uploadData.document.id,
-      ),
+      listData.sources.some((item) => item.id === importData.source.id),
     ).toBeTrue();
+
+    const searchResponse = await app.handle(
+      new Request("http://localhost/api/kb/search", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: "如何映射到长期项目",
+          collectionId: "personal-research",
+        }),
+      }),
+    );
+    const searchPayload = await readJson(searchResponse);
+    const searchData = searchPayload.data as {
+      total: number;
+      hits: Array<{
+        sourceId: string;
+      }>;
+    };
+
+    expect(searchResponse.status).toBe(200);
+    expect(searchData.total).toBeGreaterThan(0);
+    expect(searchData.hits[0]?.sourceId).toBe(importData.source.id);
   });
 
-  it("downloads an uploaded document and rejects seeded downloads", async () => {
+  it("imports a file and downloads the original source", async () => {
     const app = createApp();
-    const authHeaders = await loginAndGetAuthHeader(app);
+
+    await app.handle(
+      new Request("http://localhost/api/kb/collections", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: "writing",
+          name: "写作",
+          description: "写作素材",
+        }),
+      }),
+    );
+
     const form = new FormData();
 
     form.append(
       "file",
       new File(
-        [
-          "# Incident Notes\n\nEscalate to the incident commander within ten minutes and capture mitigations in the status channel.",
-        ],
-        "incident-notes.md",
+        ["# 复盘模板\n\n每次复盘都要写清目标、事实、偏差、下一步行动。"],
+        "retrospective.md",
         {
           type: "text/markdown",
         },
       ),
     );
-    form.append("title", "Incident Notes");
+    form.append("title", "复盘模板");
 
-    const uploadResponse = await app.handle(
-      new Request("http://localhost/api/kb/spaces/ops/documents/upload", {
+    const importResponse = await app.handle(
+      new Request("http://localhost/api/kb/collections/writing/imports/file", {
         method: "POST",
-        headers: authHeaders,
         body: form,
       }),
     );
-    const uploadPayload = await readJson(uploadResponse);
-    const uploadData = uploadPayload.data as {
-      document: {
+    const importPayload = await readJson(importResponse);
+    const importData = importPayload.data as {
+      source: {
         id: string;
       };
     };
+
+    expect(importResponse.status).toBe(200);
+
     const downloadResponse = await app.handle(
       new Request(
-        `http://localhost/api/kb/spaces/ops/documents/${uploadData.document.id}/download`,
-        {
-          headers: authHeaders,
-        },
+        `http://localhost/api/kb/sources/${importData.source.id}/download`,
       ),
     );
 
     expect(downloadResponse.status).toBe(200);
     expect(downloadResponse.headers.get("Content-Type")).toBe("text/markdown");
-    expect(downloadResponse.headers.get("Content-Disposition")).toContain(
-      "incident-notes.md",
-    );
-    expect(await downloadResponse.text()).toContain("incident commander");
+    expect(await downloadResponse.text()).toContain("下一步行动");
+  });
 
-    const seedDownloadResponse = await app.handle(
+  it("does not expose url import on the public collection API", async () => {
+    const app = createApp();
+
+    await app.handle(
+      new Request("http://localhost/api/kb/collections", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: "reading",
+          name: "阅读",
+          description: "阅读摘录",
+        }),
+      }),
+    );
+
+    const response = await app.handle(
+      new Request("http://localhost/api/kb/collections/reading/imports/url", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          url: "https://example.com",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it("creates a chat session, replies with citations, and stores feedback", async () => {
+    const app = createApp();
+
+    await app.handle(
+      new Request("http://localhost/api/kb/collections", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: "product",
+          name: "产品资料",
+          description: "产品研究与方案",
+        }),
+      }),
+    );
+
+    await app.handle(
+      new Request("http://localhost/api/kb/collections/product/imports/text", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: "产品判断标准",
+          content: "最关键的是把证据和行动绑定，不要只停留在信息收集阶段。",
+        }),
+      }),
+    );
+
+    const sessionResponse = await app.handle(
+      new Request("http://localhost/api/chat/sessions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          collectionId: "product",
+          title: "产品策略讨论",
+        }),
+      }),
+    );
+    const sessionPayload = await readJson(sessionResponse);
+    const sessionData = sessionPayload.data as {
+      session: {
+        id: string;
+      };
+    };
+
+    const replyResponse = await app.handle(
       new Request(
-        "http://localhost/api/kb/spaces/ops/documents/ops-oncall-playbook/download",
+        `http://localhost/api/chat/sessions/${sessionData.session.id}/reply`,
         {
-          headers: authHeaders,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            query: "根据资料，总结产品判断最关键的原则。",
+            collectionId: "product",
+          }),
         },
       ),
     );
-    const seedDownloadPayload = await readJson(seedDownloadResponse);
+    const replyPayload = await readJson(replyResponse);
+    const replyData = replyPayload.data as {
+      assistantMessage: {
+        id: string;
+        citations: unknown[];
+        retrieval?: {
+          hits: Array<{
+            usedInAnswer: boolean;
+          }>;
+        };
+      };
+      retrieval: {
+        total: number;
+        usedHitIds: string[];
+      };
+      search: {
+        total: number;
+      };
+    };
 
-    expect(seedDownloadResponse.status).toBe(400);
-    expect(seedDownloadPayload.success).toBeFalse();
+    expect(replyResponse.status).toBe(200);
+    expect(replyData.search.total).toBeGreaterThan(0);
+    expect(replyData.retrieval.total).toBeGreaterThan(0);
+    expect(replyData.retrieval.usedHitIds.length).toBeGreaterThan(0);
+    expect(replyData.assistantMessage.citations.length).toBeGreaterThan(0);
+    expect(
+      replyData.assistantMessage.retrieval?.hits.some(
+        (item) => item.usedInAnswer,
+      ),
+    ).toBeTrue();
+
+    const feedbackResponse = await app.handle(
+      new Request(
+        `http://localhost/api/chat/messages/${replyData.assistantMessage.id}/feedback`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            rating: "up",
+          }),
+        },
+      ),
+    );
+    const feedbackPayload = await readJson(feedbackResponse);
+    const feedbackData = feedbackPayload.data as {
+      rating: string;
+    };
+
+    expect(feedbackResponse.status).toBe(200);
+    expect(feedbackData.rating).toBe("up");
   });
 
-  it("returns a mock ask response without a model key", async () => {
+  it("keeps legacy ask compatibility for existing callers", async () => {
     const app = createApp();
-    const authHeaders = await loginAndGetAuthHeader(app);
+
+    await app.handle(
+      new Request("http://localhost/api/kb/spaces", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: "legacy-space",
+          name: "兼容空间",
+          description: "旧接口兼容测试",
+        }),
+      }),
+    );
+
+    const form = new FormData();
+
+    form.append(
+      "file",
+      new File(
+        ["# 兼容文档\n\n旧接口提问时，也应该返回引用和答案。"],
+        "legacy.md",
+        {
+          type: "text/markdown",
+        },
+      ),
+    );
+    form.append("title", "兼容文档");
+
+    await app.handle(
+      new Request(
+        "http://localhost/api/kb/spaces/legacy-space/documents/upload",
+        {
+          method: "POST",
+          body: form,
+        },
+      ),
+    );
+
     const response = await app.handle(
       new Request("http://localhost/api/kb/ask", {
         method: "POST",
         headers: {
-          ...authHeaders,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          question: "How should onboarding start?",
+          question: "旧接口提问时能否返回引用？",
+          spaceId: "legacy-space",
         }),
       }),
     );
     const payload = await readJson(response);
     const data = payload.data as {
       citations: unknown[];
-      engine: string;
       mode: string;
     };
 
     expect(response.status).toBe(200);
     expect(data.mode).toBe("mock");
-    expect(data.engine).toBe("lexical");
     expect(data.citations.length).toBeGreaterThan(0);
-  });
-
-  it("returns downloadable citation metadata for uploaded documents", async () => {
-    const app = createApp();
-    const authHeaders = await loginAndGetAuthHeader(app);
-    const createSpaceResponse = await app.handle(
-      new Request("http://localhost/api/kb/spaces", {
-        method: "POST",
-        headers: {
-          ...authHeaders,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: "departments",
-          name: "Department Routing",
-          description: "Department responsibility samples",
-        }),
-      }),
-    );
-
-    expect(createSpaceResponse.status).toBe(200);
-
-    const form = new FormData();
-
-    form.append(
-      "file",
-      new File(
-        [
-          "# Human Resources Department\n\nThe human resources department owns employee onboarding, social insurance enrollment, labor contract administration, probation reviews, and personnel records. New employee onboarding packets and social insurance enrollment requests should be routed to human resources first.",
-        ],
-        "human-resources.md",
-        {
-          type: "text/markdown",
-        },
-      ),
-    );
-    form.append("title", "Human Resources Department");
-
-    const uploadResponse = await app.handle(
-      new Request(
-        "http://localhost/api/kb/spaces/departments/documents/upload",
-        {
-          method: "POST",
-          headers: authHeaders,
-          body: form,
-        },
-      ),
-    );
-    const uploadPayload = await readJson(uploadResponse);
-    const uploadData = uploadPayload.data as {
-      document: {
-        id: string;
-      };
-    };
-    const askResponse = await app.handle(
-      new Request("http://localhost/api/kb/ask", {
-        method: "POST",
-        headers: {
-          ...authHeaders,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          question:
-            "Which department handles employee onboarding and social insurance enrollment?",
-          spaceId: "departments",
-        }),
-      }),
-    );
-    const askPayload = await readJson(askResponse);
-    const askData = askPayload.data as {
-      citations: Array<{
-        documentId: string;
-        downloadUrl?: string;
-        sourceFilename?: string;
-        spaceId: string;
-      }>;
-    };
-
-    expect(askResponse.status).toBe(200);
-    expect(askData.citations[0]?.documentId).toBe(uploadData.document.id);
-    expect(askData.citations[0]?.spaceId).toBe("departments");
-    expect(askData.citations[0]?.sourceFilename).toBe("human-resources.md");
-    expect(askData.citations[0]?.downloadUrl).toContain(
-      `/api/kb/spaces/departments/documents/${uploadData.document.id}/download`,
-    );
-  });
-
-  it("returns a model ask response when the provider call succeeds", async () => {
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_BASE_URL = "https://gateway.example/v1";
-    globalThis.fetch = async (input, init) => {
-      const url = typeof input === "string" ? input : input.toString();
-
-      if (url.endsWith("/embeddings")) {
-        return new Response(
-          JSON.stringify({
-            data: [
-              {
-                embedding: [0.1, 0.2, 0.3],
-                index: 0,
-              },
-            ],
-          }),
-          {
-            status: 200,
-            headers: {
-              "Content-Type": "application/json",
-            },
-          },
-        );
-      }
-
-      if (url.endsWith("/chat/completions")) {
-        expect(init?.method).toBe("POST");
-        return new Response(
-          JSON.stringify({
-            choices: [
-              {
-                message: {
-                  content: "Use short quotations and cite the source title.",
-                },
-              },
-            ],
-          }),
-          {
-            status: 200,
-            headers: {
-              "Content-Type": "application/json",
-            },
-          },
-        );
-      }
-
-      if (url.endsWith("/collections/atlas_kb_chunks")) {
-        return new Response(
-          JSON.stringify({
-            status: "already_exists",
-          }),
-          {
-            status: 409,
-            headers: {
-              "Content-Type": "application/json",
-            },
-          },
-        );
-      }
-
-      if (url.includes("/collections/atlas_kb_chunks/points?wait=true")) {
-        return new Response(
-          JSON.stringify({
-            status: "ok",
-          }),
-          {
-            status: 200,
-            headers: {
-              "Content-Type": "application/json",
-            },
-          },
-        );
-      }
-
-      if (url.endsWith("/collections/atlas_kb_chunks/points/query")) {
-        return new Response(
-          JSON.stringify({
-            result: {
-              points: [],
-            },
-          }),
-          {
-            status: 200,
-            headers: {
-              "Content-Type": "application/json",
-            },
-          },
-        );
-      }
-
-      return originalFetch(input, init);
-    };
-
-    const app = createApp();
-    const authHeaders = await loginAndGetAuthHeader(app);
-    const response = await app.handle(
-      new Request("http://localhost/api/kb/ask", {
-        method: "POST",
-        headers: {
-          ...authHeaders,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          question: "How should answers cite evidence?",
-        }),
-      }),
-    );
-    const payload = await readJson(response);
-    const data = payload.data as {
-      answer: string;
-      engine: string;
-      mode: string;
-    };
-
-    expect(response.status).toBe(200);
-    expect(data.mode).toBe("model");
-    expect(data.engine).toBe("lexical");
-    expect(data.answer).toContain("cite the source title");
-  });
-
-  it("returns an upstream error when a configured provider rejects ask", async () => {
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_BASE_URL = "https://gateway.example/v1";
-    globalThis.fetch = async (input, init) => {
-      const url = typeof input === "string" ? input : input.toString();
-
-      if (url.endsWith("/embeddings")) {
-        return new Response("unauthorized", { status: 401 });
-      }
-
-      if (url.endsWith("/chat/completions")) {
-        expect(init?.method).toBe("POST");
-        return new Response("unauthorized", { status: 401 });
-      }
-
-      if (url.endsWith("/collections/atlas_kb_chunks/points/query")) {
-        return new Response(
-          JSON.stringify({
-            result: {
-              points: [],
-            },
-          }),
-          {
-            status: 200,
-            headers: {
-              "Content-Type": "application/json",
-            },
-          },
-        );
-      }
-
-      return originalFetch(input, init);
-    };
-
-    const app = createApp();
-    const authHeaders = await loginAndGetAuthHeader(app);
-    const response = await app.handle(
-      new Request("http://localhost/api/kb/ask", {
-        method: "POST",
-        headers: {
-          ...authHeaders,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          question: "How should answers cite evidence?",
-        }),
-      }),
-    );
-    const payload = await readJson(response);
-
-    expect(response.status).toBe(502);
-    expect(payload.success).toBeFalse();
-    expect((payload.error as { code: string }).code).toBe(
-      "UPSTREAM_SERVICE_ERROR",
-    );
   });
 });

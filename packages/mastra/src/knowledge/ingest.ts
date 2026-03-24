@@ -1,16 +1,35 @@
 import { BadRequestError } from "@atlas-kb/errors";
-import type { KnowledgeSpace, KnowledgeUploadMetadata } from "@atlas-kb/schema";
-import { mkdir, writeFile } from "node:fs/promises";
+import type {
+  KnowledgeCollection,
+  KnowledgeFileImportRequest,
+  KnowledgeImportJob,
+  KnowledgeRetrievalEngine,
+  KnowledgeSource,
+  KnowledgeSourceUpdateRequest,
+  KnowledgeTextImportRequest,
+  KnowledgeUrlImportRequest,
+  KnowledgeUploadMetadata,
+} from "@atlas-kb/schema";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
+import mammoth from "mammoth";
+import { PDFParse } from "pdf-parse";
+import { JSDOM } from "jsdom";
+import { Readability } from "@mozilla/readability";
 import { getKnowledgeUploadsDir } from "./config";
-import { indexKnowledgeDocument } from "./qdrant";
+import { replaceKnowledgeSourceVectorIndex } from "./qdrant";
 import {
-  createKnowledgeDocument,
-  getDocumentById,
-  requireKnowledgeSpace,
+  createImportJob,
+  createSourceDraft,
+  getLatestSourceVersion,
+  replaceSourceContent,
+  requireKnowledgeCollection,
+  requireKnowledgeSource,
+  updateImportJob,
 } from "./repository";
+import { normalizeWhitespace } from "./search-utils";
 
-const SUPPORTED_EXTENSIONS = new Set([
+const TEXT_FILE_EXTENSIONS = new Set([
   ".csv",
   ".html",
   ".json",
@@ -22,18 +41,24 @@ const SUPPORTED_EXTENSIONS = new Set([
   ".yml",
 ]);
 
-const SUPPORTED_MIME_TYPES = new Set([
-  "application/json",
-  "application/x-ndjson",
-  "application/x-yaml",
-  "application/xml",
-  "text/csv",
-  "text/html",
-  "text/markdown",
-  "text/plain",
-  "text/xml",
-  "text/yaml",
-]);
+const URL_FETCH_TIMEOUT_MS = 15_000;
+
+type ParsedContent = {
+  byteSize?: number;
+  content: string;
+  mimeType?: string;
+  parser: string;
+  snapshotHtml?: string;
+  title: string;
+};
+
+type ImportResult = {
+  collection: KnowledgeCollection;
+  source: KnowledgeSource;
+  job: KnowledgeImportJob;
+  engine: KnowledgeRetrievalEngine;
+  indexed: boolean;
+};
 
 function sanitizeFilename(input: string): string {
   const trimmed = basename(input || "upload.txt").trim();
@@ -41,82 +66,147 @@ function sanitizeFilename(input: string): string {
   return sanitized || "upload.txt";
 }
 
-function normalizeText(input: string): string {
-  return input
-    .replace(/\r\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+function resolveDraftTitle(params: {
+  title?: string;
+  fallback: string;
+}): string {
+  return params.title?.trim() || params.fallback;
 }
 
-function buildSummary(content: string): string {
-  const summary = content.replace(/\s+/g, " ").trim();
-  return summary.length > 220 ? `${summary.slice(0, 217).trim()}...` : summary;
-}
+function resolveTextTitle(content: string): string {
+  const firstLine = normalizeWhitespace(content).split("\n")[0]?.trim();
 
-function buildExcerpt(content: string): string {
-  const excerpt = content.replace(/\s+/g, " ").trim();
-  return excerpt.length > 280 ? `${excerpt.slice(0, 277).trim()}...` : excerpt;
-}
-
-function resolveTitle(
-  filename: string,
-  metadata: KnowledgeUploadMetadata,
-): string {
-  if (metadata.title) {
-    return metadata.title.trim();
+  if (!firstLine) {
+    return "Untitled Note";
   }
 
-  const extension = extname(filename);
-  return (
-    basename(filename, extension).replace(/[-_]+/g, " ").trim() || filename
-  );
+  return firstLine.replace(/^#{1,6}\s+/, "").slice(0, 120);
 }
 
-function isTextUpload(file: File): boolean {
+function isSupportedFile(file: File): boolean {
+  const extension = extname(file.name).toLowerCase();
   if (
-    file.type &&
-    (file.type.startsWith("text/") || SUPPORTED_MIME_TYPES.has(file.type))
+    extension === ".pdf" ||
+    extension === ".docx" ||
+    TEXT_FILE_EXTENSIONS.has(extension)
   ) {
     return true;
   }
 
-  return SUPPORTED_EXTENSIONS.has(extname(file.name).toLowerCase());
+  return Boolean(file.type?.startsWith("text/"));
 }
 
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) {
-    return error.message;
+function extractHtmlContent(params: {
+  html: string;
+  titleFallback: string;
+}): ParsedContent {
+  const dom = new JSDOM(params.html, {
+    url: "https://atlas-kb.local",
+  });
+  const readable = new Readability(dom.window.document).parse();
+  const title =
+    readable?.title?.trim() ||
+    dom.window.document.title?.trim() ||
+    params.titleFallback;
+  const content = normalizeWhitespace(
+    readable?.textContent || dom.window.document.body?.textContent || "",
+  );
+
+  if (!content) {
+    throw new BadRequestError("HTML content is empty after extraction");
   }
 
-  return "Unknown error";
+  return {
+    content,
+    parser: "html-readability",
+    snapshotHtml: params.html,
+    title,
+  };
 }
 
-export async function uploadKnowledgeDocument(params: {
-  file: File;
-  metadata?: KnowledgeUploadMetadata;
-  spaceId: string;
-}): Promise<{
-  document: Awaited<ReturnType<typeof createKnowledgeDocument>>;
-  space: KnowledgeSpace;
-  engine: "lexical" | "vector";
-  indexed: boolean;
-}> {
-  await requireKnowledgeSpace(params.spaceId);
+async function parseFile(file: File): Promise<ParsedContent> {
+  const extension = extname(file.name).toLowerCase();
+  const safeName = sanitizeFilename(file.name);
 
-  if (!isTextUpload(params.file)) {
+  if (!isSupportedFile(file)) {
     throw new BadRequestError(
-      "Unsupported file type. Upload text, markdown, HTML, JSON, CSV, XML, or YAML files.",
+      "Unsupported file type. Upload PDF, DOCX, markdown, text, HTML, JSON, CSV, XML, or YAML files.",
     );
   }
 
-  const metadata = params.metadata ?? {};
-  const content = normalizeText(await params.file.text());
+  if (extension === ".pdf") {
+    const parser = new PDFParse({
+      data: new Uint8Array(await file.arrayBuffer()),
+    });
+    const parsed = await parser.getText();
+    const content = normalizeWhitespace(parsed.text || "");
 
+    await parser.destroy();
+
+    if (!content) {
+      throw new BadRequestError("PDF content could not be extracted");
+    }
+
+    return {
+      byteSize: file.size,
+      content,
+      mimeType: file.type || "application/pdf",
+      parser: "pdf-parse",
+      title: safeName.replace(/\.pdf$/i, "") || "PDF Document",
+    };
+  }
+
+  if (extension === ".docx") {
+    const result = await mammoth.extractRawText({
+      buffer: Buffer.from(await file.arrayBuffer()),
+    });
+    const content = normalizeWhitespace(result.value || "");
+
+    if (!content) {
+      throw new BadRequestError("DOCX content could not be extracted");
+    }
+
+    return {
+      byteSize: file.size,
+      content,
+      mimeType:
+        file.type ||
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      parser: "mammoth",
+      title: safeName.replace(/\.docx$/i, "") || "DOCX Document",
+    };
+  }
+
+  if (extension === ".html" || file.type === "text/html") {
+    return {
+      ...extractHtmlContent({
+        html: await file.text(),
+        titleFallback: safeName.replace(/\.html$/i, "") || "HTML Document",
+      }),
+      byteSize: file.size,
+      mimeType: file.type || "text/html",
+    };
+  }
+
+  const content = normalizeWhitespace(await file.text());
   if (!content) {
     throw new BadRequestError("Uploaded file is empty");
   }
 
-  const uploadsDir = resolve(getKnowledgeUploadsDir(), params.spaceId);
+  return {
+    byteSize: file.size,
+    content,
+    mimeType: file.type || undefined,
+    parser: "plain-text",
+    title: safeName.replace(/\.[^/.]+$/, "") || safeName,
+  };
+}
+
+async function storeUploadedFile(params: {
+  collectionId: string;
+  file: File;
+}): Promise<string> {
+  const uploadsDir = resolve(getKnowledgeUploadsDir(), params.collectionId);
   const safeFilename = sanitizeFilename(params.file.name);
   const storageName = `${Date.now()}-${safeFilename}`;
   const storagePath = resolve(uploadsDir, storageName);
@@ -124,35 +214,498 @@ export async function uploadKnowledgeDocument(params: {
   await mkdir(uploadsDir, { recursive: true });
   await writeFile(storagePath, new Uint8Array(await params.file.arrayBuffer()));
 
-  const document = await createKnowledgeDocument({
-    spaceId: params.spaceId,
-    title: resolveTitle(safeFilename, metadata),
-    summary: metadata.summary?.trim() || buildSummary(content),
-    excerpt: buildExcerpt(content),
-    content,
-    tags: metadata.tags ?? [],
-    source: "upload",
-    sourceFilename: safeFilename,
-    mimeType: params.file.type || undefined,
-    byteSize: params.file.size,
-    storagePath,
+  return storagePath;
+}
+
+async function fetchUrlContent(url: string): Promise<{
+  contentType: string;
+  html?: string;
+  text: string;
+  title: string;
+}> {
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(URL_FETCH_TIMEOUT_MS),
   });
 
-  const storedDocument = await getDocumentById(document.id);
-  const indexed = storedDocument
-    ? await indexKnowledgeDocument(storedDocument).catch((error) => {
-        console.warn(
-          `[atlas-kb/mastra] upload indexed with lexical fallback: ${getErrorMessage(error)}`,
-        );
-        return false;
-      })
-    : false;
-  const space = await requireKnowledgeSpace(params.spaceId);
+  if (!response.ok) {
+    throw new BadRequestError(
+      `Failed to fetch URL with status ${response.status}`,
+    );
+  }
+
+  const contentType = response.headers.get("Content-Type") || "text/plain";
+  const body = await response.text();
+
+  if (contentType.includes("text/html")) {
+    const parsed = extractHtmlContent({
+      html: body,
+      titleFallback: url,
+    });
+
+    return {
+      contentType,
+      html: parsed.snapshotHtml,
+      text: parsed.content,
+      title: parsed.title,
+    };
+  }
 
   return {
-    document,
-    space,
+    contentType,
+    text: normalizeWhitespace(body),
+    title: url,
+  };
+}
+
+async function finalizeImport(params: {
+  collectionId: string;
+  draft: KnowledgeSource;
+  job: KnowledgeImportJob;
+  parsed: ParsedContent;
+  tags: string[];
+  summary?: string;
+  sourceFilename?: string;
+  sourceUrl?: string;
+  filePath?: string;
+}): Promise<ImportResult> {
+  await updateImportJob({
+    jobId: params.job.id,
+    stage: "chunking",
+    status: "processing",
+  });
+
+  const source = await replaceSourceContent({
+    sourceId: params.draft.id,
+    title: params.parsed.title,
+    summary: params.summary,
+    content: params.parsed.content,
+    tags: params.tags,
+    parser: params.parsed.parser,
+    mimeType: params.parsed.mimeType,
+    byteSize: params.parsed.byteSize,
+    filePath: params.filePath,
+    snapshotHtml: params.parsed.snapshotHtml,
+    sourceFilename: params.sourceFilename,
+    sourceUrl: params.sourceUrl,
+    status: "ready",
+  });
+
+  await updateImportJob({
+    jobId: params.job.id,
+    stage: "embedding",
+    status: "processing",
+  });
+
+  const indexed = await replaceKnowledgeSourceVectorIndex(source.id).catch(
+    (error) => {
+      console.warn(
+        `[atlas-kb/mastra] vector index fallback for "${source.id}": ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+      );
+      return false;
+    },
+  );
+
+  await updateImportJob({
+    jobId: params.job.id,
+    stage: "completed",
+    status: "ready",
+  });
+
+  const collection = await requireKnowledgeCollection(params.collectionId);
+
+  return {
+    collection,
+    source,
+    job: {
+      ...params.job,
+      stage: "completed",
+      status: "ready",
+      finishedAt: new Date().toISOString(),
+    },
+    engine: indexed ? "hybrid" : "lexical",
     indexed,
-    engine: indexed ? "vector" : "lexical",
+  };
+}
+
+async function failImport(params: {
+  draft: KnowledgeSource;
+  job: KnowledgeImportJob;
+  error: unknown;
+}): Promise<ImportResult> {
+  const message =
+    params.error instanceof Error ? params.error.message : "Import failed";
+
+  const source = await replaceSourceContent({
+    sourceId: params.draft.id,
+    title: params.draft.title,
+    summary: params.draft.summary,
+    content: params.draft.content,
+    tags: params.draft.tags,
+    parser: "failed-import",
+    status: "failed",
+    failureMessage: message,
+    sourceFilename: params.draft.sourceFilename,
+    sourceUrl: params.draft.sourceUrl,
+  });
+
+  await updateImportJob({
+    jobId: params.job.id,
+    stage: "completed",
+    status: "failed",
+    errorMessage: message,
+  });
+
+  const collection = await requireKnowledgeCollection(
+    params.draft.collectionId,
+  );
+
+  return {
+    collection,
+    source,
+    job: {
+      ...params.job,
+      stage: "completed",
+      status: "failed",
+      errorMessage: message,
+      finishedAt: new Date().toISOString(),
+    },
+    engine: "lexical",
+    indexed: false,
+  };
+}
+
+export async function importKnowledgeFile(params: {
+  collectionId: string;
+  file: File;
+  input?: KnowledgeFileImportRequest;
+}): Promise<ImportResult> {
+  await requireKnowledgeCollection(params.collectionId);
+  const parsed = await parseFile(params.file);
+  const title = resolveDraftTitle({
+    title: params.input?.title,
+    fallback: parsed.title,
+  });
+  const filePath = await storeUploadedFile({
+    collectionId: params.collectionId,
+    file: params.file,
+  });
+  const draft = await createSourceDraft({
+    collectionId: params.collectionId,
+    sourceType: "file",
+    title,
+    summary: params.input?.summary,
+    tags: params.input?.tags,
+    sourceFilename:
+      params.input?.fileName?.trim() || sanitizeFilename(params.file.name),
+    mimeType: parsed.mimeType,
+    byteSize: parsed.byteSize,
+  });
+  const job = await createImportJob({
+    collectionId: params.collectionId,
+    sourceId: draft.id,
+    sourceType: "file",
+    attempt: 1,
+  });
+
+  try {
+    return await finalizeImport({
+      collectionId: params.collectionId,
+      draft,
+      job,
+      parsed: {
+        ...parsed,
+        title,
+      },
+      tags: params.input?.tags ?? [],
+      summary: params.input?.summary,
+      sourceFilename:
+        params.input?.fileName?.trim() || sanitizeFilename(params.file.name),
+      filePath,
+    });
+  } catch (error) {
+    return failImport({
+      draft,
+      job,
+      error,
+    });
+  }
+}
+
+export async function importKnowledgeText(params: {
+  collectionId: string;
+  input: KnowledgeTextImportRequest;
+}): Promise<ImportResult> {
+  await requireKnowledgeCollection(params.collectionId);
+  const title = resolveDraftTitle({
+    title: params.input.title,
+    fallback: resolveTextTitle(params.input.content),
+  });
+  const draft = await createSourceDraft({
+    collectionId: params.collectionId,
+    sourceType: "text",
+    title,
+    summary: params.input.summary,
+    tags: params.input.tags,
+  });
+  const job = await createImportJob({
+    collectionId: params.collectionId,
+    sourceId: draft.id,
+    sourceType: "text",
+    attempt: 1,
+  });
+
+  try {
+    return await finalizeImport({
+      collectionId: params.collectionId,
+      draft,
+      job,
+      parsed: {
+        content: normalizeWhitespace(params.input.content),
+        parser: "plain-text",
+        title,
+      },
+      tags: params.input.tags ?? [],
+      summary: params.input.summary,
+    });
+  } catch (error) {
+    return failImport({
+      draft,
+      job,
+      error,
+    });
+  }
+}
+
+export async function importKnowledgeUrl(params: {
+  collectionId: string;
+  input: KnowledgeUrlImportRequest;
+}): Promise<ImportResult> {
+  await requireKnowledgeCollection(params.collectionId);
+  const fetched = await fetchUrlContent(params.input.url);
+  const title = resolveDraftTitle({
+    title: params.input.title,
+    fallback: fetched.title,
+  });
+  const draft = await createSourceDraft({
+    collectionId: params.collectionId,
+    sourceType: "url",
+    title,
+    summary: params.input.summary,
+    tags: params.input.tags,
+    sourceUrl: params.input.url,
+    mimeType: fetched.contentType,
+  });
+  const job = await createImportJob({
+    collectionId: params.collectionId,
+    sourceId: draft.id,
+    sourceType: "url",
+    attempt: 1,
+  });
+
+  try {
+    return await finalizeImport({
+      collectionId: params.collectionId,
+      draft,
+      job,
+      parsed: {
+        content: fetched.text,
+        mimeType: fetched.contentType,
+        parser: fetched.html ? "html-readability" : "remote-text",
+        snapshotHtml: fetched.html,
+        title,
+      },
+      tags: params.input.tags ?? [],
+      summary: params.input.summary,
+      sourceUrl: params.input.url,
+    });
+  } catch (error) {
+    return failImport({
+      draft,
+      job,
+      error,
+    });
+  }
+}
+
+export async function refreshKnowledgeSource(
+  sourceId: string,
+): Promise<ImportResult> {
+  const source = await requireKnowledgeSource(sourceId);
+
+  if (source.sourceType !== "url" || !source.sourceUrl) {
+    throw new BadRequestError("Only URL sources can be refreshed");
+  }
+
+  const attempt = (await getLatestSourceVersion(sourceId))?.version ?? 1;
+  const job = await createImportJob({
+    collectionId: source.collectionId,
+    sourceId,
+    sourceType: source.sourceType,
+    attempt,
+  });
+
+  try {
+    const fetched = await fetchUrlContent(source.sourceUrl);
+
+    return await finalizeImport({
+      collectionId: source.collectionId,
+      draft: source,
+      job,
+      parsed: {
+        content: fetched.text,
+        mimeType: fetched.contentType,
+        parser: fetched.html ? "html-readability" : "remote-text",
+        snapshotHtml: fetched.html,
+        title: source.title,
+      },
+      tags: source.tags,
+      summary: source.summary,
+      sourceUrl: source.sourceUrl,
+    });
+  } catch (error) {
+    return failImport({
+      draft: source,
+      job,
+      error,
+    });
+  }
+}
+
+export async function retryKnowledgeSource(
+  sourceId: string,
+): Promise<ImportResult> {
+  const source = await requireKnowledgeSource(sourceId);
+  const latestVersion = await getLatestSourceVersion(sourceId);
+  const attempt = Math.max(
+    (latestVersion?.version ?? source.latestVersion) + 1,
+    1,
+  );
+
+  if (source.sourceType === "url" && source.sourceUrl) {
+    return refreshKnowledgeSource(sourceId);
+  }
+
+  if (source.sourceType === "file" && latestVersion?.filePath) {
+    const job = await createImportJob({
+      collectionId: source.collectionId,
+      sourceId,
+      sourceType: source.sourceType,
+      attempt,
+    });
+
+    try {
+      const buffer = await readFile(latestVersion.filePath);
+      const file = new File(
+        [buffer],
+        source.sourceFilename || `${source.title}.txt`,
+        {
+          type: latestVersion.mimeType,
+        },
+      );
+      const parsed = await parseFile(file);
+
+      return await finalizeImport({
+        collectionId: source.collectionId,
+        draft: source,
+        job,
+        parsed: {
+          ...parsed,
+          title: source.title,
+        },
+        tags: source.tags,
+        summary: source.summary,
+        sourceFilename: source.sourceFilename,
+        filePath: latestVersion.filePath,
+      });
+    } catch (error) {
+      return failImport({
+        draft: source,
+        job,
+        error,
+      });
+    }
+  }
+
+  const job = await createImportJob({
+    collectionId: source.collectionId,
+    sourceId,
+    sourceType: source.sourceType,
+    attempt,
+  });
+
+  try {
+    return await finalizeImport({
+      collectionId: source.collectionId,
+      draft: source,
+      job,
+      parsed: {
+        content: latestVersion?.content || source.content,
+        mimeType: latestVersion?.mimeType || source.mimeType,
+        parser: latestVersion?.parser || "plain-text",
+        title: source.title,
+      },
+      tags: source.tags,
+      summary: source.summary,
+      sourceFilename: source.sourceFilename,
+      sourceUrl: source.sourceUrl,
+      filePath: latestVersion?.filePath,
+    });
+  } catch (error) {
+    return failImport({
+      draft: source,
+      job,
+      error,
+    });
+  }
+}
+
+export async function updateKnowledgeSource(
+  sourceId: string,
+  input: KnowledgeSourceUpdateRequest,
+): Promise<KnowledgeSource> {
+  const source = await requireKnowledgeSource(sourceId);
+
+  return replaceSourceContent({
+    sourceId,
+    title: input.title?.trim() || source.title,
+    summary: input.summary?.trim() || source.summary,
+    content: source.content,
+    tags: input.tags ?? source.tags,
+    parser: "metadata-update",
+    mimeType: source.mimeType,
+    byteSize: source.byteSize,
+    sourceFilename: source.sourceFilename,
+    sourceUrl: source.sourceUrl,
+    status: input.status ?? source.status,
+  });
+}
+
+export async function uploadKnowledgeDocument(params: {
+  file: File;
+  metadata?: KnowledgeUploadMetadata;
+  spaceId: string;
+}): Promise<{
+  document: KnowledgeSource;
+  space: KnowledgeCollection;
+  engine: KnowledgeRetrievalEngine;
+  indexed: boolean;
+}> {
+  const result = await importKnowledgeFile({
+    collectionId: params.spaceId,
+    file: params.file,
+    input: {
+      title: params.metadata?.title,
+      summary: params.metadata?.summary,
+      tags: params.metadata?.tags,
+    },
+  });
+
+  return {
+    document: result.source,
+    space: result.collection,
+    engine: result.engine,
+    indexed: result.indexed,
   };
 }

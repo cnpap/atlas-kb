@@ -1,101 +1,67 @@
-import type { KnowledgeDocument, KnowledgeSpace } from "@atlas-kb/schema";
+import type { KnowledgeCollection, KnowledgeSource } from "@atlas-kb/schema";
 
-export const SEED_DOCUMENTS: KnowledgeDocument[] = [
+const DEMO_CREATED_AT = "2026-03-01T10:00:00.000Z";
+
+export const DEMO_COLLECTIONS: KnowledgeCollection[] = [
   {
-    id: "ops-oncall-playbook",
-    spaceId: "ops",
-    title: "On-Call Playbook",
-    summary:
-      "Escalation, triage, and incident communication for production alerts.",
-    excerpt:
-      "Start with service impact, assign an incident commander, and post a status update within 10 minutes.",
-    content:
-      "The on-call playbook defines how Atlas teams respond to production alerts. Start by confirming customer impact, assign an incident commander, and post a status update within 10 minutes. Capture mitigations, owners, and next updates until the incident is resolved. After recovery, publish a short retrospective with timelines and follow-up actions.",
-    tags: ["operations", "incident", "oncall"],
-    source: "seed",
-    createdAt: "2026-03-01T10:00:00.000Z",
-    updatedAt: "2026-03-01T10:00:00.000Z",
+    id: "personal-notes",
+    name: "个人笔记",
+    description: "日常方法、流程卡片和参考资料。",
+    color: "#0f766e",
+    icon: "i-lucide-notebook-pen",
+    isPinned: true,
+    documentCount: 2,
+    readyDocumentCount: 2,
+    processingDocumentCount: 0,
+    failedDocumentCount: 0,
+    createdAt: DEMO_CREATED_AT,
+    updatedAt: "2026-03-10T09:15:00.000Z",
+    lastActivityAt: "2026-03-10T09:15:00.000Z",
   },
+];
+
+export const DEMO_SOURCES: KnowledgeSource[] = [
   {
-    id: "ops-release-checklist",
-    spaceId: "ops",
-    title: "Release Checklist",
-    summary: "Preflight checks for safe production releases.",
+    id: "onboarding-guide",
+    collectionId: "personal-notes",
+    spaceId: "personal-notes",
+    title: "知识库启用清单",
+    summary: "把新资料接入个人知识库时的推荐步骤。",
     excerpt:
-      "Validate migrations in staging, confirm rollback steps, and monitor the first 15 minutes after deploy.",
+      "先明确目标，再导入首批资料，最后用几个真实问题验证召回和回答质量。",
+    contentPreview:
+      "启动知识库时，先定义你最常问的 3 到 5 个问题，再导入首批核心资料，最后检查引用是否可靠。",
     content:
-      "Before every production release, validate database migrations in staging, confirm rollback steps, verify feature flags, and notify the support channel. After deployment, monitor latency, error rate, and queue depth during the first 15 minutes. Any regression above threshold triggers an immediate rollback decision.",
-    tags: ["operations", "release", "deployment"],
+      "启动知识库时，先定义你最常问的 3 到 5 个问题，再导入首批核心资料，最后检查引用是否可靠。第一周应该完成最重要的一批资料导入，并用真实问题测试检索、引用和回答质量。如果有召回不准的情况，优先补充更直接的资料和更清晰的标题。",
+    tags: ["知识库", "导入", "召回"],
+    sourceType: "seed",
     source: "seed",
-    createdAt: "2026-03-05T08:30:00.000Z",
-    updatedAt: "2026-03-05T08:30:00.000Z",
-  },
-  {
-    id: "product-customer-onboarding",
-    spaceId: "product",
-    title: "Customer Onboarding Guide",
-    summary: "Recommended steps for onboarding new workspace admins.",
-    excerpt:
-      "Schedule a kickoff, import the first knowledge set, and train one champion user before go-live.",
-    content:
-      "Customer onboarding starts with a kickoff call, a workspace setup review, and an agreed success metric. The first knowledge set should be imported during the first week. Before go-live, train one champion user on search, citations, and answer review so they can support the rest of the team.",
-    tags: ["product", "onboarding", "customer"],
-    source: "seed",
+    status: "ready",
+    latestVersion: 1,
+    readyAt: "2026-03-10T09:15:00.000Z",
+    lastProcessedAt: "2026-03-10T09:15:00.000Z",
     createdAt: "2026-02-26T16:45:00.000Z",
     updatedAt: "2026-02-26T16:45:00.000Z",
   },
   {
-    id: "product-citation-style",
-    spaceId: "product",
-    title: "Citation Style Notes",
-    summary:
-      "How answers should present supporting evidence from knowledge documents.",
-    excerpt:
-      "Prefer short quotations, cite titles, and never invent facts beyond the retrieved context.",
+    id: "citation-style-notes",
+    collectionId: "personal-notes",
+    spaceId: "personal-notes",
+    title: "引用回答规则",
+    summary: "回答时如何引用证据、如何处理证据不足。",
+    excerpt: "优先引用短片段，明确资料标题，超出证据范围的内容不要编造。",
+    contentPreview:
+      "知识回答应该优先使用短片段，明确资料标题，并严格限制在召回到的上下文之内。",
     content:
-      "Knowledge answers should use short quotations or snippets, cite the source document title, and stay within the retrieved context. If retrieval is weak or missing, the assistant should say so directly instead of inventing unsupported details. Favor concise answers with explicit source references.",
-    tags: ["product", "qa", "citations"],
+      "知识回答应该优先使用短片段，明确资料标题，并严格限制在召回到的上下文之内。如果召回证据很弱或根本没有命中，就应该直接说明证据不足，而不是继续编造内容。回答尽量简洁，但要让用户能迅速定位到对应资料。",
+    tags: ["回答", "引用", "证据"],
+    sourceType: "seed",
     source: "seed",
+    status: "ready",
+    latestVersion: 1,
+    readyAt: "2026-03-10T09:15:00.000Z",
+    lastProcessedAt: "2026-03-10T09:15:00.000Z",
     createdAt: "2026-03-10T09:15:00.000Z",
     updatedAt: "2026-03-10T09:15:00.000Z",
   },
 ];
-
-export const SEED_SPACES: KnowledgeSpace[] = [
-  {
-    id: "ops",
-    name: "Ops Handbook",
-    description: "Runbooks, release checks, and incident operations guidance.",
-    documentCount: SEED_DOCUMENTS.filter(
-      (document) => document.spaceId === "ops",
-    ).length,
-    updatedAt: "2026-03-05T08:30:00.000Z",
-  },
-  {
-    id: "product",
-    name: "Product Enablement",
-    description: "Customer onboarding and answer quality guidance.",
-    documentCount: SEED_DOCUMENTS.filter(
-      (document) => document.spaceId === "product",
-    ).length,
-    updatedAt: "2026-03-10T09:15:00.000Z",
-  },
-];
-
-export function listKnowledgeSpaces(): KnowledgeSpace[] {
-  return SEED_SPACES.map((space) => ({ ...space }));
-}
-
-export function getKnowledgeSpace(spaceId: string): KnowledgeSpace | undefined {
-  const space = SEED_SPACES.find((item) => item.id === spaceId);
-  return space ? { ...space } : undefined;
-}
-
-export function listKnowledgeDocuments(spaceId?: string): KnowledgeDocument[] {
-  return SEED_DOCUMENTS.filter((document) =>
-    spaceId ? document.spaceId === spaceId : true,
-  ).map((document) => ({
-    ...document,
-    tags: [...document.tags],
-  }));
-}

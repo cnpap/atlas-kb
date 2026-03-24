@@ -1,16 +1,67 @@
-export { getKnowledgeDocumentDownload } from "./download";
-export { runKnowledgeAgentQuestion } from "./agent";
-export { uploadKnowledgeDocument } from "./ingest";
-export { resetKnowledgeVectorState } from "./qdrant";
+export {
+  createChatReply,
+  createChatSession,
+  deleteChatSession,
+  listChatMessages,
+  listChatSessions,
+  saveMessageFeedback,
+  updateChatSession,
+} from "./chat";
+export {
+  getKnowledgeDocumentDownload,
+  getKnowledgeSourceDownload,
+} from "./download";
+export {
+  importKnowledgeFile,
+  importKnowledgeText,
+  importKnowledgeUrl,
+  refreshKnowledgeSource,
+  retryKnowledgeSource,
+  updateKnowledgeSource,
+  uploadKnowledgeDocument,
+} from "./ingest";
+export {
+  detectPreferredRetrievalEngine,
+  resetKnowledgeVectorState,
+} from "./qdrant";
 export {
   answerKnowledgeQuestion,
+  generateGroundedAnswer,
   searchKnowledge,
 } from "./search";
 export {
+  archiveKnowledgeSource,
+  appendChatMessage,
+  createImportJob,
+  createKnowledgeCollection,
   createKnowledgeSpace,
-  getKnowledgeSpaceDocuments,
+  deleteKnowledgeCollection,
+  deleteKnowledgeSource,
+  getChatMessagesData,
+  getChatSessionById,
+  getDashboardSummary,
+  getDocumentById,
+  getKnowledgeCollection,
+  getKnowledgeCollectionData,
+  getKnowledgeCollectionSources,
+  getKnowledgeCollectionSourcesData,
+  getKnowledgeSourceById,
+  getKnowledgeSourceData,
   getKnowledgeSpace,
+  getKnowledgeSpaceDocuments,
+  getLatestSourceVersion,
+  listImportJobs,
+  listKnowledgeCollections,
   listKnowledgeDocuments,
+  listKnowledgeSources,
   listKnowledgeSpaces,
+  requireChatSession,
+  requireKnowledgeCollection,
+  requireKnowledgeSource,
+  requireKnowledgeSpace,
   resetKnowledgeRepository,
+  resolveDatabasePath,
+  toStoredKnowledgeSource,
+  updateImportJob,
+  updateKnowledgeCollection,
 } from "./repository";

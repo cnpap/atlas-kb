@@ -20,6 +20,10 @@
     "@atlas-kb/errors": "workspace:*",
     "@atlas-kb/schema": "workspace:*",
     "@mastra/core": "*",
-    "@mastra/libsql": "*"
+    "@mastra/libsql": "*",
+    "@mozilla/readability": "0.6.0",
+    "jsdom": "29.0.1",
+    "mammoth": "1.12.0",
+    "pdf-parse": "2.4.5"
   }
 }

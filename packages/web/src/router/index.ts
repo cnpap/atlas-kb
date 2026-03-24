@@ -1,58 +1,78 @@
 import { createRouter, createWebHistory } from "vue-router";
-import { hasAuthToken } from "@/lib/auth";
+import MainLayout from "@/layouts/MainLayout.vue";
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: "/",
-      name: "landing",
-      component: () => import("@/features/landing/views/LandingView.vue"),
+      redirect: "/app",
     },
     {
       path: "/login",
-      name: "login",
-      component: () => import("@/features/auth/views/LoginView.vue"),
-    },
-    {
-      path: "/kb",
-      name: "knowledge-spaces",
-      component: () =>
-        import("@/features/knowledge/views/KnowledgeSpacesView.vue"),
-      meta: { requiresAuth: true, title: "知识库列表" },
-    },
-    {
-      path: "/kb/:spaceId",
-      name: "space-detail",
-      component: () => import("@/features/knowledge/views/SpaceDetailView.vue"),
-      meta: { requiresAuth: true, title: "知识库管理" },
+      redirect: "/app",
     },
     {
       path: "/ask",
-      name: "ask-knowledge",
-      component: () => import("@/features/knowledge/views/AskView.vue"),
-      meta: { requiresAuth: true, title: "智能问答" },
+      redirect: "/app",
+    },
+    {
+      path: "/kb",
+      redirect: "/app?panel=library",
+    },
+    {
+      path: "/kb/:spaceId",
+      redirect: (to) =>
+        `/app?group=${encodeURIComponent(String(to.params.spaceId))}&panel=library`,
+    },
+    {
+      path: "/app/overview",
+      redirect: "/app",
+    },
+    {
+      path: "/app/search",
+      redirect: "/app?panel=citations",
+    },
+    {
+      path: "/app/chat",
+      redirect: "/app",
+    },
+    {
+      path: "/app/collections",
+      redirect: "/app?panel=library",
+    },
+    {
+      path: "/app/collections/:collectionId",
+      redirect: (to) =>
+        `/app?group=${encodeURIComponent(String(to.params.collectionId))}&panel=library`,
+    },
+    {
+      path: "/app/imports",
+      redirect: "/app?panel=library",
+    },
+    {
+      path: "/app/settings",
+      redirect: "/app?panel=library",
+    },
+    {
+      path: "/app",
+      component: MainLayout,
+      children: [
+        {
+          path: "",
+          name: "app-workspace",
+          component: () => import("@/features/app/views/WorkspaceView.vue"),
+          meta: {
+            title: "个人知识库",
+          },
+        },
+      ],
     },
   ],
 });
 
-router.beforeEach((to) => {
-  if (to.meta.requiresAuth && !hasAuthToken()) {
-    return {
-      name: "login",
-      query: {
-        redirect: to.fullPath,
-      },
-    };
-  }
-
-  if (to.name === "login" && hasAuthToken()) {
-    return {
-      name: "knowledge-spaces",
-    };
-  }
-
-  return true;
+router.afterEach(() => {
+  document.title = "个人知识库";
 });
 
 export { router };

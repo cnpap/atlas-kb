@@ -13,20 +13,9 @@ import {
   getQdrantCollectionName,
   getQdrantUrl,
 } from "./config";
-import {
-  getDocumentById,
-  getDocumentsPendingVectorIndex,
-  listStoredKnowledgeDocuments,
-  markDocumentVectorIndexed,
-  type StoredKnowledgeDocument,
-} from "./repository";
-import {
-  buildSearchSnippet,
-  getKnowledgeDocumentSourceMetadata,
-} from "./search-utils";
-
-const CHUNK_OVERLAP = 160;
-const CHUNK_SIZE = 900;
+import { getKnowledgeDatabase } from "./db";
+import { getDocumentById } from "./repository";
+import { buildSearchSnippet, getKnowledgeSourceMetadata } from "./search-utils";
 
 interface EmbeddingResponse {
   data?: Array<{
@@ -46,17 +35,17 @@ interface QdrantQueryResponse {
 }
 
 interface KnowledgeChunkPayload {
-  documentId: string;
-  order: number;
-  spaceId: string;
-  summary: string;
-  tags: string[];
-  text: string;
+  chunkId: string;
+  sourceId: string;
+  collectionId: string;
+  chunkIndex: number;
+  sectionPath?: string;
   title: string;
+  text: string;
+  tags: string[];
 }
 
 let collectionDimension: number | undefined;
-let syncPromise: Promise<boolean> | undefined;
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) {
@@ -66,68 +55,14 @@ function getErrorMessage(error: unknown): string {
   return "Unknown error";
 }
 
-function normalizeWhitespace(input: string): string {
-  return input
-    .replace(/\r\n/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .trim();
-}
-
-function chunkContent(content: string): string[] {
-  const normalized = normalizeWhitespace(content);
-
-  if (normalized.length <= CHUNK_SIZE) {
-    return [normalized];
-  }
-
-  const chunks: string[] = [];
-  let start = 0;
-
-  while (start < normalized.length) {
-    let end = Math.min(normalized.length, start + CHUNK_SIZE);
-
-    if (end < normalized.length) {
-      const boundary = normalized.lastIndexOf(" ", end);
-      if (boundary > start + CHUNK_SIZE / 2) {
-        end = boundary;
-      }
-    }
-
-    const chunk = normalized.slice(start, end).trim();
-    if (chunk) {
-      chunks.push(chunk);
-    }
-
-    if (end >= normalized.length) {
-      break;
-    }
-
-    start = Math.max(end - CHUNK_OVERLAP, start + 1);
-  }
-
-  return chunks;
-}
-
 function createPointId(input: string): string {
-  const hash = createHash("sha256").update(input).digest();
-  const bytes = Uint8Array.from(hash.subarray(0, 16));
-  const byte6 = bytes[6];
-  const byte8 = bytes[8];
-
-  if (byte6 === undefined || byte8 === undefined) {
-    throw new Error("Failed to generate a stable point id");
-  }
-
-  bytes[6] = (byte6 & 0x0f) | 0x40;
-  bytes[8] = (byte8 & 0x3f) | 0x80;
-
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"));
+  const hash = createHash("sha256").update(input).digest("hex");
   return [
-    hex.slice(0, 4).join(""),
-    hex.slice(4, 6).join(""),
-    hex.slice(6, 8).join(""),
-    hex.slice(8, 10).join(""),
-    hex.slice(10, 16).join(""),
+    hash.slice(0, 8),
+    hash.slice(8, 12),
+    hash.slice(12, 16),
+    hash.slice(16, 20),
+    hash.slice(20, 32),
   ].join("-");
 }
 
@@ -205,138 +140,96 @@ async function ensureCollection(dimension: number): Promise<void> {
     },
   );
 
-  if (response.status === 409) {
+  if (response.status === 409 || response.ok) {
     collectionDimension = dimension;
     return;
   }
 
-  if (!response.ok) {
-    throw new Error(`Qdrant collection setup failed with ${response.status}`);
-  }
-
-  collectionDimension = dimension;
+  throw new Error(`Qdrant collection setup failed with ${response.status}`);
 }
 
-async function upsertChunks(params: {
-  chunks: string[];
-  document: StoredKnowledgeDocument;
-  vectors: number[][];
-}): Promise<void> {
-  const points = params.chunks.map((chunk, index) => ({
-    id: createPointId(`${params.document.id}:${index}`),
-    payload: {
-      documentId: params.document.id,
-      order: index,
-      spaceId: params.document.spaceId,
-      summary: params.document.summary,
-      tags: params.document.tags,
-      text: chunk,
-      title: params.document.title,
-    } satisfies KnowledgeChunkPayload,
-    vector: params.vectors[index],
-  }));
-
+async function deleteSourcePoints(sourceId: string): Promise<void> {
   const response = await fetch(
-    `${getQdrantUrl()}/collections/${getQdrantCollectionName()}/points?wait=true`,
+    `${getQdrantUrl()}/collections/${getQdrantCollectionName()}/points/delete?wait=true`,
     {
-      method: "PUT",
+      method: "POST",
       headers: getQdrantHeaders(),
-      body: JSON.stringify({ points }),
+      body: JSON.stringify({
+        filter: {
+          must: [
+            {
+              key: "sourceId",
+              match: {
+                value: sourceId,
+              },
+            },
+          ],
+        },
+      }),
       signal: AbortSignal.timeout(10_000),
     },
   );
 
-  if (!response.ok) {
-    throw new Error(`Qdrant upsert failed with ${response.status}`);
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`Qdrant delete failed with ${response.status}`);
   }
 }
 
-function toSearchHit(params: {
-  payload: KnowledgeChunkPayload;
-  query: string;
-  score: number;
-}): SearchKnowledgeHit {
-  return {
-    documentId: params.payload.documentId,
-    spaceId: params.payload.spaceId,
-    title: params.payload.title,
-    summary: params.payload.summary,
-    snippet: buildSearchSnippet(
-      params.payload.text,
-      params.query,
-      params.payload.text.slice(0, 220),
-      {
-        leadingContext: 72,
-        trailingContext: 148,
-      },
-    ),
-    tags: [...params.payload.tags],
-    score: params.score,
-  };
+function readSourceChunks(sourceId: string): KnowledgeChunkPayload[] {
+  const database = getKnowledgeDatabase();
+  const rows = database
+    .query(
+      `
+        SELECT
+          chunk_id,
+          source_id,
+          collection_id,
+          chunk_index,
+          section_path,
+          title,
+          text,
+          tags_json
+        FROM source_chunks
+        WHERE source_id = ?
+        ORDER BY chunk_index ASC
+      `,
+    )
+    .all(sourceId) as Array<{
+    chunk_id: string;
+    source_id: string;
+    collection_id: string;
+    chunk_index: number;
+    section_path: string | null;
+    title: string;
+    text: string;
+    tags_json: string;
+  }>;
+
+  return rows.map((row) => ({
+    chunkId: row.chunk_id,
+    sourceId: row.source_id,
+    collectionId: row.collection_id,
+    chunkIndex: row.chunk_index,
+    sectionPath: row.section_path ?? undefined,
+    title: row.title,
+    text: row.text,
+    tags: JSON.parse(row.tags_json) as string[],
+  }));
 }
 
-function dedupeHits(
-  hits: SearchKnowledgeHit[],
-  limit: number,
-): SearchKnowledgeHit[] {
-  const byDocument = new Map<string, SearchKnowledgeHit>();
-
-  for (const hit of hits) {
-    const existing = byDocument.get(hit.documentId);
-    if (!existing || existing.score < hit.score) {
-      byDocument.set(hit.documentId, hit);
-    }
-  }
-
-  return [...byDocument.values()]
-    .sort((left, right) => right.score - left.score)
-    .slice(0, limit);
-}
-
-function vectorResult(
-  query: string,
-  hits: SearchKnowledgeHit[],
-): SearchKnowledgeResult {
-  return {
-    query,
-    engine: "vector",
-    total: hits.length,
-    hits,
-  };
-}
-
-async function enrichVectorHits(
-  hits: SearchKnowledgeHit[],
-): Promise<SearchKnowledgeHit[]> {
-  return Promise.all(
-    hits.map(async (hit) => {
-      const document = await getDocumentById(hit.documentId);
-
-      if (!document) {
-        return hit;
-      }
-
-      return {
-        ...hit,
-        ...getKnowledgeDocumentSourceMetadata(document),
-      };
-    }),
-  );
-}
-
-export async function indexKnowledgeDocument(
-  document: StoredKnowledgeDocument,
+export async function replaceKnowledgeSourceVectorIndex(
+  sourceId: string,
 ): Promise<boolean> {
   if (!canUseVectorSearch()) {
     return false;
   }
 
-  const chunks = chunkContent(document.content);
+  const chunks = readSourceChunks(sourceId);
   if (chunks.length === 0) {
     return false;
   }
 
-  const vectors = await createEmbeddings(chunks);
+  const vectors = await createEmbeddings(chunks.map((chunk) => chunk.text));
   const firstVector = vectors[0];
 
   if (!firstVector || firstVector.length === 0) {
@@ -344,61 +237,68 @@ export async function indexKnowledgeDocument(
   }
 
   await ensureCollection(firstVector.length);
-  await upsertChunks({
-    chunks,
-    document,
-    vectors,
-  });
-  await markDocumentVectorIndexed({
-    chunkCount: chunks.length,
-    documentId: document.id,
-  });
+  await deleteSourcePoints(sourceId);
+
+  const response = await fetch(
+    `${getQdrantUrl()}/collections/${getQdrantCollectionName()}/points?wait=true`,
+    {
+      method: "PUT",
+      headers: getQdrantHeaders(),
+      body: JSON.stringify({
+        points: chunks.map((chunk, index) => ({
+          id: createPointId(chunk.chunkId),
+          payload: chunk,
+          vector: vectors[index],
+        })),
+      }),
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Qdrant upsert failed with ${response.status}`);
+  }
 
   return true;
 }
 
-export async function syncKnowledgeVectorIndex(): Promise<boolean> {
-  if (!canUseVectorSearch()) {
-    return false;
-  }
+function toVectorResult(
+  query: string,
+  hits: SearchKnowledgeHit[],
+): SearchKnowledgeResult {
+  return {
+    query,
+    rewrittenQueries: [query],
+    queryVariants: [query],
+    engine: "vector",
+    total: hits.length,
+    usedHitIds: [],
+    hits,
+  };
+}
 
-  if (syncPromise) {
-    return syncPromise;
-  }
+function dedupeHits(
+  hits: SearchKnowledgeHit[],
+  limit: number,
+): SearchKnowledgeHit[] {
+  const bestByChunk = new Map<string, SearchKnowledgeHit>();
 
-  syncPromise = (async () => {
-    try {
-      const pendingDocuments = await getDocumentsPendingVectorIndex();
-
-      for (const document of pendingDocuments) {
-        await indexKnowledgeDocument(document);
-      }
-
-      return true;
-    } catch (error) {
-      console.warn(
-        `[atlas-kb/mastra] vector indexing disabled: ${getErrorMessage(error)}`,
-      );
-      return false;
+  for (const hit of hits) {
+    const existing = bestByChunk.get(hit.chunkId);
+    if (!existing || existing.score < hit.score) {
+      bestByChunk.set(hit.chunkId, hit);
     }
-  })();
-
-  try {
-    return await syncPromise;
-  } finally {
-    syncPromise = undefined;
   }
+
+  return [...bestByChunk.values()]
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit);
 }
 
 export async function searchKnowledgeVectors(
   input: SearchKnowledgeRequest,
 ): Promise<SearchKnowledgeResult | undefined> {
   if (!canUseVectorSearch()) {
-    return undefined;
-  }
-
-  const vectorSyncReady = await syncKnowledgeVectorIndex();
-  if (!vectorSyncReady) {
     return undefined;
   }
 
@@ -415,16 +315,16 @@ export async function searchKnowledgeVectors(
         headers: getQdrantHeaders(),
         body: JSON.stringify({
           query: queryVector,
-          limit: Math.max(input.limit ?? 5, 10),
+          limit: Math.max(input.limit ?? 5, 12),
           with_payload: true,
           with_vector: false,
-          filter: input.spaceId
+          filter: input.collectionId
             ? {
                 must: [
                   {
-                    key: "spaceId",
+                    key: "collectionId",
                     match: {
-                      value: input.spaceId,
+                      value: input.collectionId,
                     },
                   },
                 ],
@@ -440,50 +340,69 @@ export async function searchKnowledgeVectors(
     }
 
     const payload = (await response.json()) as QdrantQueryResponse;
-    const hits = await enrichVectorHits(
-      dedupeHits(
-        (payload.result?.points ?? [])
-          .map((point) => {
-            const chunkPayload = point.payload as
-              | KnowledgeChunkPayload
-              | undefined;
-            const score = point.score ?? 0;
+    const hits = await Promise.all(
+      (payload.result?.points ?? [])
+        .map(async (point) => {
+          const chunk = point.payload as KnowledgeChunkPayload | undefined;
+          if (!chunk || !point.score) {
+            return undefined;
+          }
 
-            if (!chunkPayload || score <= 0) {
-              return undefined;
-            }
+          const source = await getDocumentById(chunk.sourceId);
+          if (!source || source.status !== "ready") {
+            return undefined;
+          }
 
-            return toSearchHit({
-              payload: chunkPayload,
-              query: input.query,
-              score,
-            });
-          })
-          .filter((hit): hit is SearchKnowledgeHit => Boolean(hit)),
-        input.limit ?? 5,
-      ),
+          return {
+            sourceId: source.id,
+            documentId: source.id,
+            collectionId: source.collectionId,
+            spaceId: source.collectionId,
+            chunkId: chunk.chunkId,
+            title: source.title,
+            summary: source.summary,
+            snippet: buildSearchSnippet(
+              chunk.text,
+              input.query,
+              source.contentPreview,
+            ),
+            sectionPath: chunk.sectionPath,
+            sourceFilename: source.sourceFilename,
+            sourceUrl: source.sourceUrl,
+            ...getKnowledgeSourceMetadata(source),
+            sourceType: source.sourceType,
+            tags: [...source.tags],
+            score: Number(point.score),
+            strategy: "vector" as const,
+            usedInAnswer: false,
+            recallPaths: ["语义召回"],
+          } satisfies SearchKnowledgeHit;
+        })
+        .filter(Boolean),
     );
 
-    if (hits.length === 0) {
+    const validHits = dedupeHits(
+      hits.filter((hit): hit is SearchKnowledgeHit => Boolean(hit)),
+      input.limit ?? 5,
+    );
+
+    if (validHits.length === 0) {
       return undefined;
     }
 
-    return vectorResult(input.query, hits);
+    return toVectorResult(input.query, validHits);
   } catch (error) {
-    console.error("[atlas-kb/mastra] vector search failed", error);
+    console.warn(
+      `[atlas-kb/mastra] vector search disabled: ${getErrorMessage(error)}`,
+    );
     return undefined;
   }
 }
 
 export async function detectPreferredRetrievalEngine(): Promise<KnowledgeRetrievalEngine> {
-  const documents = await listStoredKnowledgeDocuments();
-
-  return documents.some((document) => document.vectorIndexedAt)
-    ? "vector"
-    : "lexical";
+  return canUseVectorSearch() ? "hybrid" : "lexical";
 }
 
 export function resetKnowledgeVectorState(): void {
   collectionDimension = undefined;
-  syncPromise = undefined;
 }

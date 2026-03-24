@@ -17,21 +17,19 @@ file upload, and optional Qdrant vector retrieval.
 cp .env.example .env
 bun install
 docker compose up -d qdrant
-bun run api:dev
-bun run web:dev
 bun run dev
 ```
 
-Mastra runtime can be started separately:
+If you need the Mastra runtime separately:
 
 ```bash
-bun run dev
+bun run mastra:dev
 ```
 
 ## Default URLs
 
-- API: `http://localhost:3001`
-- Web: `http://localhost:5173`
+- API: `http://localhost:6112`
+- Web: `http://localhost:6111`
 - Qdrant: `http://localhost:6333`
 
 ## Default Login

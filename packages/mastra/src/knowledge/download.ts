@@ -1,61 +1,92 @@
-import { BadRequestError, NotFoundError } from "@atlas-kb/errors";
-import {
-  KnowledgeDocumentDownloadParamsSchema,
-  type KnowledgeDocumentDownloadParams,
-} from "@atlas-kb/schema";
+import { NotFoundError } from "@atlas-kb/errors";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
-import { getDocumentById } from "./repository";
+import { getLatestSourceVersion, getDocumentById } from "./repository";
 
-function resolveDownloadFilename(params: {
-  documentId: string;
+function buildDownloadFilename(params: {
+  sourceId: string;
   sourceFilename?: string;
+  title: string;
+  sourceType: string;
 }): string {
-  const filename = params.sourceFilename?.trim();
-  return filename ? basename(filename) : `${params.documentId}.txt`;
+  if (params.sourceFilename?.trim()) {
+    return basename(params.sourceFilename);
+  }
+
+  if (params.sourceType === "url") {
+    return `${params.title}.html`;
+  }
+
+  return `${params.title}.txt`;
 }
 
-export async function getKnowledgeDocumentDownload(
-  params: KnowledgeDocumentDownloadParams,
-): Promise<{
+export async function getKnowledgeSourceDownload(sourceId: string): Promise<{
   body: Uint8Array;
   filename: string;
   mimeType: string;
 }> {
-  const parsedParams = KnowledgeDocumentDownloadParamsSchema.parse(params);
-  const document = await getDocumentById(parsedParams.documentId);
+  const source = await getDocumentById(sourceId);
 
-  if (!document || document.spaceId !== parsedParams.spaceId) {
-    throw new NotFoundError(
-      `Knowledge document "${parsedParams.documentId}" not found`,
-    );
+  if (!source) {
+    throw new NotFoundError(`Knowledge source "${sourceId}" not found`);
   }
 
-  if (document.source !== "upload") {
-    throw new BadRequestError(
-      "Seeded documents do not have downloadable source files",
-    );
-  }
+  const version = await getLatestSourceVersion(sourceId);
 
-  if (!document.storagePath) {
-    throw new NotFoundError(
-      `Knowledge document "${parsedParams.documentId}" does not have a stored file`,
-    );
-  }
-
-  try {
+  if (version?.filePath) {
     return {
-      body: new Uint8Array(await readFile(document.storagePath)),
-      filename: resolveDownloadFilename({
-        documentId: document.id,
-        sourceFilename: document.sourceFilename,
+      body: new Uint8Array(await readFile(version.filePath)),
+      filename: buildDownloadFilename({
+        sourceId: source.id,
+        sourceFilename: source.sourceFilename,
+        title: source.title,
+        sourceType: source.sourceType,
       }),
-      mimeType: document.mimeType || "application/octet-stream",
+      mimeType:
+        version.mimeType || source.mimeType || "application/octet-stream",
     };
-  } catch (error) {
+  }
+
+  if (version?.snapshotHtml) {
+    return {
+      body: new TextEncoder().encode(version.snapshotHtml),
+      filename: buildDownloadFilename({
+        sourceId: source.id,
+        sourceFilename: source.sourceFilename,
+        title: source.title,
+        sourceType: source.sourceType,
+      }),
+      mimeType: version.mimeType || "text/html",
+    };
+  }
+
+  return {
+    body: new TextEncoder().encode(source.content),
+    filename: buildDownloadFilename({
+      sourceId: source.id,
+      sourceFilename: source.sourceFilename,
+      title: source.title,
+      sourceType: source.sourceType,
+    }),
+    mimeType: source.mimeType || "text/plain; charset=utf-8",
+  };
+}
+
+export async function getKnowledgeDocumentDownload(params: {
+  documentId: string;
+  spaceId: string;
+}): Promise<{
+  body: Uint8Array;
+  filename: string;
+  mimeType: string;
+}> {
+  const source = await getDocumentById(params.documentId);
+
+  if (!source || source.collectionId !== params.spaceId) {
     throw new NotFoundError(
-      `Knowledge document "${parsedParams.documentId}" file could not be read`,
-      error,
+      `Knowledge document "${params.documentId}" not found`,
     );
   }
+
+  return getKnowledgeSourceDownload(params.documentId);
 }

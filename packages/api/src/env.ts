@@ -1,4 +1,4 @@
-const DEFAULT_API_PORT = 3001;
+const DEFAULT_API_PORT = 6112;
 
 export function getApiPort(): number {
   const port = Number(process.env.API_PORT ?? DEFAULT_API_PORT);
