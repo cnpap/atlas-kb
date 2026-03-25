@@ -16,7 +16,7 @@ file upload, and optional Qdrant vector retrieval.
 ```bash
 cp .env.example .env
 bun install
-docker compose up -d qdrant
+bun run compose:up
 bun run dev
 ```
 
@@ -26,11 +26,22 @@ If you need the Mastra runtime separately:
 bun run mastra:dev
 ```
 
+To bring up Qdrant and the app in one command:
+
+```bash
+bun run dev:local
+```
+
 ## Default URLs
 
 - API: `http://localhost:6112`
 - Web: `http://localhost:6111`
 - Qdrant: `http://localhost:6333`
+
+If `own209.test` resolves to your machine locally, the dev web server also accepts
+`http://own209.test:6111`. By default, Vite proxies `/api/*` to the local API, so
+the browser stays on one origin during development. Set `VITE_API_BASE_URL` only
+when you intentionally want the web app to call a different API origin directly.
 
 ## Default Login
 

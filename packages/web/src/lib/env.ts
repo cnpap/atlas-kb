@@ -2,12 +2,10 @@ const DEFAULT_API_PORT = __ATLAS_KB_API_PORT__;
 
 function getDefaultApiBaseUrl(): string {
   if (typeof window === "undefined") {
-    return `http://localhost:${DEFAULT_API_PORT}`;
+    return `http://127.0.0.1:${DEFAULT_API_PORT}`;
   }
 
-  const url = new URL(window.location.origin);
-  url.port = DEFAULT_API_PORT;
-  return url.origin;
+  return window.location.origin;
 }
 
 export function getApiBaseUrl(): string {

@@ -3,6 +3,7 @@ import { cors } from "@elysiajs/cors";
 import { Elysia } from "elysia";
 import { isApiHttpError } from "@atlas-kb/errors";
 import { chatRoutes } from "./routes/chat";
+import { getAllowedWebOrigins } from "./env";
 import { dashboardRoutes } from "./routes/dashboard";
 import { healthRoutes } from "./routes/health";
 import { knowledgeRoutes } from "./routes/knowledge";
@@ -33,7 +34,7 @@ export function createApp() {
     })
     .use(
       cors({
-        origin: [/^https?:\/\/localhost:\d+$/, /^https?:\/\/127\.0\.0\.1:\d+$/],
+        origin: getAllowedWebOrigins(),
         methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allowedHeaders: ["Authorization", "Content-Type"],
       }),
