@@ -1,5 +1,8 @@
 import { BadRequestError } from "@atlas-kb/errors";
 import type {
+  KnowledgeBatchFileImportRequest,
+  KnowledgeBatchImportData,
+  KnowledgeBatchImportItem,
   KnowledgeCollection,
   KnowledgeFileImportRequest,
   KnowledgeImportJob,
@@ -60,8 +63,30 @@ type ImportResult = {
   indexed: boolean;
 };
 
-function sanitizeFilename(input: string): string {
+type QueuedFileImportTask = {
+  collectionId: string;
+  draft: KnowledgeSource;
+  job: KnowledgeImportJob;
+  filePath: string;
+  sourceFilename: string;
+  title: string;
+  summary?: string;
+  tags: string[];
+  mimeType?: string;
+};
+
+const MAX_CONCURRENT_IMPORTS = 2;
+
+const pendingImportTasks: Array<() => Promise<void>> = [];
+const activeImportTasks = new Set<Promise<void>>();
+
+function getOriginalFilename(input: string): string {
   const trimmed = basename(input || "upload.txt").trim();
+  return trimmed || "upload.txt";
+}
+
+function sanitizeFilename(input: string): string {
+  const trimmed = getOriginalFilename(input);
   const sanitized = trimmed.replace(/[^a-zA-Z0-9._-]+/g, "-");
   return sanitized || "upload.txt";
 }
@@ -81,6 +106,73 @@ function resolveTextTitle(content: string): string {
   }
 
   return firstLine.replace(/^#{1,6}\s+/, "").slice(0, 120);
+}
+
+function resolveFilenameTitle(filename: string): string {
+  const normalized = getOriginalFilename(filename);
+  const fallback = normalized.replace(/\.[^/.]+$/, "").trim();
+
+  return fallback || normalized;
+}
+
+function createQueuedImportResult(params: {
+  collection: KnowledgeCollection;
+  source: KnowledgeSource;
+  job: KnowledgeImportJob;
+}): ImportResult {
+  return {
+    collection: params.collection,
+    source: params.source,
+    job: params.job,
+    engine: "lexical",
+    indexed: false,
+  };
+}
+
+function runImportQueue(): void {
+  while (
+    activeImportTasks.size < MAX_CONCURRENT_IMPORTS &&
+    pendingImportTasks.length > 0
+  ) {
+    const nextTask = pendingImportTasks.shift();
+
+    if (!nextTask) {
+      return;
+    }
+
+    let taskPromise: Promise<void>;
+    taskPromise = nextTask()
+      .catch((error) => {
+        console.error(
+          "[atlas-kb/mastra] queued knowledge import failed:",
+          error,
+        );
+      })
+      .finally(() => {
+        activeImportTasks.delete(taskPromise);
+        runImportQueue();
+      });
+
+    activeImportTasks.add(taskPromise);
+  }
+}
+
+function scheduleImportTask(task: () => Promise<void>): void {
+  pendingImportTasks.push(task);
+  queueMicrotask(runImportQueue);
+}
+
+export async function waitForPendingKnowledgeImports(): Promise<void> {
+  runImportQueue();
+
+  while (pendingImportTasks.length > 0 || activeImportTasks.size > 0) {
+    if (activeImportTasks.size === 0) {
+      runImportQueue();
+      continue;
+    }
+
+    await Promise.allSettled([...activeImportTasks]);
+  }
 }
 
 function isSupportedFile(file: File): boolean {
@@ -126,7 +218,7 @@ function extractHtmlContent(params: {
 
 async function parseFile(file: File): Promise<ParsedContent> {
   const extension = extname(file.name).toLowerCase();
-  const safeName = sanitizeFilename(file.name);
+  const displayName = getOriginalFilename(file.name);
 
   if (!isSupportedFile(file)) {
     throw new BadRequestError(
@@ -152,7 +244,7 @@ async function parseFile(file: File): Promise<ParsedContent> {
       content,
       mimeType: file.type || "application/pdf",
       parser: "pdf-parse",
-      title: safeName.replace(/\.pdf$/i, "") || "PDF Document",
+      title: displayName.replace(/\.pdf$/i, "") || "PDF Document",
     };
   }
 
@@ -173,7 +265,7 @@ async function parseFile(file: File): Promise<ParsedContent> {
         file.type ||
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       parser: "mammoth",
-      title: safeName.replace(/\.docx$/i, "") || "DOCX Document",
+      title: displayName.replace(/\.docx$/i, "") || "DOCX Document",
     };
   }
 
@@ -181,7 +273,7 @@ async function parseFile(file: File): Promise<ParsedContent> {
     return {
       ...extractHtmlContent({
         html: await file.text(),
-        titleFallback: safeName.replace(/\.html$/i, "") || "HTML Document",
+        titleFallback: displayName.replace(/\.html$/i, "") || "HTML Document",
       }),
       byteSize: file.size,
       mimeType: file.type || "text/html",
@@ -198,7 +290,7 @@ async function parseFile(file: File): Promise<ParsedContent> {
     content,
     mimeType: file.type || undefined,
     parser: "plain-text",
-    title: safeName.replace(/\.[^/.]+$/, "") || safeName,
+    title: displayName.replace(/\.[^/.]+$/, "") || displayName,
   };
 }
 
@@ -376,16 +468,71 @@ async function failImport(params: {
   };
 }
 
+async function processQueuedFileImport(
+  params: QueuedFileImportTask,
+): Promise<void> {
+  try {
+    await updateImportJob({
+      jobId: params.job.id,
+      stage: "fetching",
+      status: "processing",
+    });
+
+    const buffer = await readFile(params.filePath);
+
+    await updateImportJob({
+      jobId: params.job.id,
+      stage: "extracting",
+      status: "processing",
+    });
+
+    const file = new File([buffer], params.sourceFilename, {
+      type: params.mimeType,
+    });
+    const parsed = await parseFile(file);
+
+    await finalizeImport({
+      collectionId: params.collectionId,
+      draft: params.draft,
+      job: params.job,
+      parsed: {
+        ...parsed,
+        title: params.title,
+      },
+      tags: params.tags,
+      summary: params.summary,
+      sourceFilename: params.sourceFilename,
+      filePath: params.filePath,
+    });
+  } catch (error) {
+    await failImport({
+      draft: params.draft,
+      job: params.job,
+      error,
+    });
+  }
+}
+
 export async function importKnowledgeFile(params: {
   collectionId: string;
   file: File;
   input?: KnowledgeFileImportRequest;
 }): Promise<ImportResult> {
   await requireKnowledgeCollection(params.collectionId);
-  const parsed = await parseFile(params.file);
+
+  if (!isSupportedFile(params.file)) {
+    throw new BadRequestError(
+      "Unsupported file type. Upload PDF, DOCX, markdown, text, HTML, JSON, CSV, XML, or YAML files.",
+    );
+  }
+
+  const originalFilename = getOriginalFilename(params.file.name);
+  const sourceFilename = getOriginalFilename(
+    params.input?.fileName?.trim() || originalFilename,
+  );
   const title = resolveDraftTitle({
     title: params.input?.title,
-    fallback: parsed.title,
+    fallback: resolveFilenameTitle(sourceFilename),
   });
   const filePath = await storeUploadedFile({
     collectionId: params.collectionId,
@@ -397,10 +544,9 @@ export async function importKnowledgeFile(params: {
     title,
     summary: params.input?.summary,
     tags: params.input?.tags,
-    sourceFilename:
-      params.input?.fileName?.trim() || sanitizeFilename(params.file.name),
-    mimeType: parsed.mimeType,
-    byteSize: parsed.byteSize,
+    sourceFilename,
+    mimeType: params.file.type || undefined,
+    byteSize: params.file.size || undefined,
   });
   const job = await createImportJob({
     collectionId: params.collectionId,
@@ -408,29 +554,27 @@ export async function importKnowledgeFile(params: {
     sourceType: "file",
     attempt: 1,
   });
+  const collection = await requireKnowledgeCollection(params.collectionId);
 
-  try {
-    return await finalizeImport({
+  scheduleImportTask(() =>
+    processQueuedFileImport({
       collectionId: params.collectionId,
       draft,
       job,
-      parsed: {
-        ...parsed,
-        title,
-      },
-      tags: params.input?.tags ?? [],
-      summary: params.input?.summary,
-      sourceFilename:
-        params.input?.fileName?.trim() || sanitizeFilename(params.file.name),
       filePath,
-    });
-  } catch (error) {
-    return failImport({
-      draft,
-      job,
-      error,
-    });
-  }
+      sourceFilename,
+      title,
+      summary: params.input?.summary,
+      tags: params.input?.tags ?? [],
+      mimeType: params.file.type || undefined,
+    }),
+  );
+
+  return createQueuedImportResult({
+    collection,
+    source: draft,
+    job,
+  });
 }
 
 export async function importKnowledgeText(params: {
@@ -707,5 +851,84 @@ export async function uploadKnowledgeDocument(params: {
     space: result.collection,
     engine: result.engine,
     indexed: result.indexed,
+  };
+}
+
+function toBatchFailure(params: {
+  error: unknown;
+  file: File;
+}): KnowledgeBatchImportItem {
+  const errorMessage =
+    params.error instanceof Error ? params.error.message : "Import failed";
+
+  return {
+    fileName: getOriginalFilename(params.file.name),
+    mimeType: params.file.type || undefined,
+    byteSize: params.file.size,
+    accepted: false,
+    errorMessage,
+  };
+}
+
+function toBatchAccepted(params: {
+  file: File;
+  result: ImportResult;
+}): KnowledgeBatchImportItem {
+  return {
+    fileName: getOriginalFilename(params.file.name),
+    mimeType: params.file.type || undefined,
+    byteSize: params.file.size,
+    accepted: true,
+    source: params.result.source,
+    job: params.result.job,
+  };
+}
+
+export async function importKnowledgeFiles(params: {
+  collectionId: string;
+  files: File[];
+  input?: KnowledgeBatchFileImportRequest;
+}): Promise<KnowledgeBatchImportData> {
+  await requireKnowledgeCollection(params.collectionId);
+
+  const results: KnowledgeBatchImportItem[] = [];
+
+  for (const file of params.files) {
+    try {
+      const result = await importKnowledgeFile({
+        collectionId: params.collectionId,
+        file,
+        input: {
+          summary: params.input?.summary,
+          tags: params.input?.tags,
+        },
+      });
+
+      results.push(
+        toBatchAccepted({
+          file,
+          result,
+        }),
+      );
+    } catch (error) {
+      results.push(
+        toBatchFailure({
+          error,
+          file,
+        }),
+      );
+    }
+  }
+
+  const collection = await requireKnowledgeCollection(params.collectionId);
+  const acceptedCount = results.filter((item) => item.accepted).length;
+  const rejectedCount = results.length - acceptedCount;
+
+  return {
+    collection,
+    results,
+    totalCount: results.length,
+    acceptedCount,
+    rejectedCount,
   };
 }

@@ -11,6 +11,7 @@ import {
   getKnowledgeSourceDownload,
   getKnowledgeSpaceDocuments,
   importKnowledgeFile,
+  importKnowledgeFiles,
   importKnowledgeText,
   listImportJobs,
   listKnowledgeCollections,
@@ -22,9 +23,12 @@ import {
   updateKnowledgeSource,
   uploadKnowledgeDocument,
 } from "@atlas-kb/mastra/knowledge";
+import { BadRequestError } from "@atlas-kb/errors";
 import {
   AskKnowledgeRequestSchema,
   AskKnowledgeResponseSchema,
+  KnowledgeBatchFileImportRequestSchema,
+  KnowledgeBatchImportResponseSchema,
   KnowledgeCollectionCreateRequestSchema,
   KnowledgeCollectionIdParamsSchema,
   KnowledgeCollectionResponseSchema,
@@ -51,6 +55,7 @@ import {
   success,
 } from "@atlas-kb/schema";
 import { Elysia, t } from "elysia";
+import { basename, extname } from "node:path";
 
 function parseTagString(input?: string): string[] | undefined {
   const value = input?.trim();
@@ -67,16 +72,41 @@ function parseTagString(input?: string): string[] | undefined {
   return tags.length > 0 ? [...new Set(tags)] : undefined;
 }
 
+function readOptionalString(form: FormData, key: string): string | undefined {
+  const value = form.get(key);
+  return typeof value === "string" ? value : undefined;
+}
+
+function getHeaderSafeFilename(filename: string): string {
+  const trimmed = basename(filename || "download").trim();
+  const extension = extname(trimmed);
+  const safeExtension = extension.replace(/[^a-zA-Z0-9.]+/g, "");
+  const stem =
+    trimmed.slice(0, trimmed.length - extension.length) || "download";
+  const visibleStem = Array.from(stem)
+    .filter((character) => {
+      const codePoint = character.charCodeAt(0);
+      return codePoint >= 32 && !(codePoint >= 127 && codePoint <= 159);
+    })
+    .join("");
+  const asciiStem = visibleStem
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return `${asciiStem || "download"}${safeExtension}`;
+}
+
 function toDownloadResponse(download: {
   body: Uint8Array;
   filename: string;
   mimeType: string;
 }): Response {
   const encodedFilename = encodeURIComponent(download.filename);
+  const fallbackFilename = getHeaderSafeFilename(download.filename);
 
   return new Response(new Blob([download.body], { type: download.mimeType }), {
     headers: {
-      "Content-Disposition": `attachment; filename="${download.filename}"; filename*=UTF-8''${encodedFilename}`,
+      "Content-Disposition": `attachment; filename="${fallbackFilename}"; filename*=UTF-8''${encodedFilename}`,
       "Content-Length": String(download.body.byteLength),
       "Content-Type": download.mimeType,
     },
@@ -179,6 +209,34 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
       body: uploadBody,
       params: KnowledgeCollectionIdParamsSchema,
       response: KnowledgeImportResponseSchema,
+    },
+  )
+  .post(
+    "/collections/:collectionId/imports/files",
+    async ({ params, request }) => {
+      const form = await request.formData();
+      const files = form
+        .getAll("files")
+        .filter((entry): entry is File => entry instanceof File);
+
+      if (files.length === 0) {
+        throw new BadRequestError("请至少选择一个文件");
+      }
+
+      return success(
+        await importKnowledgeFiles({
+          collectionId: params.collectionId,
+          files,
+          input: KnowledgeBatchFileImportRequestSchema.parse({
+            summary: readOptionalString(form, "summary")?.trim() || undefined,
+            tags: parseTagString(readOptionalString(form, "tags")),
+          }),
+        }),
+      );
+    },
+    {
+      params: KnowledgeCollectionIdParamsSchema,
+      response: KnowledgeBatchImportResponseSchema,
     },
   )
   .post(

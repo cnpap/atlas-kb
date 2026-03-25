@@ -70,6 +70,56 @@ export class UpstreamServiceError extends ApiHttpError {
   }
 }
 
+export class ModelProviderConfigurationError extends ApiHttpError {
+  constructor(
+    message = "Model provider configuration is invalid",
+    cause?: unknown,
+  ) {
+    super({
+      message,
+      statusCode: 500,
+      code: "MODEL_PROVIDER_CONFIGURATION_ERROR",
+      cause,
+    });
+  }
+}
+
+export class ModelProviderPermissionError extends ApiHttpError {
+  constructor(
+    message = "Model provider rejected the configured credentials or model",
+    cause?: unknown,
+  ) {
+    super({
+      message,
+      statusCode: 500,
+      code: "MODEL_PROVIDER_PERMISSION_ERROR",
+      cause,
+    });
+  }
+}
+
+export class ModelProviderRateLimitError extends ApiHttpError {
+  constructor(message = "Model provider rate limit exceeded", cause?: unknown) {
+    super({
+      message,
+      statusCode: 503,
+      code: "MODEL_PROVIDER_RATE_LIMITED",
+      cause,
+    });
+  }
+}
+
+export class ModelProviderUnavailableError extends ApiHttpError {
+  constructor(message = "Model provider is unavailable", cause?: unknown) {
+    super({
+      message,
+      statusCode: 503,
+      code: "MODEL_PROVIDER_UNAVAILABLE",
+      cause,
+    });
+  }
+}
+
 export class NotFoundError extends ApiHttpError {
   constructor(message = "Resource not found", cause?: unknown) {
     super({

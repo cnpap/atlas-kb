@@ -5,6 +5,7 @@ export {
   listChatMessages,
   listChatSessions,
   saveMessageFeedback,
+  streamChatReply,
   updateChatSession,
 } from "./chat";
 export {
@@ -13,17 +14,20 @@ export {
 } from "./download";
 export {
   importKnowledgeFile,
+  importKnowledgeFiles,
   importKnowledgeText,
   importKnowledgeUrl,
   refreshKnowledgeSource,
   retryKnowledgeSource,
   updateKnowledgeSource,
   uploadKnowledgeDocument,
+  waitForPendingKnowledgeImports,
 } from "./ingest";
 export {
   detectPreferredRetrievalEngine,
   resetKnowledgeVectorState,
 } from "./qdrant";
+export { runKnowledgeAgentQuestion } from "./agent";
 export {
   answerKnowledgeQuestion,
   generateGroundedAnswer,

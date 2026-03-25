@@ -5,6 +5,7 @@ import type {
   ChatMessageFeedback,
   ChatMessageFeedbackRequest,
   ChatSession,
+  ChatTraceEvent,
   DashboardSummary,
   KnowledgeCollectionData,
   KnowledgeCollection,
@@ -100,6 +101,7 @@ type ChatMessageRow = {
   content: string;
   citations_json: string;
   retrieval_json: string | null;
+  trace_json: string | null;
   created_at: string;
   feedback_id: string | null;
   feedback_rating: ChatMessageFeedback["rating"] | null;
@@ -247,6 +249,7 @@ function toChatMessage(row: ChatMessageRow): ChatMessage {
     content: row.content,
     citations: JSON.parse(row.citations_json) as ChatMessage["citations"],
     retrieval: parseOptionalJson<SearchKnowledgeResult>(row.retrieval_json),
+    trace: parseOptionalJson<ChatTraceEvent[]>(row.trace_json),
     createdAt: row.created_at,
     feedback,
   };
@@ -1435,6 +1438,7 @@ export async function listChatMessages(
           m.content,
           m.citations_json,
           m.retrieval_json,
+          m.trace_json,
           m.created_at,
           f.id AS feedback_id,
           f.rating AS feedback_rating,
@@ -1471,6 +1475,7 @@ export async function appendChatMessage(params: {
   content: string;
   citations?: ChatMessage["citations"];
   retrieval?: ChatMessage["retrieval"];
+  trace?: ChatMessage["trace"];
 }): Promise<ChatMessage> {
   const session = await requireChatSession(params.sessionId);
   const database = getKnowledgeDatabase();
@@ -1488,8 +1493,9 @@ export async function appendChatMessage(params: {
           content,
           citations_json,
           retrieval_json,
+          trace_json,
           created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
     )
     .run(
@@ -1499,6 +1505,7 @@ export async function appendChatMessage(params: {
       params.content.trim(),
       JSON.stringify(params.citations ?? []),
       params.retrieval ? JSON.stringify(params.retrieval) : null,
+      params.trace ? JSON.stringify(params.trace) : null,
       now,
     );
 
@@ -1538,6 +1545,7 @@ export async function appendChatMessage(params: {
           m.content,
           m.citations_json,
           m.retrieval_json,
+          m.trace_json,
           m.created_at,
           NULL AS feedback_id,
           NULL AS feedback_rating,

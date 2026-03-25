@@ -164,6 +164,11 @@ export const KnowledgeSourceMetadataSchema = z.object({
 });
 
 export const KnowledgeUploadMetadataSchema = KnowledgeSourceMetadataSchema;
+export const KnowledgeBatchFileImportRequestSchema =
+  KnowledgeSourceMetadataSchema.pick({
+    summary: true,
+    tags: true,
+  });
 
 export const KnowledgeFileImportRequestSchema =
   KnowledgeSourceMetadataSchema.extend({
@@ -261,6 +266,32 @@ export const ChatMessageFeedbackSchema = z.object({
   createdAt: TimestampSchema,
 });
 
+export const ChatTraceEventKindSchema = z.enum([
+  "status",
+  "search",
+  "tool-call",
+  "reasoning",
+  "error",
+]);
+
+export const ChatTraceEventStateSchema = z.enum([
+  "running",
+  "completed",
+  "failed",
+  "info",
+]);
+
+export const ChatTraceEventSchema = z.object({
+  id: z.string().trim().min(1),
+  kind: ChatTraceEventKindSchema,
+  state: ChatTraceEventStateSchema,
+  title: z.string().trim().min(1),
+  detail: z.string().trim().min(1).optional(),
+  createdAt: TimestampSchema,
+  toolCallId: z.string().trim().min(1).optional(),
+  toolName: z.string().trim().min(1).optional(),
+});
+
 export const ChatMessageSchema = z.object({
   id: z.string().trim().min(1),
   sessionId: z.string().trim().min(1),
@@ -268,6 +299,7 @@ export const ChatMessageSchema = z.object({
   content: z.string().trim().min(1),
   citations: z.array(ChatCitationSchema),
   retrieval: SearchKnowledgeResultSchema.optional(),
+  trace: z.array(ChatTraceEventSchema).optional(),
   createdAt: TimestampSchema,
   feedback: ChatMessageFeedbackSchema.optional(),
 });
@@ -294,6 +326,49 @@ export const ChatReplyFinalSchema = z.object({
   retrieval: SearchKnowledgeResultSchema,
   search: SearchKnowledgeResultSchema,
 });
+
+export const ChatReplyStreamRequestSchema = z.object({
+  sessionId: z.string().trim().min(1),
+  query: z.string().trim().min(1),
+  collectionId: z.string().trim().min(1).optional(),
+  limit: z.number().int().min(1).max(8).optional(),
+  messages: z.array(z.unknown()).optional(),
+});
+
+export const ChatReplyStreamBodySchema = ChatReplyStreamRequestSchema.omit({
+  sessionId: true,
+});
+
+export const ChatReplyStreamAcceptedEventSchema = z.object({
+  type: z.literal("reply-accepted"),
+  userMessage: ChatMessageSchema,
+});
+
+export const ChatReplyStreamTraceEventSchema = z.object({
+  type: z.literal("trace"),
+  event: ChatTraceEventSchema,
+});
+
+export const ChatReplyStreamCompletedEventSchema = z.object({
+  type: z.literal("reply-completed"),
+  session: ChatSessionSchema,
+  userMessage: ChatMessageSchema,
+  assistantMessage: ChatMessageSchema,
+  retrieval: SearchKnowledgeResultSchema,
+  search: SearchKnowledgeResultSchema,
+});
+
+export const ChatReplyStreamErrorEventSchema = z.object({
+  type: z.literal("reply-error"),
+  message: z.string().trim().min(1),
+});
+
+export const ChatReplyStreamDataEventSchema = z.discriminatedUnion("type", [
+  ChatReplyStreamAcceptedEventSchema,
+  ChatReplyStreamTraceEventSchema,
+  ChatReplyStreamCompletedEventSchema,
+  ChatReplyStreamErrorEventSchema,
+]);
 
 export const ChatMessageFeedbackRequestSchema = z.object({
   rating: ChatMessageFeedbackRatingSchema,
@@ -341,6 +416,36 @@ export const KnowledgeImportDataSchema = z.object({
   indexed: z.boolean(),
 });
 
+export const KnowledgeBatchImportAcceptedItemSchema = z.object({
+  fileName: z.string().trim().min(1),
+  mimeType: z.string().trim().min(1).optional(),
+  byteSize: z.number().int().nonnegative().optional(),
+  accepted: z.literal(true),
+  source: KnowledgeSourceSchema,
+  job: KnowledgeImportJobSchema,
+});
+
+export const KnowledgeBatchImportRejectedItemSchema = z.object({
+  fileName: z.string().trim().min(1),
+  mimeType: z.string().trim().min(1).optional(),
+  byteSize: z.number().int().nonnegative().optional(),
+  accepted: z.literal(false),
+  errorMessage: z.string().trim().min(1),
+});
+
+export const KnowledgeBatchImportItemSchema = z.discriminatedUnion("accepted", [
+  KnowledgeBatchImportAcceptedItemSchema,
+  KnowledgeBatchImportRejectedItemSchema,
+]);
+
+export const KnowledgeBatchImportDataSchema = z.object({
+  collection: KnowledgeCollectionSchema,
+  results: z.array(KnowledgeBatchImportItemSchema),
+  totalCount: z.number().int().nonnegative(),
+  acceptedCount: z.number().int().nonnegative(),
+  rejectedCount: z.number().int().nonnegative(),
+});
+
 export const ChatSessionsDataSchema = z.object({
   sessions: z.array(ChatSessionSchema),
 });
@@ -376,6 +481,8 @@ export const KnowledgeImportJobsResponseSchema = createApiSuccessResponseSchema(
 export const KnowledgeImportResponseSchema = createApiSuccessResponseSchema(
   KnowledgeImportDataSchema,
 );
+export const KnowledgeBatchImportResponseSchema =
+  createApiSuccessResponseSchema(KnowledgeBatchImportDataSchema);
 export const SearchKnowledgeResponseSchema = createApiSuccessResponseSchema(
   SearchKnowledgeResultSchema,
 );
@@ -475,6 +582,9 @@ export type KnowledgeCollectionUpdateRequest = z.infer<
 export type KnowledgeFileImportRequest = z.infer<
   typeof KnowledgeFileImportRequestSchema
 >;
+export type KnowledgeBatchFileImportRequest = z.infer<
+  typeof KnowledgeBatchFileImportRequestSchema
+>;
 export type KnowledgeTextImportRequest = z.infer<
   typeof KnowledgeTextImportRequestSchema
 >;
@@ -492,6 +602,7 @@ export type SearchKnowledgeResult = z.infer<typeof SearchKnowledgeResultSchema>;
 export type ChatSession = z.infer<typeof ChatSessionSchema>;
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 export type ChatCitation = z.infer<typeof ChatCitationSchema>;
+export type ChatTraceEvent = z.infer<typeof ChatTraceEventSchema>;
 export type ChatSessionCreateRequest = z.infer<
   typeof ChatSessionCreateRequestSchema
 >;
@@ -500,6 +611,13 @@ export type ChatSessionUpdateRequest = z.infer<
 >;
 export type ChatReplyRequest = z.infer<typeof ChatReplyRequestSchema>;
 export type ChatReplyFinal = z.infer<typeof ChatReplyFinalSchema>;
+export type ChatReplyStreamRequest = z.infer<
+  typeof ChatReplyStreamRequestSchema
+>;
+export type ChatReplyStreamBody = z.infer<typeof ChatReplyStreamBodySchema>;
+export type ChatReplyStreamDataEvent = z.infer<
+  typeof ChatReplyStreamDataEventSchema
+>;
 export type ChatMessageFeedback = z.infer<typeof ChatMessageFeedbackSchema>;
 export type ChatMessageFeedbackRequest = z.infer<
   typeof ChatMessageFeedbackRequestSchema
@@ -517,6 +635,12 @@ export type KnowledgeImportJobsData = z.infer<
   typeof KnowledgeImportJobsDataSchema
 >;
 export type KnowledgeImportData = z.infer<typeof KnowledgeImportDataSchema>;
+export type KnowledgeBatchImportItem = z.infer<
+  typeof KnowledgeBatchImportItemSchema
+>;
+export type KnowledgeBatchImportData = z.infer<
+  typeof KnowledgeBatchImportDataSchema
+>;
 export type ChatSessionsData = z.infer<typeof ChatSessionsDataSchema>;
 export type ChatSessionData = z.infer<typeof ChatSessionDataSchema>;
 export type ChatMessagesData = z.infer<typeof ChatMessagesDataSchema>;

@@ -17,8 +17,8 @@
     "@atlas-kb/errors": "workspace:*",
     "@atlas-kb/mastra": "workspace:*",
     "@atlas-kb/schema": "workspace:*",
-    "@elysiajs/cors": "*",
-    "elysia": "*",
+    "@elysiajs/cors": "^1.4.1",
+    "elysia": "^1.4.22",
     "jose": "6.2.1"
   }
 }

@@ -12,7 +12,148 @@ import {
   resetKnowledgeVectorState,
   saveMessageFeedback,
   searchKnowledge,
+  waitForPendingKnowledgeImports,
 } from "./index";
+
+const originalFetch = globalThis.fetch;
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+function readMessageText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (!Array.isArray(value)) {
+    return "";
+  }
+
+  return value
+    .map((part) =>
+      part && typeof part === "object" && "text" in part
+        ? String((part as { text?: unknown }).text ?? "")
+        : "",
+    )
+    .join("\n");
+}
+
+function mockOpenAIChatProvider() {
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input.url;
+    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const systemPrompt = readMessageText(messages[0]?.content);
+    const lastMessage = messages[messages.length - 1];
+    const hasToolMessage = messages.some(
+      (message) =>
+        message &&
+        typeof message === "object" &&
+        ((message as { role?: string }).role === "tool" ||
+          (message as { role?: string }).role === "function"),
+    );
+
+    if (url.includes("/embeddings")) {
+      const inputValues = Array.isArray(body.input) ? body.input : [];
+
+      return jsonResponse({
+        data: inputValues.map((_value, index) => ({
+          index,
+          embedding: [0.11, 0.22, 0.33],
+        })),
+      });
+    }
+
+    if (url.includes(":6333/collections/")) {
+      if (url.includes("/points/query")) {
+        return jsonResponse({
+          result: {
+            points: [],
+          },
+        });
+      }
+
+      return jsonResponse({
+        result: {
+          status: "ok",
+        },
+      });
+    }
+
+    if (systemPrompt.includes("Rewrite the search query")) {
+      return jsonResponse({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                queries: [readMessageText(lastMessage?.content)],
+              }),
+            },
+          },
+        ],
+      });
+    }
+
+    if (systemPrompt.includes("You are Atlas KB.")) {
+      return jsonResponse({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              role: "assistant",
+              content: "最该解决的问题是把证据和行动绑定，而不是继续堆积资料。",
+            },
+          },
+        ],
+      });
+    }
+
+    if (!hasToolMessage) {
+      return jsonResponse({
+        choices: [
+          {
+            finish_reason: "tool_calls",
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: "call_search_1",
+                  type: "function",
+                  function: {
+                    name: "search_knowledge",
+                    arguments: JSON.stringify({
+                      query: readMessageText(lastMessage?.content),
+                      limit: 5,
+                    }),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      });
+    }
+
+    return jsonResponse({
+      choices: [
+        {
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: "最该解决的问题是把证据和行动绑定，而不是继续堆积资料。",
+          },
+        },
+      ],
+    });
+  };
+}
 
 describe("@atlas-kb/mastra knowledge flow", () => {
   let knowledgeDataDir = "";
@@ -31,11 +172,13 @@ describe("@atlas-kb/mastra knowledge flow", () => {
     delete process.env.DASHSCOPE_API_KEY;
     delete process.env.DASHSCOPE_BASE_URL;
     delete process.env.DASHSCOPE_EMBEDDING_MODEL;
+    globalThis.fetch = originalFetch;
     resetKnowledgeRepository();
     resetKnowledgeVectorState();
   });
 
   afterEach(async () => {
+    await waitForPendingKnowledgeImports();
     resetKnowledgeRepository();
     resetKnowledgeVectorState();
 
@@ -78,6 +221,8 @@ describe("@atlas-kb/mastra knowledge flow", () => {
     if (knowledgeDataDir) {
       await rm(knowledgeDataDir, { force: true, recursive: true });
     }
+
+    globalThis.fetch = originalFetch;
   });
 
   it("returns lexical hits from imported personal notes", async () => {
@@ -162,6 +307,10 @@ describe("@atlas-kb/mastra knowledge flow", () => {
   });
 
   it("creates a chat reply and stores assistant feedback", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    process.env.OPENAI_BASE_URL = "https://mock-openai.local/v1";
+    mockOpenAIChatProvider();
+
     const collection = await createKnowledgeCollection({
       id: "product-research",
       name: "产品研究",

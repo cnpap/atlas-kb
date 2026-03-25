@@ -6,6 +6,7 @@ import {
   listChatSessions,
   requireChatSession,
   saveMessageFeedback,
+  streamChatReply,
   updateChatSession,
 } from "@atlas-kb/mastra/knowledge";
 import {
@@ -15,6 +16,7 @@ import {
   ChatMessagesResponseSchema,
   ChatReplyRequestSchema,
   ChatReplyResponseSchema,
+  ChatReplyStreamBodySchema,
   ChatSessionCreateRequestSchema,
   ChatSessionIdParamsSchema,
   ChatSessionResponseSchema,
@@ -107,6 +109,21 @@ export const chatRoutes = new Elysia({ prefix: "/api/chat" })
       body: ChatReplyRequestSchema,
       params: ChatSessionIdParamsSchema,
       response: ChatReplyResponseSchema,
+    },
+  )
+  .post(
+    "/sessions/:sessionId/reply/stream",
+    async ({ body, params }) => {
+      return streamChatReply({
+        input: {
+          ...body,
+          sessionId: params.sessionId,
+        },
+      });
+    },
+    {
+      body: ChatReplyStreamBodySchema,
+      params: ChatSessionIdParamsSchema,
     },
   )
   .post(

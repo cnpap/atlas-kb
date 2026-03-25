@@ -1,4 +1,3 @@
-import { UpstreamServiceError } from "@atlas-kb/errors";
 import type {
   AskKnowledgeCitation,
   AskKnowledgeRequest,
@@ -20,6 +19,7 @@ import {
   getOpenAIUrl,
 } from "./config";
 import { getKnowledgeDatabase } from "./db";
+import { throwMappedModelProviderError } from "./model-provider";
 import { searchKnowledgeVectors } from "./qdrant";
 import {
   buildLexicalSearchQuery,
@@ -40,6 +40,20 @@ interface OpenAIChatCompletionResponse {
             text?: string;
           }>;
     };
+  }>;
+}
+
+interface OpenAIChatCompletionChunk {
+  choices?: Array<{
+    delta?: {
+      content?:
+        | string
+        | Array<{
+            type?: string;
+            text?: string;
+          }>;
+    };
+    finish_reason?: string | null;
   }>;
 }
 
@@ -71,6 +85,51 @@ function getMessageText(
       .join("\n")
       .trim() || undefined
   );
+}
+
+function getDeltaText(payload: OpenAIChatCompletionChunk): string | undefined {
+  const content = payload.choices?.[0]?.delta?.content;
+
+  if (typeof content === "string") {
+    return content || undefined;
+  }
+
+  if (!Array.isArray(content)) {
+    return undefined;
+  }
+
+  return (
+    content
+      .filter((item) => item.type === "text" && typeof item.text === "string")
+      .map((item) => item.text ?? "")
+      .join("") || undefined
+  );
+}
+
+function buildCitationContext(citations: AskKnowledgeCitation[]): string {
+  return citations
+    .map(
+      (citation, index) =>
+        `${index + 1}. ${citation.title}${citation.sectionPath ? ` / ${citation.sectionPath}` : ""}\n${citation.snippet}`,
+    )
+    .join("\n\n");
+}
+
+function buildAnswerMessages(params: {
+  question: string;
+  citations: AskKnowledgeCitation[];
+}) {
+  return [
+    {
+      role: "system",
+      content:
+        "You are Atlas KB. Answer only from the supplied evidence. Be concise, say when evidence is insufficient, and mention supporting source titles naturally in the answer.",
+    },
+    {
+      role: "user",
+      content: `Question: ${params.question}\n\nEvidence:\n${buildCitationContext(params.citations)}`,
+    },
+  ];
 }
 
 function coerceCollectionId(input: SearchKnowledgeRequest): string | undefined {
@@ -431,7 +490,7 @@ async function rewriteSearchQueries(
   }
 }
 
-function toCitation(hit: SearchKnowledgeHit): AskKnowledgeCitation {
+export function toCitation(hit: SearchKnowledgeHit): AskKnowledgeCitation {
   return {
     sourceId: hit.sourceId,
     documentId: hit.documentId,
@@ -444,6 +503,24 @@ function toCitation(hit: SearchKnowledgeHit): AskKnowledgeCitation {
     sourceUrl: hit.sourceUrl,
     downloadUrl: hit.downloadUrl,
     sourceType: hit.sourceType,
+  };
+}
+
+export function annotateAnswerUsage(
+  search: SearchKnowledgeResult,
+  limit: number,
+): SearchKnowledgeResult {
+  const usedHitIds = new Set(
+    search.hits.slice(0, limit).map((hit) => hit.chunkId),
+  );
+
+  return {
+    ...search,
+    usedHitIds: [...usedHitIds],
+    hits: search.hits.map((hit) => ({
+      ...hit,
+      usedInAnswer: usedHitIds.has(hit.chunkId),
+    })),
   };
 }
 
@@ -466,7 +543,7 @@ function buildMockAnswer(
   return `我找到了 ${citations.length} 条相关证据。${lead}`;
 }
 
-async function tryGenerateModelAnswer(params: {
+export async function generateModelAnswerFromCitations(params: {
   question: string;
   citations: AskKnowledgeCitation[];
   apiKey?: string;
@@ -480,12 +557,6 @@ async function tryGenerateModelAnswer(params: {
     return undefined;
   }
 
-  const context = params.citations
-    .map(
-      (citation, index) =>
-        `${index + 1}. ${citation.title}${citation.sectionPath ? ` / ${citation.sectionPath}` : ""}\n${citation.snippet}`,
-    )
-    .join("\n\n");
   const fetchImpl = params.fetchImpl ?? fetch;
 
   try {
@@ -500,47 +571,163 @@ async function tryGenerateModelAnswer(params: {
         body: JSON.stringify({
           model: params.model ?? getOpenAIModel(),
           temperature: 0.2,
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are Atlas KB. Answer only from the supplied evidence. Be concise, say when evidence is insufficient, and mention supporting source titles naturally in the answer.",
-            },
-            {
-              role: "user",
-              content: `Question: ${params.question}\n\nEvidence:\n${context}`,
-            },
-          ],
+          messages: buildAnswerMessages(params),
         }),
         signal: AbortSignal.timeout(15_000),
       },
     );
 
     if (!response.ok) {
-      throw new UpstreamServiceError(
-        `Configured OpenAI provider rejected the ask request with status ${response.status}`,
-      );
+      throw {
+        status: response.status,
+      };
     }
 
     const payload = (await response.json()) as OpenAIChatCompletionResponse;
     const answer = getMessageText(payload);
 
     if (!answer) {
-      throw new UpstreamServiceError(
-        "Configured OpenAI provider returned an empty ask response",
-      );
+      throw new Error("模型服务返回了空回答");
     }
 
     return answer;
   } catch (error) {
-    if (error instanceof UpstreamServiceError) {
-      throw error;
+    throwMappedModelProviderError(error, "知识库回答生成");
+  }
+}
+
+export async function streamModelAnswerFromCitations(params: {
+  question: string;
+  citations: AskKnowledgeCitation[];
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+  fetchImpl?: typeof fetch;
+  onTextDelta?: (delta: string) => Promise<void> | void;
+}): Promise<{
+  answer: string;
+  finishReason: string;
+}> {
+  const apiKey = params.apiKey ?? getOpenAIApiKey();
+
+  if (!apiKey || params.citations.length === 0) {
+    return {
+      answer: "",
+      finishReason: "stop",
+    };
+  }
+
+  const fetchImpl = params.fetchImpl ?? fetch;
+
+  try {
+    const response = await fetchImpl(
+      getOpenAIUrl("chat/completions", params.baseUrl),
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: params.model ?? getOpenAIModel(),
+          temperature: 0.2,
+          stream: true,
+          messages: buildAnswerMessages(params),
+        }),
+        signal: AbortSignal.timeout(20_000),
+      },
+    );
+
+    if (!response.ok) {
+      throw {
+        status: response.status,
+      };
     }
 
-    throw new UpstreamServiceError(
-      "Configured OpenAI provider request failed",
-      error,
-    );
+    if (!response.body) {
+      throw new Error("模型服务未返回流式响应");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let answer = "";
+    let finishReason = "stop";
+
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+
+      while (true) {
+        const boundaryIndex = buffer.indexOf("\n\n");
+
+        if (boundaryIndex < 0) {
+          break;
+        }
+
+        const rawEvent = buffer.slice(0, boundaryIndex);
+        buffer = buffer.slice(boundaryIndex + 2);
+
+        for (const rawLine of rawEvent.split(/\r?\n/)) {
+          const line = rawLine.trim();
+
+          if (!line.startsWith("data:")) {
+            continue;
+          }
+
+          const data = line.slice(5).trim();
+
+          if (!data) {
+            continue;
+          }
+
+          if (data === "[DONE]") {
+            const finalAnswer = answer.trim();
+
+            if (!finalAnswer) {
+              throw new Error("模型服务返回了空回答");
+            }
+
+            return {
+              answer: finalAnswer,
+              finishReason,
+            };
+          }
+
+          const payload = JSON.parse(data) as OpenAIChatCompletionChunk;
+          const deltaText = getDeltaText(payload);
+
+          if (deltaText) {
+            answer += deltaText;
+            await params.onTextDelta?.(deltaText);
+          }
+
+          const nextFinishReason = payload.choices?.[0]?.finish_reason;
+
+          if (typeof nextFinishReason === "string" && nextFinishReason) {
+            finishReason = nextFinishReason;
+          }
+        }
+      }
+    }
+
+    const finalAnswer = answer.trim();
+
+    if (!finalAnswer) {
+      throw new Error("模型服务返回了空回答");
+    }
+
+    return {
+      answer: finalAnswer,
+      finishReason,
+    };
+  } catch (error) {
+    throwMappedModelProviderError(error, "知识库回答生成");
   }
 }
 
@@ -637,7 +824,7 @@ export async function answerKnowledgeQuestion(
     options,
   );
   const citations = search.hits.slice(0, limit).map(toCitation);
-  const modelAnswer = await tryGenerateModelAnswer({
+  const modelAnswer = await generateModelAnswerFromCitations({
     question: parsedInput.question,
     citations,
     apiKey: options.apiKey,
@@ -679,20 +866,11 @@ export async function generateGroundedAnswer(params: {
   const citations = search.hits
     .slice(0, params.limit ?? DEFAULT_ASK_LIMIT)
     .map(toCitation);
-  const usedHitIds = new Set(
-    search.hits
-      .slice(0, params.limit ?? DEFAULT_ASK_LIMIT)
-      .map((hit) => hit.chunkId),
+  const retrieval = annotateAnswerUsage(
+    search,
+    params.limit ?? DEFAULT_ASK_LIMIT,
   );
-  const retrieval: SearchKnowledgeResult = {
-    ...search,
-    usedHitIds: [...usedHitIds],
-    hits: search.hits.map((hit) => ({
-      ...hit,
-      usedInAnswer: usedHitIds.has(hit.chunkId),
-    })),
-  };
-  const answer = await tryGenerateModelAnswer({
+  const answer = await generateModelAnswerFromCitations({
     question: params.query,
     citations,
     fetchImpl: params.fetchImpl,

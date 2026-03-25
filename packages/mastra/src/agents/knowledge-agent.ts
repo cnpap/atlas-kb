@@ -3,6 +3,7 @@ import { createRuntimeModel } from "../models";
 import { createSearchKnowledgeTool } from "../tools";
 
 const KNOWLEDGE_AGENT_ID = "knowledge-assistant";
+export const SEARCH_KNOWLEDGE_TOOL_NAME = "search_knowledge";
 const KNOWLEDGE_AGENT_PROMPT = `
 You are the Atlas KB assistant.
 
@@ -34,7 +35,7 @@ export function createKnowledgeAgent(
     instructions: buildInstructions(options.spaceId),
     model: createRuntimeModel(),
     tools: {
-      search_knowledge: createSearchKnowledgeTool({
+      [SEARCH_KNOWLEDGE_TOOL_NAME]: createSearchKnowledgeTool({
         defaultLimit: options.searchLimit,
         lockedSpaceId: options.spaceId,
       }),

@@ -12,23 +12,25 @@
   "dependencies": {
     "@atlas-kb/api": "workspace:*",
     "@atlas-kb/schema": "workspace:*",
-    "@elysiajs/eden": "latest",
+    "@elysiajs/eden": "^1.4.6",
     "@iconify-json/lucide": "1.2.98",
     "@iconify-json/simple-icons": "1.2.74",
     "@nuxt/ui": "4.5.1",
-    "@unhead/vue": "latest",
-    "@vueuse/core": "latest",
-    "lucide-vue-next": "latest",
-    "vue": "latest",
-    "vue-router": "latest"
+    "@unhead/vue": "2.1.12",
+    "@vueuse/core": "14.2.1",
+    "ai": "*",
+    "lucide-vue-next": "0.577.0",
+    "marked": "17.0.5",
+    "vue": "^3.5.29",
+    "vue-router": "^4.5.1"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "latest",
-    "@types/node": "latest",
-    "@vitejs/plugin-vue": "latest",
-    "tailwindcss": "latest",
-    "typescript": "latest",
-    "vite": "latest",
-    "vue-tsc": "latest"
+    "@tailwindcss/vite": "4.2.1",
+    "@types/node": "^24.10.1",
+    "@vitejs/plugin-vue": "^6.0.2",
+    "tailwindcss": "4.2.1",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1",
+    "vue-tsc": "^3.1.5"
   }
 }

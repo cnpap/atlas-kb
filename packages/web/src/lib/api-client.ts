@@ -1,13 +1,24 @@
+import {
+  isDataUIPart,
+  parseJsonEventStream,
+  readUIMessageStream,
+  uiMessageChunkSchema,
+  type UIMessage,
+} from "ai";
+import { ChatReplyStreamDataEventSchema } from "@atlas-kb/schema";
 import type {
   ChatMessageFeedback,
   ChatMessageFeedbackRequest,
   ChatMessagesData,
   ChatReplyFinal,
   ChatReplyRequest,
+  ChatReplyStreamBody,
+  ChatReplyStreamDataEvent,
   ChatSessionCreateRequest,
   ChatSessionsData,
   ChatSessionUpdateRequest,
   DashboardSummary,
+  KnowledgeBatchImportData,
   HealthData,
   KnowledgeCollectionCreateRequest,
   KnowledgeCollectionData,
@@ -39,6 +50,30 @@ interface FailureEnvelope {
 
 type JsonPayload<T> = SuccessEnvelope<T> | FailureEnvelope;
 
+type ReplyAcceptedEvent = Extract<
+  ChatReplyStreamDataEvent,
+  { type: "reply-accepted" }
+>;
+type TraceStreamEvent = Extract<ChatReplyStreamDataEvent, { type: "trace" }>;
+type ReplyCompletedEvent = Extract<
+  ChatReplyStreamDataEvent,
+  { type: "reply-completed" }
+>;
+type ReplyErrorEvent = Extract<
+  ChatReplyStreamDataEvent,
+  { type: "reply-error" }
+>;
+
+type ChatReplyStreamUIMessage = UIMessage<
+  never,
+  {
+    replyAccepted: ReplyAcceptedEvent;
+    trace: TraceStreamEvent;
+    replyCompleted: ReplyCompletedEvent;
+    replyError: ReplyErrorEvent;
+  }
+>;
+
 function resolveApiUrl(path: string): string {
   return new URL(path, getApiBaseUrl()).toString();
 }
@@ -46,7 +81,13 @@ function resolveApiUrl(path: string): string {
 function parseDownloadFilename(headerValue: string | null): string | undefined {
   if (!headerValue) return undefined;
   const utf8Match = headerValue.match(/filename\*=UTF-8''([^;]+)/i);
-  if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1]);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
   const basicMatch = headerValue.match(/filename="([^"]+)"/i);
   return basicMatch?.[1];
 }
@@ -98,6 +139,44 @@ export function getErrorMessage(error: unknown): string {
   }
 
   return "请求失败";
+}
+
+function getStreamMessageContent(message: ChatReplyStreamUIMessage): string {
+  return message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("");
+}
+
+function getStreamDataEvents(
+  message: ChatReplyStreamUIMessage,
+): ChatReplyStreamDataEvent[] {
+  return message.parts.flatMap((part) => {
+    if (!isDataUIPart(part)) {
+      return [];
+    }
+
+    const parsed = ChatReplyStreamDataEventSchema.safeParse(part.data);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+async function getStreamRequestError(response: Response): Promise<Error> {
+  try {
+    const payload = (await response.clone().json()) as FailureEnvelope;
+
+    if (!payload.success) {
+      return new Error(payload.error.message);
+    }
+  } catch {
+    const text = (await response.text()).trim();
+
+    if (text) {
+      return new Error(text);
+    }
+  }
+
+  return new Error(`请求失败 (${response.status})`);
 }
 
 export function getKnowledgeSourceDownloadUrl(sourceId: string): string {
@@ -236,6 +315,30 @@ export async function importKnowledgeFileRequest(params: {
   );
 }
 
+export async function importKnowledgeFilesRequest(params: {
+  collectionId: string;
+  files: File[];
+  summary?: string;
+  tags?: string[];
+}): Promise<KnowledgeBatchImportData> {
+  const form = new FormData();
+
+  for (const file of params.files) {
+    form.append("files", file);
+  }
+
+  if (params.summary) form.append("summary", params.summary);
+  if (params.tags?.length) form.append("tags", params.tags.join(", "));
+
+  return requestJson<KnowledgeBatchImportData>(
+    `/api/kb/collections/${encodeURIComponent(params.collectionId)}/imports/files`,
+    {
+      method: "POST",
+      body: form,
+    },
+  );
+}
+
 export async function importKnowledgeTextRequest(params: {
   collectionId: string;
   body: KnowledgeTextImportRequest;
@@ -323,6 +426,62 @@ export async function replyChatSessionRequest(params: {
   );
 }
 
+export async function streamChatReplyRequest(params: {
+  sessionId: string;
+  body: ChatReplyStreamBody;
+  onUpdate: (options: {
+    content: string;
+    events: ChatReplyStreamDataEvent[];
+  }) => void;
+}): Promise<void> {
+  const response = await fetch(
+    resolveApiUrl(
+      `/api/chat/sessions/${encodeURIComponent(params.sessionId)}/reply/stream`,
+    ),
+    {
+      method: "POST",
+      headers: {
+        Accept: "text/event-stream",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(params.body),
+    },
+  );
+
+  if (!response.ok) {
+    throw await getStreamRequestError(response);
+  }
+
+  if (!response.body) {
+    throw new Error("AI 对话流未返回可读取的数据");
+  }
+
+  const parsedStream = parseJsonEventStream({
+    stream: response.body,
+    schema: uiMessageChunkSchema,
+  }).pipeThrough(
+    new TransformStream({
+      transform(chunk, controller) {
+        if (!chunk.success) {
+          throw chunk.error;
+        }
+
+        controller.enqueue(chunk.value);
+      },
+    }),
+  );
+
+  for await (const message of readUIMessageStream<ChatReplyStreamUIMessage>({
+    stream: parsedStream,
+    terminateOnError: true,
+  })) {
+    params.onUpdate({
+      content: getStreamMessageContent(message),
+      events: getStreamDataEvents(message),
+    });
+  }
+}
+
 export async function sendChatFeedbackRequest(params: {
   messageId: string;
   body: ChatMessageFeedbackRequest;
@@ -361,8 +520,8 @@ export async function downloadKnowledgeSourceRequest(params: {
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
   const resolvedFilename =
-    params.filename ||
     parseDownloadFilename(response.headers.get("Content-Disposition")) ||
+    params.filename ||
     "atlas-kb-download";
 
   link.href = objectUrl;

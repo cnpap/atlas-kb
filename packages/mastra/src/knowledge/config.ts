@@ -73,7 +73,7 @@ export function getOpenAIBaseUrl(): string {
 
 export function getOpenAIUrl(path: string, baseUrl?: string): string {
   const normalizedPath = path.replace(/^\/+/g, "");
-  return `${normalizeOpenAIBaseUrl(baseUrl)}/${normalizedPath}`;
+  return `${baseUrl ? normalizeOpenAIBaseUrl(baseUrl) : getOpenAIBaseUrl()}/${normalizedPath}`;
 }
 
 export function getOpenAIModel(): string {

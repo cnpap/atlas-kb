@@ -121,6 +121,7 @@ function openDatabase(): Database {
       content TEXT NOT NULL,
       citations_json TEXT NOT NULL,
       retrieval_json TEXT,
+      trace_json TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -143,6 +144,12 @@ function openDatabase(): Database {
 
   try {
     database.exec("ALTER TABLE chat_messages ADD COLUMN retrieval_json TEXT;");
+  } catch {
+    // Column already exists in upgraded databases.
+  }
+
+  try {
+    database.exec("ALTER TABLE chat_messages ADD COLUMN trace_json TEXT;");
   } catch {
     // Column already exists in upgraded databases.
   }

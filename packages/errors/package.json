@@ -10,6 +10,6 @@
   },
   "dependencies": {
     "@atlas-kb/schema": "workspace:*",
-    "zod": "*"
+    "zod": "^4.3.6"
   }
 }

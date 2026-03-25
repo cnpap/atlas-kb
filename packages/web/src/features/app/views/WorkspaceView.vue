@@ -1,14 +1,20 @@
 <script setup lang="ts">
   import type {
     ChatMessage,
+    ChatTraceEvent,
     ChatSession,
     KnowledgeCollection,
     KnowledgeSource,
+    KnowledgeSourcesData,
     SearchKnowledgeHit,
   } from "@atlas-kb/schema";
-  import { computed, onMounted, ref, watch } from "vue";
+  import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
   import { useRoute, useRouter } from "vue-router";
   import {
+    File as FileIcon,
+    FileCode,
+    FileSpreadsheet,
+    Presentation,
     CircleAlert,
     FolderPlus,
     Plus,
@@ -39,27 +45,51 @@
     downloadKnowledgeSourceRequest,
     fetchChatMessagesRequest,
     fetchKnowledgeCollectionSources,
-    importKnowledgeFileRequest,
+    getErrorMessage,
+    importKnowledgeFilesRequest,
     importKnowledgeTextRequest,
     listChatSessionsRequest,
     listKnowledgeCollections,
-    replyChatSessionRequest,
     reprocessKnowledgeSourceRequest,
     sendChatFeedbackRequest,
+    streamChatReplyRequest,
     updateChatSessionRequest,
     updateKnowledgeCollectionRequest,
     updateKnowledgeSourceRequest,
   } from "@/lib/api-client";
+  import { generateClientId } from "@/lib/ids";
+  import { renderMarkdown } from "@/lib/markdown";
   import {
     formatDateTime,
+    formatFileSize,
+    getKnowledgeFileDisplay,
     formatRelativeTime,
+    type KnowledgeFileKind,
     getSourceStatusLabel,
     getSourceStatusTone,
-    getSourceTypeLabel,
   } from "@/lib/knowledge-ui";
 
   type PanelMode = "citations" | "library";
   type ImportMode = "file" | "text";
+  type QueuedImportStatus =
+    | "queued"
+    | "uploading"
+    | "accepted"
+    | "failed"
+    | "unsupported";
+
+  type QueuedImportFile = {
+    id: string;
+    file: File;
+    name: string;
+    size: number;
+    mimeType?: string;
+    formatLabel: string;
+    kind: KnowledgeFileKind;
+    supported: boolean;
+    status: QueuedImportStatus;
+    errorMessage?: string;
+  };
 
   const route = useRoute();
   const router = useRouter();
@@ -80,18 +110,25 @@
   const importPending = ref(false);
   const sourceActionId = ref("");
   const error = ref("");
+  const noticeMessage = ref("");
 
   const composer = ref("");
   const selectedAssistantMessageId = ref("");
   const sourceFilter = ref("");
   const importMode = ref<ImportMode>("file");
-  const chosenFile = ref<File | null>(null);
+  const queuedFiles = ref<QueuedImportFile[]>([]);
+  const fileInputRef = ref<HTMLInputElement | null>(null);
+  const fileDropActive = ref(false);
+  const importSummaryMessage = ref("");
+  const expandedTraceState = ref<Record<string, boolean>>({});
+  const suspendedMessageLoadSessionId = ref("");
 
   // Modals Visibility
   const showCreateCollection = ref(false);
   const showImportModal = ref(false);
   const showSourceDetailModal = ref(false);
   const showCollectionSettingsModal = ref(false);
+  let sourcePollingTimer: number | undefined;
 
   const createCollectionForm = ref({
     name: "",
@@ -102,7 +139,6 @@
     description: "",
   });
   const fileForm = ref({
-    title: "",
     summary: "",
     tags: "",
   });
@@ -199,6 +235,177 @@
     return "未选择分组";
   });
 
+  const queuedFilesAwaitingUpload = computed(() =>
+    queuedFiles.value.filter(
+      (item) =>
+        item.supported &&
+        (item.status === "queued" || item.status === "failed"),
+    ),
+  );
+  const queuedFilesSuccessCount = computed(
+    () => queuedFiles.value.filter((item) => item.status === "accepted").length,
+  );
+  const queuedFilesFailureCount = computed(
+    () =>
+      queuedFiles.value.filter(
+        (item) => item.status === "failed" || item.status === "unsupported",
+      ).length,
+  );
+  const queuedFilesUnsupportedCount = computed(
+    () => queuedFiles.value.filter((item) => !item.supported).length,
+  );
+  const canSubmitImport = computed(() => {
+    if (importPending.value) {
+      return false;
+    }
+
+    if (importMode.value === "text") {
+      return Boolean(textForm.value.content.trim());
+    }
+
+    return queuedFilesAwaitingUpload.value.length > 0;
+  });
+
+  function isTemporaryMessageId(messageId: string): boolean {
+    return messageId.startsWith("temp:");
+  }
+
+  function createTempMessageId(prefix: "user" | "assistant"): string {
+    return generateClientId(`temp:${prefix}`);
+  }
+
+  function isTraceExpanded(messageId: string): boolean {
+    return expandedTraceState.value[messageId] ?? false;
+  }
+
+  function setTraceExpanded(messageId: string, expanded: boolean) {
+    expandedTraceState.value = {
+      ...expandedTraceState.value,
+      [messageId]: expanded,
+    };
+  }
+
+  function moveTraceExpandedState(fromMessageId: string, toMessageId: string) {
+    if (!(fromMessageId in expandedTraceState.value)) {
+      return;
+    }
+
+    const nextState = { ...expandedTraceState.value };
+    nextState[toMessageId] = nextState[fromMessageId] ?? false;
+    delete nextState[fromMessageId];
+    expandedTraceState.value = nextState;
+  }
+
+  function toggleTrace(messageId: string) {
+    setTraceExpanded(messageId, !isTraceExpanded(messageId));
+  }
+
+  function getMessageTrace(message: ChatMessage): ChatTraceEvent[] {
+    return message.trace ?? [];
+  }
+
+  function getTraceStateLabel(state: ChatTraceEvent["state"]): string {
+    switch (state) {
+      case "completed":
+        return "已完成";
+      case "failed":
+        return "失败";
+      case "info":
+        return "过程";
+      default:
+        return "进行中";
+    }
+  }
+
+  function getTraceStateTone(state: ChatTraceEvent["state"]): string {
+    switch (state) {
+      case "completed":
+        return "ready";
+      case "failed":
+        return "failed";
+      case "info":
+        return "archived";
+      default:
+        return "processing";
+    }
+  }
+
+  function getTraceKindLabel(kind: ChatTraceEvent["kind"]): string {
+    switch (kind) {
+      case "search":
+        return "检索";
+      case "tool-call":
+        return "工具";
+      case "reasoning":
+        return "组织";
+      case "error":
+        return "错误";
+      default:
+        return "状态";
+    }
+  }
+
+  function replaceMessage(
+    currentMessageId: string,
+    nextMessage: ChatMessage,
+    options: {
+      preserveTrace?: boolean;
+    } = {},
+  ) {
+    messages.value = messages.value.map((message) => {
+      if (message.id !== currentMessageId) {
+        return message;
+      }
+
+      const trace =
+        options.preserveTrace && nextMessage.trace === undefined
+          ? message.trace
+          : nextMessage.trace;
+
+      return {
+        ...nextMessage,
+        trace,
+      };
+    });
+
+    if (selectedAssistantMessageId.value === currentMessageId) {
+      selectedAssistantMessageId.value = nextMessage.id;
+    }
+
+    if (currentMessageId !== nextMessage.id) {
+      moveTraceExpandedState(currentMessageId, nextMessage.id);
+    }
+  }
+
+  function updateAssistantDraftFromStream(messageId: string, content: string) {
+    messages.value = messages.value.map((message) =>
+      message.id === messageId
+        ? {
+            ...message,
+            content,
+          }
+        : message,
+    );
+  }
+
+  function upsertTraceEvent(messageId: string, event: ChatTraceEvent) {
+    messages.value = messages.value.map((message) => {
+      if (message.id !== messageId) {
+        return message;
+      }
+
+      const existingTrace = message.trace ?? [];
+      const nextTrace = existingTrace.some((item) => item.id === event.id)
+        ? existingTrace.map((item) => (item.id === event.id ? event : item))
+        : [...existingTrace, event];
+
+      return {
+        ...message,
+        trace: nextTrace,
+      };
+    });
+  }
+
   function parseTags(input: string): string[] | undefined {
     const tags = input
       .split(/[,\n]/)
@@ -206,6 +413,136 @@
       .filter(Boolean);
 
     return tags.length > 0 ? [...new Set(tags)] : undefined;
+  }
+
+  function createQueuedFile(
+    file: globalThis.File,
+    index: number,
+  ): QueuedImportFile {
+    const display = getKnowledgeFileDisplay({
+      filename: file.name,
+      mimeType: file.type || undefined,
+    });
+
+    return {
+      id: `${file.name}:${file.size}:${file.lastModified}:${Date.now()}:${index}`,
+      file,
+      name: file.name,
+      size: file.size,
+      mimeType: file.type || undefined,
+      formatLabel: display.formatLabel,
+      kind: display.kind,
+      supported: display.supported,
+      status: display.supported ? "queued" : "unsupported",
+      errorMessage: display.supported ? undefined : "暂不支持解析该文件格式",
+    };
+  }
+
+  function appendFiles(files: Iterable<globalThis.File>) {
+    const nextFiles = Array.from(files).map((file, index) =>
+      createQueuedFile(file, index),
+    );
+
+    if (nextFiles.length === 0) {
+      return;
+    }
+
+    queuedFiles.value = [...queuedFiles.value, ...nextFiles];
+    importSummaryMessage.value = "";
+  }
+
+  function resetFileSelection() {
+    queuedFiles.value = [];
+    importSummaryMessage.value = "";
+    fileDropActive.value = false;
+
+    if (fileInputRef.value) {
+      fileInputRef.value.value = "";
+    }
+  }
+
+  function resetImportForm() {
+    importMode.value = "file";
+    fileForm.value.summary = "";
+    fileForm.value.tags = "";
+    textForm.value.title = "";
+    textForm.value.summary = "";
+    textForm.value.tags = "";
+    textForm.value.content = "";
+    resetFileSelection();
+  }
+
+  function removeQueuedFile(fileId: string) {
+    queuedFiles.value = queuedFiles.value.filter((item) => item.id !== fileId);
+
+    if (queuedFiles.value.length === 0) {
+      importSummaryMessage.value = "";
+    }
+  }
+
+  function getQueuedFileStatusLabel(status: QueuedImportStatus): string {
+    switch (status) {
+      case "uploading":
+        return "上传中";
+      case "accepted":
+        return "已接收";
+      case "failed":
+        return "失败";
+      case "unsupported":
+        return "暂不支持";
+      default:
+        return "待上传";
+    }
+  }
+
+  function getQueuedFileStatusTone(status: QueuedImportStatus): string {
+    switch (status) {
+      case "accepted":
+        return "processing";
+      case "failed":
+      case "unsupported":
+        return "failed";
+      case "uploading":
+        return "processing";
+      default:
+        return "archived";
+    }
+  }
+
+  function getQueuedFileIcon(kind: KnowledgeFileKind) {
+    switch (kind) {
+      case "word":
+      case "text":
+      case "pdf":
+        return FileText;
+      case "spreadsheet":
+        return FileSpreadsheet;
+      case "presentation":
+        return Presentation;
+      case "code":
+        return FileCode;
+      default:
+        return FileIcon;
+    }
+  }
+
+  function getQueuedFileIconTone(kind: KnowledgeFileKind): string {
+    switch (kind) {
+      case "pdf":
+        return "bg-red-50 text-red-600";
+      case "word":
+        return "bg-blue-50 text-blue-600";
+      case "spreadsheet":
+        return "bg-emerald-50 text-emerald-600";
+      case "presentation":
+        return "bg-amber-50 text-amber-600";
+      case "code":
+        return "bg-slate-100 text-slate-700";
+      case "text":
+        return "bg-stone-100 text-stone-700";
+      default:
+        return "bg-[var(--bg-panel-muted)] text-[var(--accent)]";
+    }
   }
 
   async function replaceWorkspaceQuery(
@@ -256,6 +593,33 @@
     );
   }
 
+  function clearSourcePolling() {
+    if (sourcePollingTimer) {
+      window.clearTimeout(sourcePollingTimer);
+      sourcePollingTimer = undefined;
+    }
+  }
+
+  function syncSourceCollection(data: KnowledgeSourcesData) {
+    sources.value = data.sources;
+    syncCollectionEditor(data.collection);
+    collections.value = collections.value.map((item) =>
+      item.id === data.collection.id ? data.collection : item,
+    );
+    clearSourcePolling();
+
+    if (
+      data.collection.id === activeCollectionId.value &&
+      data.sources.some((item) => item.status === "processing")
+    ) {
+      sourcePollingTimer = window.setTimeout(() => {
+        void loadSources(data.collection.id, {
+          silent: true,
+        });
+      }, 2000);
+    }
+  }
+
   function openCreateCollectionModal() {
     error.value = "";
     showCreateCollection.value = true;
@@ -287,7 +651,8 @@
           null,
       );
     } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : "知识分组加载失败";
+      error.value =
+        cause instanceof Error ? cause.message : "资料文件夹加载失败";
     } finally {
       loadingCollections.value = false;
     }
@@ -315,23 +680,33 @@
     }
   }
 
-  async function loadSources(collectionId: string) {
+  async function loadSources(
+    collectionId: string,
+    options: {
+      silent?: boolean;
+    } = {},
+  ) {
+    clearSourcePolling();
+
     if (!collectionId) {
       sources.value = [];
       syncCollectionEditor(null);
       return;
     }
 
-    loadingSources.value = true;
+    if (!options.silent) {
+      loadingSources.value = true;
+    }
 
     try {
       const data = await fetchKnowledgeCollectionSources(collectionId);
-      sources.value = data.sources;
-      syncCollectionEditor(data.collection);
+      syncSourceCollection(data);
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : "资料加载失败";
     } finally {
-      loadingSources.value = false;
+      if (!options.silent) {
+        loadingSources.value = false;
+      }
     }
   }
 
@@ -374,6 +749,7 @@
     });
 
     await loadSessions();
+    suspendedMessageLoadSessionId.value = created.session.id;
     await replaceWorkspaceQuery({
       session: created.session.id,
     });
@@ -386,7 +762,7 @@
     const description = createCollectionForm.value.description.trim();
 
     if (!name || !description) {
-      error.value = "请填写知识分组名称和说明";
+      error.value = "请填写文件夹名称和说明";
       return;
     }
 
@@ -411,7 +787,8 @@
       });
       await loadSources(data.collection.id);
     } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : "创建知识分组失败";
+      error.value =
+        cause instanceof Error ? cause.message : "创建资料文件夹失败";
     } finally {
       creatingCollection.value = false;
     }
@@ -437,7 +814,8 @@
       await loadSources(activeCollection.value.id);
       showCollectionSettingsModal.value = false;
     } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : "知识分组保存失败";
+      error.value =
+        cause instanceof Error ? cause.message : "资料文件夹保存失败";
     } finally {
       savingCollection.value = false;
     }
@@ -449,7 +827,7 @@
     }
 
     const accepted = window.confirm(
-      `确认删除知识分组“${activeCollection.value.name}”？`,
+      `确认删除资料文件夹“${activeCollection.value.name}”？`,
     );
 
     if (!accepted) {
@@ -477,7 +855,8 @@
       }
       showCollectionSettingsModal.value = false;
     } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : "删除知识分组失败";
+      error.value =
+        cause instanceof Error ? cause.message : "删除资料文件夹失败";
     }
   }
 
@@ -562,29 +941,112 @@
 
     replying.value = true;
     error.value = "";
+    noticeMessage.value = "";
 
+    const previousMessages = [...messages.value];
+    const previousSelectedAssistantMessageId = selectedAssistantMessageId.value;
+    const tempUserId = createTempMessageId("user");
+    const tempAssistantId = createTempMessageId("assistant");
+    const draftCreatedAt = new Date().toISOString();
+    let acceptedReply = false;
+    let replyErrorMessage = "";
+    const completedReplyState = {
+      assistantMessage: null as ChatMessage | null,
+    };
+    let sessionId = "";
     try {
-      const sessionId = await ensureSession();
-      const result = await replyChatSessionRequest({
+      sessionId = await ensureSession();
+
+      messages.value = [
+        ...messages.value,
+        {
+          id: tempUserId,
+          sessionId,
+          role: "user",
+          content: trimmed,
+          citations: [],
+          createdAt: draftCreatedAt,
+        },
+        {
+          id: tempAssistantId,
+          sessionId,
+          role: "assistant",
+          content: "",
+          citations: [],
+          createdAt: draftCreatedAt,
+          trace: [
+            {
+              id: "status:queued",
+              kind: "status",
+              state: "running",
+              title: "已提交问题，正在准备检索",
+              createdAt: draftCreatedAt,
+            },
+          ],
+        },
+      ];
+      selectedAssistantMessageId.value = tempAssistantId;
+      setTraceExpanded(tempAssistantId, true);
+
+      await streamChatReplyRequest({
         sessionId,
         body: {
           query: trimmed,
           collectionId: activeCollectionId.value || undefined,
           limit: 6,
         },
+        onUpdate: ({ content, events }) => {
+          updateAssistantDraftFromStream(tempAssistantId, content);
+
+          for (const event of events) {
+            switch (event.type) {
+              case "reply-accepted":
+                acceptedReply = true;
+                replaceMessage(tempUserId, event.userMessage);
+                break;
+              case "trace":
+                upsertTraceEvent(tempAssistantId, event.event);
+                break;
+              case "reply-completed":
+                completedReplyState.assistantMessage = event.assistantMessage;
+                replaceMessage(tempUserId, event.userMessage);
+                replaceMessage(tempAssistantId, event.assistantMessage);
+                selectedAssistantMessageId.value = event.assistantMessage.id;
+                moveTraceExpandedState(
+                  tempAssistantId,
+                  event.assistantMessage.id,
+                );
+                setTraceExpanded(event.assistantMessage.id, false);
+                break;
+              case "reply-error":
+                replyErrorMessage = event.message;
+                error.value = event.message;
+                upsertTraceEvent(tempAssistantId, {
+                  id: "status:error",
+                  kind: "error",
+                  state: "failed",
+                  title: "回答生成失败",
+                  detail: event.message,
+                  createdAt: new Date().toISOString(),
+                });
+                break;
+            }
+          }
+        },
       });
 
+      if (replyErrorMessage) {
+        throw new Error(replyErrorMessage);
+      }
+
+      if (!completedReplyState.assistantMessage) {
+        throw new Error("AI 对话未完成，请重试。");
+      }
+
       composer.value = "";
-      messages.value = [
-        ...messages.value,
-        result.userMessage,
-        result.assistantMessage,
-      ];
-      selectedAssistantMessageId.value = result.assistantMessage.id;
-
-      const firstCitation = result.assistantMessage.citations[0];
-
       await loadSessions();
+
+      const firstCitation = completedReplyState.assistantMessage?.citations[0];
 
       if (firstCitation) {
         await replaceWorkspaceQuery({
@@ -600,7 +1062,25 @@
         });
       }
     } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : "发送消息失败";
+      if (!acceptedReply) {
+        messages.value = previousMessages;
+        selectedAssistantMessageId.value = previousSelectedAssistantMessageId;
+      }
+
+      if (!error.value) {
+        error.value = getErrorMessage(cause);
+      }
+
+      if (acceptedReply && !completedReplyState.assistantMessage) {
+        upsertTraceEvent(tempAssistantId, {
+          id: "status:error",
+          kind: "error",
+          state: "failed",
+          title: "回答生成失败",
+          detail: getErrorMessage(cause),
+          createdAt: new Date().toISOString(),
+        });
+      }
     } finally {
       replying.value = false;
     }
@@ -629,30 +1109,88 @@
 
   async function submitImport() {
     if (!activeCollection.value) {
-      error.value = "请先选择一个知识分组";
+      error.value = "请先选择一个资料文件夹";
       return;
     }
 
     importPending.value = true;
     error.value = "";
+    importSummaryMessage.value = "";
+    noticeMessage.value = "";
 
     try {
       if (importMode.value === "file") {
-        if (!chosenFile.value) {
-          throw new Error("请先选择文件");
+        const filesToUpload = queuedFilesAwaitingUpload.value;
+
+        if (filesToUpload.length === 0) {
+          throw new Error("请先选择可导入的文件");
         }
 
-        await importKnowledgeFileRequest({
+        const nextQueuedFiles = queuedFiles.value.map((item) =>
+          filesToUpload.some((candidate) => candidate.id === item.id)
+            ? {
+                ...item,
+                status: "uploading" as const,
+                errorMessage: undefined,
+              }
+            : item,
+        );
+        queuedFiles.value = nextQueuedFiles;
+
+        const result = await importKnowledgeFilesRequest({
           collectionId: activeCollection.value.id,
-          file: chosenFile.value,
-          title: fileForm.value.title.trim() || undefined,
+          files: filesToUpload.map((item) => item.file),
           summary: fileForm.value.summary.trim() || undefined,
           tags: parseTags(fileForm.value.tags),
         });
-        chosenFile.value = null;
-        fileForm.value.title = "";
-        fileForm.value.summary = "";
-        fileForm.value.tags = "";
+
+        queuedFiles.value = queuedFiles.value.map((item) => {
+          const resultIndex = filesToUpload.findIndex(
+            (candidate) => candidate.id === item.id,
+          );
+
+          if (resultIndex < 0) {
+            return item;
+          }
+
+          const uploadResult = result.results[resultIndex];
+
+          if (!uploadResult) {
+            return {
+              ...item,
+              status: "failed",
+              errorMessage: "批量导入结果不完整，请重试",
+            };
+          }
+
+          return {
+            ...item,
+            status: uploadResult.accepted ? "accepted" : "failed",
+            errorMessage: uploadResult.accepted
+              ? undefined
+              : uploadResult.errorMessage,
+          };
+        });
+
+        const summaryParts: string[] = [];
+
+        if (result.acceptedCount > 0) {
+          summaryParts.push(
+            `已接收 ${result.acceptedCount} 个文件，后台正在解析和建立索引`,
+          );
+        }
+
+        if (result.rejectedCount > 0) {
+          summaryParts.push(`${result.rejectedCount} 个文件未进入处理队列`);
+        }
+
+        if (queuedFilesUnsupportedCount.value > 0) {
+          summaryParts.push(
+            `${queuedFilesUnsupportedCount.value} 个文件暂不支持解析`,
+          );
+        }
+
+        importSummaryMessage.value = summaryParts.join("，");
       }
 
       if (importMode.value === "text") {
@@ -665,6 +1203,7 @@
             content: textForm.value.content.trim(),
           },
         });
+        noticeMessage.value = "文本资料已加入当前文件夹。";
         textForm.value.title = "";
         textForm.value.summary = "";
         textForm.value.tags = "";
@@ -673,8 +1212,35 @@
 
       await loadCollections();
       await loadSources(activeCollection.value.id);
-      showImportModal.value = false;
+
+      if (importMode.value === "text") {
+        showImportModal.value = false;
+        resetImportForm();
+        return;
+      }
+
+      if (importSummaryMessage.value) {
+        noticeMessage.value = importSummaryMessage.value;
+      }
+
+      if (queuedFiles.value.some((item) => item.status === "accepted")) {
+        showImportModal.value = false;
+        resetImportForm();
+      }
     } catch (cause) {
+      if (importMode.value === "file") {
+        queuedFiles.value = queuedFiles.value.map((item) =>
+          item.status === "uploading"
+            ? {
+                ...item,
+                status: "failed",
+                errorMessage:
+                  cause instanceof Error ? cause.message : "导入资料失败",
+              }
+            : item,
+        );
+      }
+
       error.value = cause instanceof Error ? cause.message : "导入资料失败";
     } finally {
       importPending.value = false;
@@ -779,7 +1345,31 @@
 
   function handleFileChange(event: Event) {
     const input = event.target as HTMLInputElement | null;
-    chosenFile.value = input?.files?.[0] || null;
+    appendFiles(input?.files || []);
+
+    if (input) {
+      input.value = "";
+    }
+  }
+
+  function handleFileDrop(event: DragEvent) {
+    fileDropActive.value = false;
+    appendFiles(event.dataTransfer?.files || []);
+  }
+
+  function openImportModal() {
+    error.value = "";
+    importSummaryMessage.value = "";
+    noticeMessage.value = "";
+    showImportModal.value = true;
+  }
+
+  function closeImportModal() {
+    if (importPending.value) {
+      return;
+    }
+
+    showImportModal.value = false;
   }
 
   async function selectCollection(collectionId: string) {
@@ -833,7 +1423,18 @@
   });
 
   watch(activeSessionId, (value) => {
+    if (value && value === suspendedMessageLoadSessionId.value) {
+      suspendedMessageLoadSessionId.value = "";
+      return;
+    }
+
     void loadMessages(value);
+  });
+
+  watch(showImportModal, (isOpen) => {
+    if (!isOpen && !importPending.value) {
+      resetImportForm();
+    }
   });
 
   onMounted(async () => {
@@ -846,6 +1447,10 @@
     if (activeSessionId.value) {
       await loadMessages(activeSessionId.value);
     }
+  });
+
+  onBeforeUnmount(() => {
+    clearSourcePolling();
   });
 </script>
 
@@ -861,7 +1466,7 @@
             @click="openCreateCollectionModal"
           >
             <Plus class="size-4" />
-            <span class="text-xs">建分组</span>
+            <span class="text-xs">建文件夹</span>
           </button>
           <button
             class="soft-button primary flex-1"
@@ -876,7 +1481,7 @@
 
       <div class="pane-section border-b border-[rgba(93,72,34,0.06)]">
         <div class="section-row">
-          <span class="section-label">知识分组</span>
+          <span class="section-label">资料文件夹</span>
           <span class="text-xs text-[var(--text-dim)]"
             >{{ collections.length }}</span
           >
@@ -997,7 +1602,7 @@
               type="button"
               @click="openPanel('library')"
             >
-              资料库
+              文件夹
             </button>
           </div>
         </div>
@@ -1006,6 +1611,11 @@
       <div v-if="error" class="notice-strip warn">
         <CircleAlert class="size-4 shrink-0" />
         <span>{{ error }}</span>
+      </div>
+
+      <div v-if="noticeMessage" class="notice-strip">
+        <Info class="size-4 shrink-0" />
+        <span>{{ noticeMessage }}</span>
       </div>
 
       <div class="messages-scroller">
@@ -1018,7 +1628,7 @@
           </div>
           <p class="card-heading">开始深度知识问答</p>
           <p class="text-sm leading-6 text-[var(--text-muted)]">
-            选择一个知识分组，系统将通过多路召回技术，基于您的私有资料提供精准回复。
+            选择一个资料文件夹，智能体会先检索您的私有资料，再基于证据组织回答。
           </p>
         </div>
 
@@ -1039,17 +1649,82 @@
                 class="size-1.5 rounded-full bg-[var(--text-dim)]"
               />
               <span v-else class="size-1.5 rounded-full bg-[var(--accent)]" />
-              {{ message.role === "user" ? "YOU" : "ATLAS" }}
+              {{ message.role === "user" ? "YOU" : "智能体" }}
             </p>
             <p class="text-[10px] text-[var(--text-dim)]">
               {{ formatDateTime(message.createdAt) }}
             </p>
           </div>
           <p
+            v-if="message.role === 'user'"
             class="whitespace-pre-wrap text-[13px] leading-relaxed text-[var(--text-strong)]"
           >
             {{ message.content }}
           </p>
+          <div
+            v-else
+            class="message-markdown text-[13px] leading-relaxed text-[var(--text-strong)]"
+            v-html="renderMarkdown(message.content)"
+          />
+
+          <div
+            v-if="message.role === 'assistant' && getMessageTrace(message).length > 0"
+            class="trace-panel"
+          >
+            <div class="flex items-center justify-between gap-3">
+              <div
+                class="flex items-center gap-2 text-[11px] text-[var(--text-muted)]"
+              >
+                <span>执行过程</span>
+                <span>{{ getMessageTrace(message).length }} 步</span>
+              </div>
+              <button
+                class="soft-button !px-2.5 !py-1 !text-[11px]"
+                type="button"
+                @click.stop="toggleTrace(message.id)"
+              >
+                {{ isTraceExpanded(message.id) ? "收起过程" : "查看过程" }}
+              </button>
+            </div>
+
+            <div v-if="isTraceExpanded(message.id)" class="trace-list">
+              <div
+                v-for="event in getMessageTrace(message)"
+                :key="`${message.id}:${event.id}`"
+                class="trace-item"
+              >
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2">
+                      <span
+                        class="status-pill scale-90 origin-left"
+                        :class="getTraceStateTone(event.state)"
+                      >
+                        {{ getTraceStateLabel(event.state) }}
+                      </span>
+                      <span class="trace-kind"
+                        >{{ getTraceKindLabel(event.kind) }}</span
+                      >
+                    </div>
+                    <p
+                      class="mt-2 text-[12px] font-medium text-[var(--text-strong)]"
+                    >
+                      {{ event.title }}
+                    </p>
+                    <p
+                      v-if="event.detail"
+                      class="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-muted)]"
+                    >
+                      {{ event.detail }}
+                    </p>
+                  </div>
+                  <p class="text-[10px] text-[var(--text-dim)]">
+                    {{ formatDateTime(event.createdAt) }}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
 
           <div
             v-if="message.citations.length > 0"
@@ -1087,7 +1762,7 @@
           </div>
 
           <div
-            v-if="message.role === 'assistant'"
+            v-if="message.role === 'assistant' && !isTemporaryMessageId(message.id)"
             class="mt-4 flex items-center gap-2"
           >
             <button
@@ -1117,7 +1792,7 @@
           <textarea
             v-model="composer"
             class="textarea-reset !min-h-[44px] max-h-32 text-sm"
-            placeholder="询问有关您的知识库的问题..."
+            placeholder="向当前资料文件夹提问..."
             @keydown.enter.prevent="submitReply"
           />
           <div
@@ -1153,17 +1828,17 @@
           />
           <FileText v-else class="size-4 text-[var(--accent)]" />
           <p class="text-sm font-bold text-[var(--text-strong)]">
-            {{ panel === 'citations' ? '引用溯源' : '分组资料库' }}
+            {{ panel === 'citations' ? '引用溯源' : '当前文件夹资料' }}
           </p>
         </div>
         <div v-if="panel === 'library'" class="flex items-center gap-2">
           <button
             class="soft-button !px-2.5 !py-1.5"
             type="button"
-            @click="showImportModal = true"
+            @click="openImportModal"
           >
             <Upload class="size-3.5" />
-            <span class="text-xs">导入资料</span>
+            <span class="text-xs">添加文件</span>
           </button>
           <button
             class="soft-button !px-2.5 !py-1.5"
@@ -1262,7 +1937,9 @@
           class="empty-state items-center text-center"
         >
           <FolderPlus class="size-8 text-[var(--text-dim)] mb-2" />
-          <p class="text-sm text-[var(--text-muted)]">请先在左侧选择一个分组</p>
+          <p class="text-sm text-[var(--text-muted)]">
+            请先在左侧选择一个文件夹
+          </p>
         </div>
 
         <template v-else>
@@ -1373,14 +2050,14 @@
   <!-- Modal: Create Collection -->
   <UModal
     v-model:open="showCreateCollection"
-    title="新建知识分组"
-    description="创建一个新的命名空间，以便按主题管理您的资料。"
+    title="新建资料文件夹"
+    description="创建一个顶层资料文件夹，后续上传的文件都会归入这里。"
     :close="!creatingCollection"
   >
     <template #body>
       <div class="space-y-4 py-2">
         <div class="space-y-1.5">
-          <p class="section-label">分组名称</p>
+          <p class="section-label">文件夹名称</p>
           <input
             v-model="createCollectionForm.name"
             class="field-shell w-full text-sm"
@@ -1388,7 +2065,7 @@
           >
         </div>
         <div class="space-y-1.5">
-          <p class="section-label">用途描述</p>
+          <p class="section-label">文件夹说明</p>
           <textarea
             v-model="createCollectionForm.description"
             class="field-shell w-full text-sm !min-h-[100px]"
@@ -1424,8 +2101,8 @@
   <!-- Modal: Import Source -->
   <UModal
     v-model:open="showImportModal"
-    title="导入知识资料"
-    description="向当前分组添加新资料。支持文件上传或文本粘贴。"
+    title="添加文件到当前分组"
+    description="把文件放进当前分组，支持批量选择、名称预览、文件大小和格式识别。"
     :close="!importPending"
   >
     <template #body>
@@ -1451,30 +2128,136 @@
 
         <template v-if="importMode === 'file'">
           <div class="space-y-1.5">
-            <p class="section-label">选择文件</p>
+            <div class="flex items-center justify-between">
+              <p class="section-label">选择文件</p>
+              <p class="text-[10px] text-[var(--text-dim)]">
+                当前分组会作为顶层文件夹
+              </p>
+            </div>
             <label
-              class="field-shell flex flex-col items-center justify-center py-8 border-dashed cursor-pointer hover:border-[var(--accent)] transition-colors"
+              class="field-shell flex flex-col items-center justify-center py-8 border-dashed cursor-pointer transition-colors"
+              :class="
+                fileDropActive
+                  ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
+                  : 'hover:border-[var(--accent)]'
+              "
+              @dragenter.prevent="fileDropActive = true"
+              @dragover.prevent="fileDropActive = true"
+              @dragleave.prevent="fileDropActive = false"
+              @drop.prevent="handleFileDrop"
             >
               <Upload class="size-8 text-[var(--text-dim)] mb-2" />
               <p class="text-sm font-medium">
-                {{ chosenFile ? chosenFile.name : '点击或拖拽文件到此处' }}
+                {{ queuedFiles.length > 0
+                    ? `已选择 ${queuedFiles.length} 个文件，可继续添加`
+                    : "点击或拖拽多个文件到此处" }}
               </p>
-              <p
-                v-if="chosenFile"
-                class="text-[10px] text-[var(--accent)] mt-1"
+              <p class="mt-1 text-[10px] text-[var(--text-dim)] text-center">
+                支持批量上传；当前可解析
+                PDF、DOCX、Markdown、文本、HTML、JSON、CSV、XML、YAML。
+              </p>
+              <input
+                ref="fileInputRef"
+                type="file"
+                multiple
+                class="hidden"
+                @change="handleFileChange"
               >
-                {{ (chosenFile.size / 1024).toFixed(1) }}
-                KB
-              </p>
-              <input type="file" class="hidden" @change="handleFileChange">
             </label>
           </div>
+
+          <div v-if="queuedFiles.length > 0" class="space-y-2">
+            <div class="flex items-center justify-between">
+              <p class="section-label">文件预览</p>
+              <p class="text-[10px] text-[var(--text-dim)]">
+                {{ queuedFilesAwaitingUpload.length }}
+                个待上传，
+                {{ queuedFilesSuccessCount }}
+                个已接收，
+                {{ queuedFilesFailureCount }}
+                个异常
+              </p>
+            </div>
+            <div class="max-h-64 space-y-2 overflow-auto pr-1">
+              <div
+                v-for="fileItem in queuedFiles"
+                :key="fileItem.id"
+                class="rounded-xl border border-[var(--border-soft)] bg-white px-3 py-2"
+              >
+                <div class="flex items-start gap-3">
+                  <div
+                    class="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl"
+                    :class="getQueuedFileIconTone(fileItem.kind)"
+                  >
+                    <component
+                      :is="getQueuedFileIcon(fileItem.kind)"
+                      class="size-4"
+                    />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-start justify-between gap-3">
+                      <div class="min-w-0">
+                        <p
+                          class="truncate text-sm font-medium text-[var(--text-strong)]"
+                        >
+                          {{ fileItem.name }}
+                        </p>
+                        <p class="mt-1 text-[10px] text-[var(--text-dim)]">
+                          {{ fileItem.formatLabel }}
+                          ·
+                          {{ formatFileSize(fileItem.size) }}
+                        </p>
+                        <p
+                          v-if="fileItem.errorMessage"
+                          class="mt-1 text-[10px] text-red-500"
+                        >
+                          {{ fileItem.errorMessage }}
+                        </p>
+                      </div>
+                      <button
+                        class="soft-button !p-1.5"
+                        type="button"
+                        :disabled="importPending && fileItem.status === 'uploading'"
+                        @click="removeQueuedFile(fileItem.id)"
+                      >
+                        <X class="size-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                  <span
+                    class="status-pill scale-90 origin-right"
+                    :class="getQueuedFileStatusTone(fileItem.status)"
+                  >
+                    {{ getQueuedFileStatusLabel(fileItem.status) }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="importSummaryMessage"
+            class="panel-muted rounded-xl border border-[var(--border-soft)] p-3"
+          >
+            <p class="text-[12px] leading-relaxed text-[var(--text-muted)]">
+              {{ importSummaryMessage }}
+            </p>
+          </div>
+
           <div class="space-y-1.5">
-            <p class="section-label">显示标题 (可选)</p>
+            <p class="section-label">统一摘要 (可选)</p>
+            <textarea
+              v-model="fileForm.summary"
+              class="field-shell w-full text-sm !min-h-[80px]"
+              placeholder="会应用到本次选择的所有文件"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <p class="section-label">统一标签 (用逗号分隔)</p>
             <input
-              v-model="fileForm.title"
+              v-model="fileForm.tags"
               class="field-shell w-full text-sm"
-              placeholder="默认为文件名"
+              placeholder="例如：研究, 会议纪要"
             >
           </div>
         </template>
@@ -1489,6 +2272,14 @@
             >
           </div>
           <div class="space-y-1.5">
+            <p class="section-label">摘要 (可选)</p>
+            <textarea
+              v-model="textForm.summary"
+              class="field-shell w-full text-sm !min-h-[80px]"
+              placeholder="简要说明这段内容的用途"
+            />
+          </div>
+          <div class="space-y-1.5">
             <p class="section-label">正文内容</p>
             <textarea
               v-model="textForm.content"
@@ -1496,23 +2287,15 @@
               placeholder="在这里粘贴或输入资料正文..."
             />
           </div>
+          <div class="space-y-1.5">
+            <p class="section-label">标签 (用逗号分隔)</p>
+            <input
+              v-model="textForm.tags"
+              class="field-shell w-full text-sm"
+              placeholder="标签1, 标签2..."
+            >
+          </div>
         </template>
-
-        <div class="space-y-1.5">
-          <p class="section-label">标签 (用逗号分隔)</p>
-          <input
-            v-if="importMode === 'file'"
-            v-model="fileForm.tags"
-            class="field-shell w-full text-sm"
-            placeholder="标签1, 标签2..."
-          >
-          <input
-            v-else
-            v-model="textForm.tags"
-            class="field-shell w-full text-sm"
-            placeholder="标签1, 标签2..."
-          >
-        </div>
       </div>
     </template>
     <template #footer>
@@ -1520,7 +2303,7 @@
         <button
           class="soft-button"
           type="button"
-          @click="showImportModal = false"
+          @click="closeImportModal"
           :disabled="importPending"
         >
           取消
@@ -1529,11 +2312,15 @@
           class="soft-button primary"
           type="button"
           @click="submitImport"
-          :disabled="importPending"
+          :disabled="!canSubmitImport"
         >
           <LoaderCircle v-if="importPending" class="size-4 animate-spin" />
           <Upload v-else class="size-4" />
-          <span>开始处理</span>
+          <span>
+            {{ importMode === "file"
+                ? `上传 ${queuedFilesAwaitingUpload.length} 个文件`
+                : "开始处理" }}
+          </span>
         </button>
       </div>
     </template>
@@ -1543,6 +2330,7 @@
   <UModal
     v-model:open="showSourceDetailModal"
     title="资料详细信息"
+    description="查看资料状态、编辑标题和摘要，并核对当前收录内容。"
     :close="!savingSource"
   >
     <template #body>
@@ -1563,7 +2351,7 @@
           >
         </div>
         <div class="space-y-1.5">
-          <p class="section-label">摘要摘要</p>
+          <p class="section-label">摘要</p>
           <textarea
             v-model="sourceEditor.summary"
             class="field-shell w-full text-sm !min-h-[80px]"
@@ -1609,13 +2397,14 @@
   <!-- Modal: Collection Settings -->
   <UModal
     v-model:open="showCollectionSettingsModal"
-    title="知识分组设置"
+    title="资料文件夹设置"
+    description="调整当前文件夹名称与说明，它会作为会话和文件的顶层容器。"
     :close="!savingCollection"
   >
     <template #body>
       <div v-if="activeCollection" class="space-y-4 py-2">
         <div class="space-y-1.5">
-          <p class="section-label">分组名称</p>
+          <p class="section-label">文件夹名称</p>
           <input
             v-model="collectionEditor.name"
             class="field-shell w-full text-sm"
@@ -1636,7 +2425,7 @@
             @click="removeCollection"
           >
             <Trash2 class="size-4 mr-2" />
-            删除此知识分组
+            删除此资料文件夹
           </button>
         </div>
       </div>
@@ -1684,5 +2473,127 @@
   }
   .messages-scroller::-webkit-scrollbar-thumb {
     background: rgba(0, 0, 0, 0.05);
+  }
+
+  .message-markdown :deep(h1),
+  .message-markdown :deep(h2),
+  .message-markdown :deep(h3),
+  .message-markdown :deep(h4) {
+    margin-top: 0.9rem;
+    margin-bottom: 0.45rem;
+    font-weight: 700;
+    line-height: 1.35;
+    color: var(--text-strong);
+  }
+
+  .message-markdown :deep(h1) {
+    font-size: 1.1rem;
+  }
+
+  .message-markdown :deep(h2) {
+    font-size: 1rem;
+  }
+
+  .message-markdown :deep(h3),
+  .message-markdown :deep(h4) {
+    font-size: 0.92rem;
+  }
+
+  .message-markdown :deep(p),
+  .message-markdown :deep(ul),
+  .message-markdown :deep(ol),
+  .message-markdown :deep(blockquote),
+  .message-markdown :deep(pre),
+  .message-markdown :deep(table) {
+    margin-top: 0.65rem;
+  }
+
+  .message-markdown :deep(ul),
+  .message-markdown :deep(ol) {
+    padding-left: 1.15rem;
+  }
+
+  .message-markdown :deep(li + li) {
+    margin-top: 0.25rem;
+  }
+
+  .message-markdown :deep(blockquote) {
+    border-left: 3px solid rgba(15, 118, 110, 0.18);
+    padding-left: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  .message-markdown :deep(code) {
+    border-radius: 0.4rem;
+    background: rgba(15, 118, 110, 0.08);
+    padding: 0.08rem 0.35rem;
+    font-size: 0.92em;
+  }
+
+  .message-markdown :deep(pre) {
+    overflow-x: auto;
+    border-radius: 0.9rem;
+    background: #16211e;
+    padding: 0.9rem 1rem;
+    color: #eff7f4;
+  }
+
+  .message-markdown :deep(pre code) {
+    background: transparent;
+    padding: 0;
+    color: inherit;
+  }
+
+  .message-markdown :deep(table) {
+    width: 100%;
+    overflow: hidden;
+    border-collapse: collapse;
+    border-radius: 0.9rem;
+    border: 1px solid var(--border-soft);
+  }
+
+  .message-markdown :deep(th),
+  .message-markdown :deep(td) {
+    border-bottom: 1px solid var(--border-soft);
+    padding: 0.55rem 0.7rem;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .message-markdown :deep(th) {
+    background: var(--bg-panel-muted);
+    font-weight: 700;
+  }
+
+  .message-markdown :deep(a) {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 0.16em;
+  }
+
+  .trace-panel {
+    margin-top: 1rem;
+    border-top: 1px solid rgba(93, 72, 34, 0.06);
+    padding-top: 0.9rem;
+  }
+
+  .trace-list {
+    margin-top: 0.75rem;
+    display: grid;
+    gap: 0.6rem;
+  }
+
+  .trace-item {
+    border: 1px solid var(--border-soft);
+    border-radius: 0.95rem;
+    background: rgba(255, 255, 255, 0.72);
+    padding: 0.75rem 0.85rem;
+  }
+
+  .trace-kind {
+    color: var(--text-dim);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
   }
 </style>
