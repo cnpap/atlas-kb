@@ -50,6 +50,8 @@
     --ui-text-highlighted: var(--text-strong);
     --ui-primary: var(--accent);
     --ui-primary-foreground: #ffffff;
+
+    --header-height: 56px;
   }
 
   * {
@@ -173,16 +175,20 @@
   }
 
   .soft-button {
-    @apply inline-flex items-center justify-center gap-2 rounded-[10px] border px-3 py-2 text-sm font-medium transition;
+    @apply inline-flex items-center justify-center gap-2 rounded-[10px] border px-3 py-2 text-sm font-medium transition shrink-0 cursor-pointer;
     background: rgba(255, 251, 244, 0.9);
     border-color: var(--border-soft);
     color: var(--text-strong);
   }
 
-  .soft-button:hover {
+  .soft-button:hover:not(:disabled) {
     transform: translateY(-1px);
     border-color: var(--border-base);
     box-shadow: var(--shadow-soft);
+  }
+
+  .soft-button:disabled {
+    @apply opacity-50 cursor-not-allowed;
   }
 
   .soft-button.primary {
@@ -267,20 +273,21 @@
   }
 
   .pane-header {
-    @apply flex flex-wrap items-start justify-between gap-3 border-b px-3 py-3;
+    @apply flex items-center justify-between gap-3 border-b px-4 shrink-0;
+    height: var(--header-height);
     border-color: rgba(93, 72, 34, 0.08);
   }
 
   .pane-header-stack {
-    @apply flex-col items-stretch;
+    @apply flex-row items-center justify-between;
   }
 
   .pane-actions-grid {
-    @apply grid grid-cols-2 gap-2;
+    @apply flex items-center gap-2;
   }
 
   .pane-section {
-    @apply px-3 py-3;
+    @apply px-4 py-4;
   }
 
   .workbench-pane > .pane-section + .pane-section,
@@ -293,7 +300,7 @@
   }
 
   .pane-scroll {
-    @apply min-h-0 flex-1 overflow-auto px-3 pb-3;
+    @apply min-h-0 flex-1 overflow-auto px-4 pb-4;
   }
 
   .stack-list {
@@ -323,7 +330,7 @@
   }
 
   .messages-scroller {
-    @apply flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-3 py-3;
+    @apply flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-4 py-4;
   }
 
   .message-bubble {
@@ -355,7 +362,7 @@
   }
 
   .composer-bar {
-    @apply flex flex-col gap-3 border-t px-3 py-3;
+    @apply flex flex-col gap-3 border-t px-4 py-4;
     border-color: rgba(93, 72, 34, 0.08);
   }
 
@@ -386,7 +393,7 @@
   }
 
   .segmented-tab {
-    @apply rounded-[8px] px-3 py-1.5 text-sm text-[var(--text-muted)] transition;
+    @apply rounded-[8px] px-3 py-1.5 text-sm text-[var(--text-muted)] transition cursor-pointer;
   }
 
   .segmented-tab.is-active {
@@ -395,7 +402,7 @@
   }
 
   .notice-strip {
-    @apply mx-3 mt-3 flex items-center gap-2 rounded-[10px] border px-3 py-2 text-sm;
+    @apply mx-4 mt-4 flex items-center gap-2 rounded-[10px] border px-3 py-2 text-sm;
   }
 
   .notice-strip.warn {

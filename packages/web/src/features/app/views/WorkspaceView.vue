@@ -9,6 +9,28 @@
   import { computed, onMounted, ref, watch } from "vue";
   import { useRoute, useRouter } from "vue-router";
   import {
+    CircleAlert,
+    FolderPlus,
+    Plus,
+    Trash2,
+    Save,
+    Upload,
+    ArrowUp,
+    LoaderCircle,
+    ThumbsUp,
+    ThumbsDown,
+    Download,
+    RefreshCw,
+    Archive,
+    Search,
+    FileText,
+    MessageSquare,
+    Info,
+    Check,
+    X,
+    Settings,
+  } from "lucide-vue-next";
+  import {
     createChatSessionRequest,
     createKnowledgeCollectionRequest,
     deleteChatSessionRequest,
@@ -64,7 +86,12 @@
   const sourceFilter = ref("");
   const importMode = ref<ImportMode>("file");
   const chosenFile = ref<File | null>(null);
+
+  // Modals Visibility
   const showCreateCollection = ref(false);
+  const showImportModal = ref(false);
+  const showSourceDetailModal = ref(false);
+  const showCollectionSettingsModal = ref(false);
 
   const createCollectionForm = ref({
     name: "",
@@ -156,7 +183,6 @@
     return (
       filteredSources.value.find((item) => item.id === routeSourceId.value) ||
       sources.value.find((item) => item.id === routeSourceId.value) ||
-      filteredSources.value[0] ||
       null
     );
   });
@@ -228,10 +254,6 @@
       collections.value.find((item) => item.id === collectionId)?.name ||
       fallback
     );
-  }
-
-  function formatCollectionStats(collection: KnowledgeCollection): string {
-    return `可用 ${collection.readyDocumentCount} · 总计 ${collection.documentCount}`;
   }
 
   function openCreateCollectionModal() {
@@ -306,12 +328,6 @@
       const data = await fetchKnowledgeCollectionSources(collectionId);
       sources.value = data.sources;
       syncCollectionEditor(data.collection);
-
-      if (!routeSourceId.value && data.sources[0]?.id) {
-        await replaceWorkspaceQuery({
-          source: data.sources[0].id,
-        });
-      }
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : "资料加载失败";
     } finally {
@@ -419,6 +435,7 @@
       });
       await loadCollections();
       await loadSources(activeCollection.value.id);
+      showCollectionSettingsModal.value = false;
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : "知识分组保存失败";
     } finally {
@@ -458,6 +475,7 @@
       } else {
         sources.value = [];
       }
+      showCollectionSettingsModal.value = false;
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : "删除知识分组失败";
     }
@@ -632,11 +650,9 @@
           tags: parseTags(fileForm.value.tags),
         });
         chosenFile.value = null;
-        fileForm.value = {
-          title: "",
-          summary: "",
-          tags: "",
-        };
+        fileForm.value.title = "";
+        fileForm.value.summary = "";
+        fileForm.value.tags = "";
       }
 
       if (importMode.value === "text") {
@@ -649,16 +665,15 @@
             content: textForm.value.content.trim(),
           },
         });
-        textForm.value = {
-          title: "",
-          summary: "",
-          tags: "",
-          content: "",
-        };
+        textForm.value.title = "";
+        textForm.value.summary = "";
+        textForm.value.tags = "";
+        textForm.value.content = "";
       }
 
       await loadCollections();
       await loadSources(activeCollection.value.id);
+      showImportModal.value = false;
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : "导入资料失败";
     } finally {
@@ -686,6 +701,7 @@
 
       await loadSources(selectedSource.value.collectionId);
       await loadCollections();
+      showSourceDetailModal.value = false;
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : "资料信息保存失败";
     } finally {
@@ -742,6 +758,7 @@
       await deleteKnowledgeSourceRequest(source.id);
       await loadSources(source.collectionId);
       await loadCollections();
+      showSourceDetailModal.value = false;
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : "删除资料失败";
     } finally {
@@ -799,8 +816,8 @@
     await replaceWorkspaceQuery({
       group: source.collectionId,
       source: source.id,
-      panel: "library",
     });
+    showSourceDetailModal.value = true;
   }
 
   watch(activeCollection, (value) => {
@@ -834,32 +851,30 @@
 
 <template>
   <section class="workbench-grid">
+    <!-- Left Sidebar: Collections & Sessions -->
     <aside class="workbench-pane">
       <div class="pane-header pane-header-stack">
-        <div class="min-w-0">
-          <p class="section-label">个人知识库</p>
-        </div>
-        <div class="pane-actions-grid">
+        <div class="pane-actions-grid w-full">
           <button
-            class="soft-button w-full"
+            class="soft-button flex-1"
             type="button"
             @click="openCreateCollectionModal"
           >
-            <UIcon name="i-lucide-folder-plus" class="size-4" />
-            创建分组
+            <Plus class="size-4" />
+            <span class="text-xs">建分组</span>
           </button>
           <button
-            class="soft-button primary w-full"
+            class="soft-button primary flex-1"
             type="button"
             @click="startNewSession"
           >
-            <UIcon name="i-lucide-plus" class="size-4" />
-            新建会话
+            <MessageSquare class="size-4" />
+            <span class="text-xs">新对话</span>
           </button>
         </div>
       </div>
 
-      <div class="pane-section">
+      <div class="pane-section border-b border-[rgba(93,72,34,0.06)]">
         <div class="section-row">
           <span class="section-label">知识分组</span>
           <span class="text-xs text-[var(--text-dim)]"
@@ -867,81 +882,55 @@
           >
         </div>
 
-        <div v-if="loadingCollections" class="stack-list mt-2">
+        <div v-if="loadingCollections" class="stack-list mt-3">
           <div
-            v-for="index in 4"
-            :key="index"
-            class="stack-item h-14 animate-pulse"
+            v-for="i in 3"
+            :key="i"
+            class="stack-item h-12 animate-pulse opacity-50"
           />
         </div>
 
-        <div
-          v-else-if="collections.length === 0"
-          class="empty-state mt-2 !px-4 !py-4"
-        >
-          <p class="text-sm text-[var(--text-muted)]">
-            还没有知识分组，先建一个再导入资料。
-          </p>
-        </div>
-
-        <div v-else class="stack-list mt-2">
+        <div v-else class="stack-list mt-3 max-h-[30vh] overflow-auto">
           <button
             v-for="collection in collections"
             :key="collection.id"
-            class="stack-item cursor-pointer text-left"
+            class="stack-item cursor-pointer text-left !py-2"
             :class="activeCollectionId === collection.id ? 'is-active' : ''"
             type="button"
             @click="selectCollection(collection.id)"
           >
-            <div class="min-w-0">
-              <p
-                class="truncate text-sm font-semibold text-[var(--text-strong)]"
-              >
-                {{ collection.name }}
-              </p>
-              <p
-                class="mt-1 line-clamp-2 text-xs leading-5 text-[var(--text-muted)]"
-              >
-                {{ collection.description || "暂无说明" }}
-              </p>
-              <p class="collection-stats">
-                {{ formatCollectionStats(collection) }}
-              </p>
-            </div>
+            <p class="truncate text-sm font-semibold text-[var(--text-strong)]">
+              {{ collection.name }}
+            </p>
+            <p class="mt-1 truncate text-[10px] text-[var(--text-dim)]">
+              {{ collection.readyDocumentCount }}
+              份可用
+            </p>
           </button>
         </div>
       </div>
 
-      <div class="pane-section min-h-0 flex-1">
-        <div class="section-row">
-          <span class="section-label">会话</span>
+      <div class="pane-section flex-1 min-h-0 flex flex-col">
+        <div class="section-row mb-3">
+          <span class="section-label">历史会话</span>
           <span class="text-xs text-[var(--text-dim)]"
             >{{ sessions.length }}</span
           >
         </div>
 
-        <div v-if="loadingSessions" class="stack-list mt-2">
+        <div v-if="loadingSessions" class="stack-list">
           <div
-            v-for="index in 5"
-            :key="index"
-            class="stack-item h-[72px] animate-pulse"
+            v-for="i in 5"
+            :key="i"
+            class="stack-item h-16 animate-pulse opacity-50"
           />
         </div>
 
-        <div
-          v-else-if="sessions.length === 0"
-          class="empty-state mt-2 !px-4 !py-4"
-        >
-          <p class="text-sm text-[var(--text-muted)]">
-            还没有会话，可以直接开始新会话。
-          </p>
-        </div>
-
-        <div v-else class="stack-list mt-2 min-h-0 flex-1 overflow-auto">
+        <div v-else class="stack-list flex-1 overflow-auto">
           <div
             v-for="session in sessions"
             :key="session.id"
-            class="stack-item flex items-start gap-3"
+            class="stack-item flex items-center gap-2 group"
             :class="activeSessionId === session.id ? 'is-active' : ''"
           >
             <button
@@ -949,91 +938,87 @@
               type="button"
               @click="openSession(session)"
             >
-              <div class="flex items-start justify-between gap-3">
-                <p
-                  class="truncate text-sm font-semibold text-[var(--text-strong)]"
-                >
-                  {{ session.title }}
-                </p>
-              </div>
-              <p
-                class="mt-2 line-clamp-2 text-xs leading-5 text-[var(--text-muted)]"
-              >
-                {{ session.preview || "还没有会话摘要。" }}
+              <p class="truncate text-sm font-medium text-[var(--text-strong)]">
+                {{ session.title }}
               </p>
-              <div class="session-meta-row">
-                <span class="tag-chip !px-2 !py-0.5">
-                  {{ getCollectionName(session.collectionId) }}
-                </span>
-                <span>{{ formatRelativeTime(session.updatedAt) }}</span>
-              </div>
+              <p class="mt-1 truncate text-[10px] text-[var(--text-dim)]">
+                {{ formatRelativeTime(session.updatedAt) }}
+              </p>
             </button>
             <button
-              class="soft-button warn session-delete-button"
+              class="opacity-0 group-hover:opacity-100 soft-button warn !p-1.5"
               type="button"
               @click.stop="removeSession(session.id)"
             >
-              <UIcon name="i-lucide-trash-2" class="size-4" />
+              <Trash2 class="size-3.5" />
             </button>
           </div>
         </div>
       </div>
     </aside>
 
+    <!-- Center Pane: Chat -->
     <section class="workbench-pane center-pane">
       <div class="pane-header">
         <div class="min-w-0">
-          <p class="truncate text-base font-semibold text-[var(--text-strong)]">
+          <p class="truncate text-sm font-bold text-[var(--text-strong)]">
             {{ activeSession?.title || "新对话" }}
           </p>
-          <p class="mt-1 text-sm text-[var(--text-muted)]">
-            {{ activeSessionCollectionLabel }}
-          </p>
+          <div class="flex items-center gap-2 mt-0.5">
+            <span
+              class="text-[10px] px-1.5 py-0.5 bg-[var(--bg-canvas-strong)] rounded text-[var(--text-muted)]"
+            >
+              {{ activeSessionCollectionLabel }}
+            </span>
+          </div>
         </div>
-        <div class="flex flex-wrap justify-end gap-2">
+        <div class="flex items-center gap-2">
           <button
-            class="soft-button"
+            class="soft-button !p-2"
+            title="重命名"
             type="button"
             @click="renameSession"
             :disabled="!activeSession"
           >
-            重命名
+            <FileText class="size-4" />
           </button>
-          <button
-            class="soft-button"
-            type="button"
-            @click="openPanel('citations')"
-          >
-            引用
-          </button>
-          <button
-            class="soft-button"
-            type="button"
-            @click="openPanel('library')"
-          >
-            资料库
-          </button>
+          <div class="segmented-tabs !bg-transparent !border-none !p-0 gap-2">
+            <button
+              class="soft-button"
+              :class="panel === 'citations' ? 'primary' : ''"
+              type="button"
+              @click="openPanel('citations')"
+            >
+              引用
+            </button>
+            <button
+              class="soft-button"
+              :class="panel === 'library' ? 'primary' : ''"
+              type="button"
+              @click="openPanel('library')"
+            >
+              资料库
+            </button>
+          </div>
         </div>
       </div>
 
       <div v-if="error" class="notice-strip warn">
-        <UIcon name="i-lucide-circle-alert" class="size-4 shrink-0" />
+        <CircleAlert class="size-4 shrink-0" />
         <span>{{ error }}</span>
       </div>
 
-      <div v-if="loadingMessages" class="messages-scroller">
+      <div class="messages-scroller">
         <div
-          v-for="index in 4"
-          :key="index"
-          class="message-bubble assistant h-24 animate-pulse"
-        />
-      </div>
-
-      <div v-else class="messages-scroller">
-        <div v-if="messages.length === 0" class="empty-state">
-          <p class="card-heading">直接提问即可</p>
+          v-if="messages.length === 0"
+          class="empty-state self-center my-auto max-w-sm text-center items-center"
+        >
+          <div class="p-3 bg-[var(--accent-soft)] rounded-full mb-2">
+            <MessageSquare class="size-6 text-[var(--accent)]" />
+          </div>
+          <p class="card-heading">开始深度知识问答</p>
           <p class="text-sm leading-6 text-[var(--text-muted)]">
-            建议把问题问得更具体，例如“基于这组资料，给我一套可执行的复盘流程”。
+            选择一个知识分组，系统将通过多路召回技术，基于您的私有资料提供精准回复。
           </p>
         </div>
 
@@ -1047,28 +1032,33 @@
           ]"
           @click="message.role === 'assistant' ? (selectedAssistantMessageId = message.id) : undefined"
         >
-          <div class="flex items-center justify-between gap-3">
-            <p class="message-meta">
-              {{ message.role === "user" ? "我的问题" : "知识回答" }}
+          <div class="flex items-center justify-between gap-3 mb-2">
+            <p class="message-meta font-bold flex items-center gap-1.5">
+              <span
+                v-if="message.role === 'user'"
+                class="size-1.5 rounded-full bg-[var(--text-dim)]"
+              />
+              <span v-else class="size-1.5 rounded-full bg-[var(--accent)]" />
+              {{ message.role === "user" ? "YOU" : "ATLAS" }}
             </p>
-            <p class="text-[11px] text-[var(--text-dim)]">
+            <p class="text-[10px] text-[var(--text-dim)]">
               {{ formatDateTime(message.createdAt) }}
             </p>
           </div>
           <p
-            class="whitespace-pre-wrap text-sm leading-7 text-[var(--text-strong)]"
+            class="whitespace-pre-wrap text-[13px] leading-relaxed text-[var(--text-strong)]"
           >
             {{ message.content }}
           </p>
 
           <div
             v-if="message.citations.length > 0"
-            class="mt-3 flex flex-wrap gap-2"
+            class="mt-4 pt-3 border-t border-[rgba(93,72,34,0.04)] flex flex-wrap gap-2"
           >
             <button
               v-for="citation in message.citations"
               :key="`${message.id}:${citation.sourceId}:${citation.snippet}`"
-              class="tag-chip cursor-pointer"
+              class="tag-chip cursor-pointer hover:bg-[var(--accent-soft)] transition"
               type="button"
               @click.stop="focusHit({
                 sourceId: citation.sourceId,
@@ -1091,6 +1081,7 @@
                 recallPaths: ['重排'],
               })"
             >
+              <Info class="size-3 mr-1" />
               {{ citation.title }}
             </button>
           </div>
@@ -1100,601 +1091,598 @@
             class="mt-4 flex items-center gap-2"
           >
             <button
-              class="soft-button !px-3 !py-1.5"
-              type="button"
+              class="soft-button !px-2.5 !py-1 !text-xs"
               :class="message.feedback?.rating === 'up' ? 'primary' : ''"
+              type="button"
               @click.stop="sendFeedback(message, 'up')"
             >
-              <UIcon name="i-lucide-thumbs-up" class="size-4" />
-              有用
+              <ThumbsUp class="size-3.5" />
             </button>
             <button
-              class="soft-button !px-3 !py-1.5"
-              type="button"
+              class="soft-button !px-2.5 !py-1 !text-xs"
               :class="message.feedback?.rating === 'down' ? 'warn' : ''"
+              type="button"
               @click.stop="sendFeedback(message, 'down')"
             >
-              <UIcon name="i-lucide-thumbs-down" class="size-4" />
-              不够好
+              <ThumbsDown class="size-3.5" />
             </button>
           </div>
         </article>
       </div>
 
       <form class="composer-bar" @submit.prevent="submitReply">
-        <label class="field-shell composer-field">
-          <span class="section-label">提问</span>
+        <div
+          class="field-shell !bg-[var(--bg-canvas)] focus-within:!bg-white transition-colors"
+        >
           <textarea
             v-model="composer"
-            class="textarea-reset mt-2 !min-h-[72px]"
-            placeholder="输入问题，系统会先检索资料，再基于证据回答。"
+            class="textarea-reset !min-h-[44px] max-h-32 text-sm"
+            placeholder="询问有关您的知识库的问题..."
+            @keydown.enter.prevent="submitReply"
           />
-        </label>
-        <div class="composer-actions">
-          <button
-            class="soft-button primary"
-            type="submit"
-            :disabled="replying"
+          <div
+            class="flex justify-between items-center mt-2 pt-2 border-t border-[rgba(93,72,34,0.06)]"
           >
-            <UIcon
-              :name="replying ? 'i-lucide-loader-circle' : 'i-lucide-arrow-up'"
-              class="size-4"
-              :class="replying ? 'animate-spin' : ''"
-            />
-            {{ replying ? "发送中" : "发送" }}
-          </button>
+            <span
+              class="text-[10px] text-[var(--text-dim)] flex items-center gap-1"
+            >
+              <Search class="size-3" />
+              使用 {{ activeSessionCollectionLabel }}
+            </span>
+            <button
+              class="soft-button primary !px-4 !py-1.5"
+              type="submit"
+              :disabled="replying || !composer.trim()"
+            >
+              <LoaderCircle v-if="replying" class="size-4 animate-spin" />
+              <ArrowUp v-else class="size-4" />
+              <span>发送</span>
+            </button>
+          </div>
         </div>
       </form>
     </section>
 
+    <!-- Right Pane: Context (Citations or Source List) -->
     <aside class="workbench-pane right-pane">
       <div class="pane-header">
-        <div class="segmented-tabs">
+        <div class="flex items-center gap-2">
+          <Info
+            v-if="panel === 'citations'"
+            class="size-4 text-[var(--accent)]"
+          />
+          <FileText v-else class="size-4 text-[var(--accent)]" />
+          <p class="text-sm font-bold text-[var(--text-strong)]">
+            {{ panel === 'citations' ? '引用溯源' : '分组资料库' }}
+          </p>
+        </div>
+        <div v-if="panel === 'library'" class="flex items-center gap-2">
           <button
-            class="segmented-tab"
-            :class="panel === 'citations' ? 'is-active' : ''"
+            class="soft-button !px-2.5 !py-1.5"
             type="button"
-            @click="openPanel('citations')"
+            @click="showImportModal = true"
           >
-            引用
+            <Upload class="size-3.5" />
+            <span class="text-xs">导入资料</span>
           </button>
           <button
-            class="segmented-tab"
-            :class="panel === 'library' ? 'is-active' : ''"
+            class="soft-button !px-2.5 !py-1.5"
             type="button"
-            @click="openPanel('library')"
+            @click="showCollectionSettingsModal = true"
           >
-            资料库
+            <Settings class="size-3.5" />
+            <span class="text-xs">设置</span>
           </button>
         </div>
       </div>
 
-      <div v-if="panel === 'citations'" class="pane-scroll">
-        <div v-if="!retrieval" class="empty-state">
-          <p class="card-heading">还没有可回看的召回结果</p>
-          <p class="text-sm leading-6 text-[var(--text-muted)]">
-            发送问题后，这里会展示本轮命中的资料，以及哪些片段真的被用于回答。
-          </p>
+      <!-- Citations View -->
+      <div v-if="panel === 'citations'" class="pane-scroll pt-4">
+        <div v-if="!retrieval" class="empty-state items-center text-center">
+          <Search class="size-8 text-[var(--text-dim)] mb-2" />
+          <p class="text-sm text-[var(--text-muted)]">等待查询激发引用...</p>
         </div>
 
         <template v-else>
-          <div class="panel-muted mt-3 p-3">
-            <p class="section-label">多路召回</p>
-            <p class="mt-2 text-sm leading-6 text-[var(--text-strong)]">
-              本轮命中 {{ retrieval.total }} 条资料，实际引用
-              {{ usedHits.length }}
-              条。
-            </p>
-            <p class="mt-2 text-xs leading-5 text-[var(--text-muted)]">
-              查询变体：{{ retrieval.queryVariants.join(" / ") }}
-            </p>
-          </div>
-
-          <div class="pane-section">
-            <div class="section-row">
-              <span class="section-label">已用于回答</span>
-              <span class="text-xs text-[var(--text-dim)]"
-                >{{ usedHits.length }}</span
-              >
+          <div class="mb-6">
+            <div class="section-row mb-3">
+              <span class="section-label">检索摘要</span>
             </div>
-            <div
-              v-if="usedHits.length === 0"
-              class="empty-state mt-2 !px-4 !py-4"
-            >
-              <p class="text-sm text-[var(--text-muted)]">
-                这轮没有直接引用的资料片段。
+            <div class="panel-muted p-4 border border-[var(--border-soft)]">
+              <p class="text-[13px] leading-relaxed">
+                本轮命中了
+                <span class="font-bold text-[var(--accent)]"
+                  >{{ retrieval.total }}</span
+                >
+                条记录， 其中
+                <span class="font-bold text-[var(--accent)]"
+                  >{{ usedHits.length }}</span
+                >
+                条被核心引用。
               </p>
-            </div>
-            <div v-else class="stack-list mt-2">
-              <button
-                v-for="hit in usedHits"
-                :key="hit.chunkId"
-                class="stack-item cursor-pointer text-left"
-                type="button"
-                @click="focusHit(hit)"
-              >
-                <div class="flex flex-wrap items-center gap-2">
-                  <span class="status-pill ready">已引用</span>
-                  <span
-                    class="tag-chip"
-                    v-for="path in hit.recallPaths"
-                    :key="`${hit.chunkId}:${path}`"
-                    >{{ path }}</span
-                  >
-                </div>
-                <p class="mt-2 text-sm font-semibold text-[var(--text-strong)]">
-                  {{ hit.title }}
-                </p>
-                <p class="mt-1 text-xs leading-5 text-[var(--text-muted)]">
-                  {{ hit.sectionPath || "未标记章节" }}
-                </p>
-                <p class="mt-2 text-sm leading-6 text-[var(--text-muted)]">
-                  {{ hit.snippet }}
-                </p>
-              </button>
-            </div>
-          </div>
-
-          <div class="pane-section">
-            <div class="section-row">
-              <span class="section-label">已召回但未引用</span>
-              <span class="text-xs text-[var(--text-dim)]"
-                >{{ extraHits.length }}</span
-              >
-            </div>
-            <div
-              v-if="extraHits.length === 0"
-              class="empty-state mt-2 !px-4 !py-4"
-            >
-              <p class="text-sm text-[var(--text-muted)]">没有额外候选。</p>
-            </div>
-            <div v-else class="stack-list mt-2">
-              <button
-                v-for="hit in extraHits"
-                :key="hit.chunkId"
-                class="stack-item cursor-pointer text-left"
-                type="button"
-                @click="focusHit(hit)"
-              >
-                <div class="flex flex-wrap items-center gap-2">
-                  <span
-                    class="tag-chip"
-                    v-for="path in hit.recallPaths"
-                    :key="`${hit.chunkId}:${path}`"
-                    >{{ path }}</span
-                  >
-                </div>
-                <p class="mt-2 text-sm font-semibold text-[var(--text-strong)]">
-                  {{ hit.title }}
-                </p>
-                <p class="mt-2 text-sm leading-6 text-[var(--text-muted)]">
-                  {{ hit.snippet }}
-                </p>
-              </button>
-            </div>
-          </div>
-
-          <div v-if="selectedSource" class="pane-section">
-            <div class="section-row">
-              <span class="section-label">资料预览</span>
-              <button
-                class="soft-button !px-3 !py-1.5"
-                type="button"
-                @click="openPanel('library')"
-              >
-                去资料库
-              </button>
-            </div>
-            <div class="panel-muted mt-2 p-3">
-              <div class="flex flex-wrap items-center gap-2">
+              <div class="mt-3 flex flex-wrap gap-1">
                 <span
-                  class="status-pill"
-                  :class="getSourceStatusTone(selectedSource.status)"
+                  v-for="v in retrieval.queryVariants"
+                  :key="v"
+                  class="text-[10px] bg-[var(--bg-canvas-strong)] px-1.5 py-0.5 rounded"
                 >
-                  {{ getSourceStatusLabel(selectedSource.status) }}
+                  {{ v }}
                 </span>
-                <span class="tag-chip"
-                  >{{ getSourceTypeLabel(selectedSource.sourceType) }}</span
-                >
               </div>
-              <p class="mt-3 text-sm font-semibold text-[var(--text-strong)]">
-                {{ selectedSource.title }}
-              </p>
-              <p class="mt-2 text-sm leading-6 text-[var(--text-muted)]">
-                {{ selectedSource.summary || "暂无摘要。" }}
-              </p>
-              <p class="mt-3 text-xs leading-5 text-[var(--text-muted)]">
-                {{ selectedSource.contentPreview }}
-              </p>
+            </div>
+          </div>
+
+          <div class="space-y-6">
+            <div>
+              <p class="section-label mb-3">核心引用片段</p>
+              <div class="stack-list">
+                <div
+                  v-for="hit in usedHits"
+                  :key="hit.chunkId"
+                  class="stack-item !p-4 !bg-white"
+                >
+                  <div class="flex items-center justify-between mb-2">
+                    <span class="status-pill ready scale-90 origin-left"
+                      >已采用</span
+                    >
+                    <span class="text-[10px] text-[var(--text-dim)]"
+                      >{{ hit.sourceType }}</span
+                    >
+                  </div>
+                  <p class="text-sm font-bold mb-2">{{ hit.title }}</p>
+                  <p
+                    class="text-[12px] leading-relaxed text-[var(--text-muted)] italic"
+                  >
+                    "...{{ hit.snippet }}..."
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="extraHits.length > 0">
+              <p class="section-label mb-3">补充召回结果</p>
+              <div class="stack-list">
+                <div
+                  v-for="hit in extraHits"
+                  :key="hit.chunkId"
+                  class="stack-item !p-3 !bg-[var(--bg-panel-muted)] opacity-80"
+                >
+                  <p class="text-[12px] font-medium">{{ hit.title }}</p>
+                </div>
+              </div>
             </div>
           </div>
         </template>
       </div>
 
-      <div v-else class="pane-scroll">
-        <div v-if="!activeCollection" class="empty-state">
-          <p class="card-heading">先选择知识分组</p>
-          <p class="text-sm leading-6 text-[var(--text-muted)]">
-            资料导入、编辑、重处理都依附在某个知识分组下。
-          </p>
+      <!-- Library View -->
+      <div v-else class="pane-scroll flex flex-col pt-4">
+        <div
+          v-if="!activeCollection"
+          class="empty-state items-center text-center"
+        >
+          <FolderPlus class="size-8 text-[var(--text-dim)] mb-2" />
+          <p class="text-sm text-[var(--text-muted)]">请先在左侧选择一个分组</p>
         </div>
 
         <template v-else>
-          <div class="pane-section">
-            <div class="section-row">
-              <span class="section-label">分组设置</span>
-              <div class="flex gap-2">
-                <button
-                  class="soft-button warn !px-3 !py-1.5"
-                  type="button"
-                  @click="removeCollection"
-                >
-                  删除
-                </button>
-                <button
-                  class="soft-button primary !px-3 !py-1.5"
-                  type="button"
-                  :disabled="savingCollection"
-                  @click="saveCollection"
-                >
-                  <UIcon
-                    :name="savingCollection ? 'i-lucide-loader-circle' : 'i-lucide-save'"
-                    class="size-4"
-                    :class="savingCollection ? 'animate-spin' : ''"
-                  />
-                  保存
-                </button>
-              </div>
-            </div>
-            <div class="mt-2 space-y-3">
-              <label class="field-shell block">
-                <span class="section-label">名称</span>
-                <input v-model="collectionEditor.name" class="input-reset mt-2">
-              </label>
-              <label class="field-shell block">
-                <span class="section-label">说明</span>
-                <textarea
-                  v-model="collectionEditor.description"
-                  class="textarea-reset mt-2 !min-h-[88px]"
-                />
-              </label>
-            </div>
-          </div>
-
-          <div class="pane-section">
-            <div class="section-row">
-              <span class="section-label">导入资料</span>
-              <div class="segmented-tabs">
-                <button
-                  class="segmented-tab"
-                  :class="importMode === 'file' ? 'is-active' : ''"
-                  type="button"
-                  @click="importMode = 'file'"
-                >
-                  上传文件
-                </button>
-                <button
-                  class="segmented-tab"
-                  :class="importMode === 'text' ? 'is-active' : ''"
-                  type="button"
-                  @click="importMode = 'text'"
-                >
-                  粘贴内容
-                </button>
-              </div>
-            </div>
-
-            <div v-if="importMode === 'file'" class="mt-2 space-y-3">
-              <label class="field-shell block">
-                <span class="section-label">文件</span>
-                <input
-                  class="mt-2 block w-full text-sm text-[var(--text-muted)]"
-                  type="file"
-                  @change="handleFileChange"
-                >
-                <p
-                  v-if="chosenFile"
-                  class="mt-2 text-xs text-[var(--text-muted)]"
-                >
-                  {{ chosenFile.name }}
-                </p>
-              </label>
-              <label class="field-shell block">
-                <span class="section-label">标题</span>
-                <input
-                  v-model="fileForm.title"
-                  class="input-reset mt-2"
-                  placeholder="可选"
-                >
-              </label>
-              <label class="field-shell block">
-                <span class="section-label">摘要</span>
-                <textarea
-                  v-model="fileForm.summary"
-                  class="textarea-reset mt-2 !min-h-[72px]"
-                  placeholder="可选"
-                />
-              </label>
-              <label class="field-shell block">
-                <span class="section-label">标签</span>
-                <input
-                  v-model="fileForm.tags"
-                  class="input-reset mt-2"
-                  placeholder="用逗号分隔"
-                >
-              </label>
-            </div>
-
-            <div v-else class="mt-2 space-y-3">
-              <label class="field-shell block">
-                <span class="section-label">标题</span>
-                <input
-                  v-model="textForm.title"
-                  class="input-reset mt-2"
-                  placeholder="例如：访谈纪要"
-                >
-              </label>
-              <label class="field-shell block">
-                <span class="section-label">摘要</span>
-                <textarea
-                  v-model="textForm.summary"
-                  class="textarea-reset mt-2 !min-h-[72px]"
-                  placeholder="可选"
-                />
-              </label>
-              <label class="field-shell block">
-                <span class="section-label">标签</span>
-                <input
-                  v-model="textForm.tags"
-                  class="input-reset mt-2"
-                  placeholder="用逗号分隔"
-                >
-              </label>
-              <label class="field-shell block">
-                <span class="section-label">内容</span>
-                <textarea
-                  v-model="textForm.content"
-                  class="textarea-reset mt-2 !min-h-[140px]"
-                  placeholder="直接粘贴你的资料正文"
-                />
-              </label>
-            </div>
-
-            <div class="mt-3 flex justify-end">
-              <button
-                class="soft-button primary"
-                type="button"
-                :disabled="importPending"
-                @click="submitImport"
-              >
-                <UIcon
-                  :name="importPending ? 'i-lucide-loader-circle' : 'i-lucide-upload'"
-                  class="size-4"
-                  :class="importPending ? 'animate-spin' : ''"
-                />
-                {{ importPending ? "处理中" : "开始导入" }}
-              </button>
-            </div>
-          </div>
-
-          <div class="pane-section">
-            <div class="section-row">
-              <span class="section-label">资料列表</span>
-              <span class="text-xs text-[var(--text-dim)]"
-                >{{ sources.length }}</span
-              >
-            </div>
-
-            <label class="field-shell mt-2 block">
-              <span class="section-label">筛选</span>
-              <input
-                v-model="sourceFilter"
-                class="input-reset mt-2"
-                placeholder="按标题、摘要、标签筛选"
-              >
-            </label>
-
-            <div v-if="loadingSources" class="stack-list mt-2">
-              <div
-                v-for="index in 4"
-                :key="index"
-                class="stack-item h-16 animate-pulse"
-              />
-            </div>
-
-            <div
-              v-else-if="filteredSources.length === 0"
-              class="empty-state mt-2 !px-4 !py-4"
+          <div class="relative mb-4">
+            <Search
+              class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[var(--text-dim)]"
+            />
+            <input
+              v-model="sourceFilter"
+              class="field-shell w-full !pl-9 !py-2 text-sm"
+              placeholder="搜索资料..."
             >
-              <p class="text-sm text-[var(--text-muted)]">
-                这个分组还没有资料。
-              </p>
-            </div>
+          </div>
 
-            <div v-else class="stack-list mt-2">
-              <button
-                v-for="source in filteredSources"
-                :key="source.id"
-                class="stack-item cursor-pointer text-left"
-                :class="selectedSource?.id === source.id ? 'is-active' : ''"
-                type="button"
-                @click="openSource(source)"
-              >
-                <div class="flex flex-wrap items-center gap-2">
+          <div v-if="loadingSources" class="stack-list">
+            <div
+              v-for="i in 6"
+              :key="i"
+              class="stack-item h-16 animate-pulse opacity-50"
+            />
+          </div>
+
+          <div v-else class="stack-list">
+            <button
+              v-for="source in filteredSources"
+              :key="source.id"
+              class="stack-item cursor-pointer text-left group"
+              :class="selectedSource?.id === source.id ? 'is-active' : ''"
+              type="button"
+              @click="openSource(source)"
+            >
+              <div class="flex items-start justify-between">
+                <div class="min-w-0 flex-1">
+                  <p
+                    class="truncate text-sm font-bold text-[var(--text-strong)] group-hover:text-[var(--accent)] transition-colors"
+                  >
+                    {{ source.title }}
+                  </p>
+                  <p
+                    class="mt-1 line-clamp-2 text-[11px] leading-relaxed text-[var(--text-muted)]"
+                  >
+                    {{ source.summary || "暂无摘要。" }}
+                  </p>
+                </div>
+                <div class="ml-2 scale-75 origin-top-right">
                   <span
                     class="status-pill"
                     :class="getSourceStatusTone(source.status)"
                   >
                     {{ getSourceStatusLabel(source.status) }}
                   </span>
-                  <span class="tag-chip"
-                    >{{ getSourceTypeLabel(source.sourceType) }}</span
-                  >
                 </div>
-                <p class="mt-2 text-sm font-semibold text-[var(--text-strong)]">
-                  {{ source.title }}
-                </p>
-                <p class="mt-1 text-xs leading-5 text-[var(--text-muted)]">
-                  {{ source.summary || "暂无摘要。" }}
-                </p>
-              </button>
-            </div>
-          </div>
+              </div>
 
-          <div v-if="selectedSource" class="pane-section">
-            <div class="section-row">
-              <span class="section-label">资料详情</span>
-              <div class="flex gap-2">
+              <!-- Inline Actions: Visible on Hover -->
+              <div
+                class="mt-3 flex items-center gap-2 pt-2 border-t border-[rgba(93,72,34,0.04)] opacity-0 group-hover:opacity-100 transition-opacity"
+              >
                 <button
-                  class="soft-button !px-3 !py-1.5"
+                  class="soft-button !p-1.5"
+                  title="下载"
                   type="button"
-                  @click="downloadSource(selectedSource)"
+                  @click.stop="downloadSource(source)"
                 >
-                  下载
+                  <Download class="size-3.5" />
                 </button>
                 <button
-                  class="soft-button !px-3 !py-1.5"
+                  class="soft-button !p-1.5"
+                  title="重处理"
                   type="button"
-                  :disabled="sourceActionId === selectedSource.id"
-                  @click="reprocessSource(selectedSource)"
+                  :disabled="sourceActionId === source.id"
+                  @click.stop="reprocessSource(source)"
                 >
-                  重新处理
-                </button>
-                <button
-                  class="soft-button warn !px-3 !py-1.5"
-                  type="button"
-                  :disabled="sourceActionId === selectedSource.id"
-                  @click="archiveSource(selectedSource)"
-                >
-                  归档
-                </button>
-                <button
-                  class="soft-button warn !px-3 !py-1.5"
-                  type="button"
-                  :disabled="sourceActionId === selectedSource.id"
-                  @click="deleteSource(selectedSource)"
-                >
-                  删除
-                </button>
-              </div>
-            </div>
-            <div class="mt-2 space-y-3">
-              <label class="field-shell block">
-                <span class="section-label">标题</span>
-                <input v-model="sourceEditor.title" class="input-reset mt-2">
-              </label>
-              <label class="field-shell block">
-                <span class="section-label">摘要</span>
-                <textarea
-                  v-model="sourceEditor.summary"
-                  class="textarea-reset mt-2 !min-h-[72px]"
-                />
-              </label>
-              <label class="field-shell block">
-                <span class="section-label">标签</span>
-                <input v-model="sourceEditor.tags" class="input-reset mt-2">
-              </label>
-              <div class="panel-muted p-3">
-                <div class="flex flex-wrap items-center gap-2">
-                  <span
-                    class="status-pill"
-                    :class="getSourceStatusTone(selectedSource.status)"
-                  >
-                    {{ getSourceStatusLabel(selectedSource.status) }}
-                  </span>
-                  <span class="tag-chip"
-                    >{{ getSourceTypeLabel(selectedSource.sourceType) }}</span
-                  >
-                  <span
-                    v-for="tag in selectedSource.tags"
-                    :key="tag"
-                    class="tag-chip"
-                    >#{{ tag }}</span
-                  >
-                </div>
-                <p class="mt-3 text-xs leading-5 text-[var(--text-muted)]">
-                  最近处理
-                  {{ formatRelativeTime(selectedSource.lastProcessedAt || selectedSource.updatedAt) }}
-                  · 更新于 {{ formatDateTime(selectedSource.updatedAt) }}
-                </p>
-                <p class="mt-3 text-sm leading-6 text-[var(--text-muted)]">
-                  {{ selectedSource.contentPreview }}
-                </p>
-              </div>
-              <div class="flex justify-end">
-                <button
-                  class="soft-button primary"
-                  type="button"
-                  :disabled="savingSource"
-                  @click="saveSourceMetadata"
-                >
-                  <UIcon
-                    :name="savingSource ? 'i-lucide-loader-circle' : 'i-lucide-save'"
-                    class="size-4"
-                    :class="savingSource ? 'animate-spin' : ''"
+                  <RefreshCw
+                    class="size-3.5"
+                    :class="sourceActionId === source.id ? 'animate-spin' : ''"
                   />
-                  {{ savingSource ? "保存中" : "保存资料信息" }}
+                </button>
+                <div class="flex-1" />
+                <button
+                  class="soft-button !p-1.5 warn"
+                  title="归档"
+                  type="button"
+                  :disabled="sourceActionId === source.id"
+                  @click.stop="archiveSource(source)"
+                >
+                  <Archive class="size-3.5" />
+                </button>
+                <button
+                  class="soft-button !p-1.5 warn"
+                  title="彻底删除"
+                  type="button"
+                  :disabled="sourceActionId === source.id"
+                  @click.stop="deleteSource(source)"
+                >
+                  <Trash2 class="size-3.5" />
                 </button>
               </div>
-            </div>
+            </button>
           </div>
         </template>
       </div>
     </aside>
   </section>
 
+  <!-- MODALS -->
+
+  <!-- Modal: Create Collection -->
   <UModal
     v-model:open="showCreateCollection"
-    title="创建知识分组"
-    description="给这组资料一个清晰的名称和用途说明。"
+    title="新建知识分组"
+    description="创建一个新的命名空间，以便按主题管理您的资料。"
     :close="!creatingCollection"
-    :dismissible="!creatingCollection"
   >
     <template #body>
-      <div class="space-y-3">
-        <label class="field-shell block">
-          <span class="section-label">分组名称</span>
+      <div class="space-y-4 py-2">
+        <div class="space-y-1.5">
+          <p class="section-label">分组名称</p>
           <input
             v-model="createCollectionForm.name"
-            class="input-reset mt-2"
-            placeholder="例如：写作资料"
+            class="field-shell w-full text-sm"
+            placeholder="例如：市场研究、技术文档..."
           >
-        </label>
-        <label class="field-shell block">
-          <span class="section-label">分组说明</span>
+        </div>
+        <div class="space-y-1.5">
+          <p class="section-label">用途描述</p>
           <textarea
             v-model="createCollectionForm.description"
-            class="textarea-reset mt-2 !min-h-[88px]"
-            placeholder="说明这组资料主要放什么内容"
+            class="field-shell w-full text-sm !min-h-[100px]"
+            placeholder="简要说明此分组包含的资料范围..."
           />
-        </label>
+        </div>
       </div>
     </template>
-
     <template #footer>
-      <div class="flex w-full justify-end gap-2">
+      <div class="flex justify-end gap-2 w-full">
         <button
           class="soft-button"
           type="button"
-          :disabled="creatingCollection"
           @click="showCreateCollection = false"
+          :disabled="creatingCollection"
         >
           取消
         </button>
         <button
           class="soft-button primary"
           type="button"
-          :disabled="creatingCollection"
           @click="createCollection"
+          :disabled="creatingCollection || !createCollectionForm.name.trim()"
         >
-          <UIcon
-            :name="creatingCollection ? 'i-lucide-loader-circle' : 'i-lucide-check'"
-            class="size-4"
-            :class="creatingCollection ? 'animate-spin' : ''"
+          <LoaderCircle v-if="creatingCollection" class="size-4 animate-spin" />
+          <Check v-else class="size-4" />
+          <span>确认创建</span>
+        </button>
+      </div>
+    </template>
+  </UModal>
+
+  <!-- Modal: Import Source -->
+  <UModal
+    v-model:open="showImportModal"
+    title="导入知识资料"
+    description="向当前分组添加新资料。支持文件上传或文本粘贴。"
+    :close="!importPending"
+  >
+    <template #body>
+      <div class="space-y-4 py-2">
+        <div class="segmented-tabs w-full">
+          <button
+            class="segmented-tab flex-1"
+            :class="importMode === 'file' ? 'is-active' : ''"
+            type="button"
+            @click="importMode = 'file'"
+          >
+            文件上传
+          </button>
+          <button
+            class="segmented-tab flex-1"
+            :class="importMode === 'text' ? 'is-active' : ''"
+            type="button"
+            @click="importMode = 'text'"
+          >
+            手动录入
+          </button>
+        </div>
+
+        <template v-if="importMode === 'file'">
+          <div class="space-y-1.5">
+            <p class="section-label">选择文件</p>
+            <label
+              class="field-shell flex flex-col items-center justify-center py-8 border-dashed cursor-pointer hover:border-[var(--accent)] transition-colors"
+            >
+              <Upload class="size-8 text-[var(--text-dim)] mb-2" />
+              <p class="text-sm font-medium">
+                {{ chosenFile ? chosenFile.name : '点击或拖拽文件到此处' }}
+              </p>
+              <p
+                v-if="chosenFile"
+                class="text-[10px] text-[var(--accent)] mt-1"
+              >
+                {{ (chosenFile.size / 1024).toFixed(1) }}
+                KB
+              </p>
+              <input type="file" class="hidden" @change="handleFileChange">
+            </label>
+          </div>
+          <div class="space-y-1.5">
+            <p class="section-label">显示标题 (可选)</p>
+            <input
+              v-model="fileForm.title"
+              class="field-shell w-full text-sm"
+              placeholder="默认为文件名"
+            >
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="space-y-1.5">
+            <p class="section-label">资料标题</p>
+            <input
+              v-model="textForm.title"
+              class="field-shell w-full text-sm"
+              placeholder="输入资料名称"
+            >
+          </div>
+          <div class="space-y-1.5">
+            <p class="section-label">正文内容</p>
+            <textarea
+              v-model="textForm.content"
+              class="field-shell w-full text-sm !min-h-[160px]"
+              placeholder="在这里粘贴或输入资料正文..."
+            />
+          </div>
+        </template>
+
+        <div class="space-y-1.5">
+          <p class="section-label">标签 (用逗号分隔)</p>
+          <input
+            v-if="importMode === 'file'"
+            v-model="fileForm.tags"
+            class="field-shell w-full text-sm"
+            placeholder="标签1, 标签2..."
+          >
+          <input
+            v-else
+            v-model="textForm.tags"
+            class="field-shell w-full text-sm"
+            placeholder="标签1, 标签2..."
+          >
+        </div>
+      </div>
+    </template>
+    <template #footer>
+      <div class="flex justify-end gap-2 w-full">
+        <button
+          class="soft-button"
+          type="button"
+          @click="showImportModal = false"
+          :disabled="importPending"
+        >
+          取消
+        </button>
+        <button
+          class="soft-button primary"
+          type="button"
+          @click="submitImport"
+          :disabled="importPending"
+        >
+          <LoaderCircle v-if="importPending" class="size-4 animate-spin" />
+          <Upload v-else class="size-4" />
+          <span>开始处理</span>
+        </button>
+      </div>
+    </template>
+  </UModal>
+
+  <!-- Modal: Source Detail & Edit -->
+  <UModal
+    v-model:open="showSourceDetailModal"
+    title="资料详细信息"
+    :close="!savingSource"
+  >
+    <template #body>
+      <div v-if="selectedSource" class="space-y-5">
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <p class="section-label">资料标题</p>
+            <span
+              class="status-pill scale-75 origin-right"
+              :class="getSourceStatusTone(selectedSource.status)"
+            >
+              {{ getSourceStatusLabel(selectedSource.status) }}
+            </span>
+          </div>
+          <input
+            v-model="sourceEditor.title"
+            class="field-shell w-full text-sm font-medium"
+          >
+        </div>
+        <div class="space-y-1.5">
+          <p class="section-label">摘要摘要</p>
+          <textarea
+            v-model="sourceEditor.summary"
+            class="field-shell w-full text-sm !min-h-[80px]"
           />
-          {{ creatingCollection ? "创建中" : "创建分组" }}
+        </div>
+        <div class="space-y-1.5">
+          <p class="section-label">标签</p>
+          <input v-model="sourceEditor.tags" class="field-shell w-full text-sm">
+        </div>
+        <div class="space-y-1.5">
+          <p class="section-label">内容预览</p>
+          <div
+            class="p-3 bg-white border border-[var(--border-soft)] rounded-lg text-[11px] leading-relaxed text-[var(--text-muted)] max-h-40 overflow-auto"
+          >
+            {{ selectedSource.contentPreview }}
+          </div>
+        </div>
+      </div>
+    </template>
+    <template #footer>
+      <div class="flex justify-end gap-2 w-full">
+        <button
+          class="soft-button"
+          type="button"
+          @click="showSourceDetailModal = false"
+        >
+          关闭
+        </button>
+        <button
+          class="soft-button primary"
+          type="button"
+          @click="saveSourceMetadata"
+          :disabled="savingSource"
+        >
+          <LoaderCircle v-if="savingSource" class="size-4 animate-spin" />
+          <Save v-else class="size-4" />
+          <span>保存修改</span>
+        </button>
+      </div>
+    </template>
+  </UModal>
+
+  <!-- Modal: Collection Settings -->
+  <UModal
+    v-model:open="showCollectionSettingsModal"
+    title="知识分组设置"
+    :close="!savingCollection"
+  >
+    <template #body>
+      <div v-if="activeCollection" class="space-y-4 py-2">
+        <div class="space-y-1.5">
+          <p class="section-label">分组名称</p>
+          <input
+            v-model="collectionEditor.name"
+            class="field-shell w-full text-sm"
+          >
+        </div>
+        <div class="space-y-1.5">
+          <p class="section-label">说明描述</p>
+          <textarea
+            v-model="collectionEditor.description"
+            class="field-shell w-full text-sm !min-h-[100px]"
+          />
+        </div>
+        <div class="pt-4 mt-4 border-t border-red-100">
+          <p class="section-label text-red-600 mb-2">危险区域</p>
+          <button
+            class="soft-button warn w-full"
+            type="button"
+            @click="removeCollection"
+          >
+            <Trash2 class="size-4 mr-2" />
+            删除此知识分组
+          </button>
+        </div>
+      </div>
+    </template>
+    <template #footer>
+      <div class="flex justify-end gap-2 w-full">
+        <button
+          class="soft-button"
+          type="button"
+          @click="showCollectionSettingsModal = false"
+        >
+          取消
+        </button>
+        <button
+          class="soft-button primary"
+          type="button"
+          @click="saveCollection"
+          :disabled="savingCollection"
+        >
+          <LoaderCircle v-if="savingCollection" class="size-4 animate-spin" />
+          <Check v-else class="size-4" />
+          <span>保存设置</span>
         </button>
       </div>
     </template>
   </UModal>
 </template>
+
+<style scoped>
+  /* 针对不同角色的气泡微调 */
+  .message-bubble.user {
+    background: white;
+    border-color: var(--border-soft);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+  }
+
+  .message-bubble.assistant {
+    background: linear-gradient(135deg, #ffffff 0%, #f9fbfb 100%);
+    border-left: 3px solid var(--accent);
+  }
+
+  /* 隐藏滚动条但保留功能 (可选，看审美) */
+  .messages-scroller::-webkit-scrollbar {
+    width: 6px;
+  }
+  .messages-scroller::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.05);
+  }
+</style>
