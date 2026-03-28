@@ -1,4 +1,5 @@
 import { fileURLToPath, URL } from "node:url";
+import { vueJumpPlugin } from "@cnpap/vue-jump";
 import vue from "@vitejs/plugin-vue";
 import { defineConfig } from "vite";
 import ui from "@nuxt/ui/vite";
@@ -64,6 +65,7 @@ export default defineConfig({
     __ATLAS_KB_API_PORT__: JSON.stringify(String(apiPort)),
   },
   plugins: [
+    vueJumpPlugin(),
     vue(),
     ui({
       ui: {

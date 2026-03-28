@@ -25,6 +25,7 @@
     "vue-router": "^4.5.1"
   },
   "devDependencies": {
+    "@cnpap/vue-jump": "0.0.1",
     "@tailwindcss/vite": "4.2.1",
     "@types/node": "^24.10.1",
     "@vitejs/plugin-vue": "^6.0.2",
