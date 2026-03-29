@@ -501,6 +501,8 @@
   }
 
   .chat-scroll-container {
+    display: flex;
+    flex-direction: column;
     flex: 1;
     min-height: 0;
     overflow-y: auto;
@@ -520,6 +522,7 @@
   .chat-block-list {
     display: flex;
     flex-direction: column;
+    width: 100%;
     gap: 0.6rem;
   }
 
