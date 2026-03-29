@@ -19,8 +19,12 @@ import {
   getOpenAIUrl,
 } from "./config";
 import { getKnowledgeDatabase } from "./db";
-import { throwMappedModelProviderError } from "./model-provider";
+import {
+  ModelInvocationTimeoutError,
+  throwMappedModelProviderError,
+} from "./model-provider";
 import { searchKnowledgeVectors } from "./qdrant";
+import { requireKnowledgeCollection } from "./repository";
 import {
   buildLexicalSearchQuery,
   buildSearchSnippet,
@@ -29,6 +33,9 @@ import {
 
 const DEFAULT_SEARCH_LIMIT = 8;
 const DEFAULT_ASK_LIMIT = 5;
+const MODEL_REQUEST_TIMEOUT_MS = 30_000;
+const MODEL_FIRST_TOKEN_TIMEOUT_MS = 45_000;
+const MODEL_STREAM_IDLE_TIMEOUT_MS = 20_000;
 
 interface OpenAIChatCompletionResponse {
   choices?: Array<{
@@ -132,50 +139,79 @@ function buildAnswerMessages(params: {
   ];
 }
 
+function withOperationTimeout<T>(params: {
+  error: Error;
+  onTimeout?: () => void;
+  promise: Promise<T>;
+  timeoutMs: number;
+}): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      params.onTimeout?.();
+      reject(params.error);
+    }, params.timeoutMs);
+
+    params.promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 function coerceCollectionId(input: SearchKnowledgeRequest): string | undefined {
   return input.collectionId?.trim() || input.spaceId?.trim() || undefined;
 }
 
-function filterClause(input: SearchKnowledgeRequest): {
+function buildFilterClause(params: {
+  input: SearchKnowledgeRequest;
+  userId: string;
+}): {
   clause: string;
-  params: unknown[];
+  values: unknown[];
 } {
-  const clauses = ["s.status = 'ready'"];
-  const params: unknown[] = [];
-  const collectionId = coerceCollectionId(input);
+  const clauses = ["s.owner_user_id = ?", "s.status = 'ready'"];
+  const values: unknown[] = [params.userId];
+  const collectionId = coerceCollectionId(params.input);
 
   if (collectionId) {
     clauses.push("s.collection_id = ?");
-    params.push(collectionId);
+    values.push(collectionId);
   }
 
-  if (input.sourceTypes?.length) {
+  if (params.input.sourceTypes?.length) {
     clauses.push(
-      `s.source_type IN (${input.sourceTypes.map(() => "?").join(", ")})`,
+      `s.source_type IN (${params.input.sourceTypes.map(() => "?").join(", ")})`,
     );
-    params.push(...input.sourceTypes);
+    values.push(...params.input.sourceTypes);
   }
 
-  if (!input.includeArchived) {
+  if (!params.input.includeArchived) {
     clauses.push("s.status <> 'archived'");
   }
 
-  if (input.tags?.length) {
-    for (const tag of input.tags) {
+  if (params.input.tags?.length) {
+    for (const tag of params.input.tags) {
       clauses.push("s.tags_json LIKE ?");
-      params.push(`%${tag}%`);
+      values.push(`%${tag}%`);
     }
   }
 
   return {
     clause: clauses.join(" AND "),
-    params,
+    values,
   };
 }
 
 function lexicalSearchSingle(
   query: string,
   input: SearchKnowledgeRequest,
+  userId: string,
 ): SearchKnowledgeHit[] {
   const searchQuery = buildLexicalSearchQuery(query);
 
@@ -184,7 +220,10 @@ function lexicalSearchSingle(
   }
 
   const database = getKnowledgeDatabase();
-  const filter = filterClause(input);
+  const filter = buildFilterClause({
+    input,
+    userId,
+  });
   const limit = Math.max(input.limit ?? DEFAULT_SEARCH_LIMIT, 12);
   const rows = database
     .query(
@@ -212,7 +251,7 @@ function lexicalSearchSingle(
         LIMIT ?
       `,
     )
-    .all(searchQuery, ...filter.params, limit) as Array<{
+    .all(searchQuery, ...filter.values, limit) as Array<{
     chunk_id: string;
     section_path: string | null;
     chunk_title: string;
@@ -550,6 +589,7 @@ export async function generateModelAnswerFromCitations(params: {
   baseUrl?: string;
   model?: string;
   fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 }): Promise<string | undefined> {
   const apiKey = params.apiKey ?? getOpenAIApiKey();
 
@@ -558,11 +598,13 @@ export async function generateModelAnswerFromCitations(params: {
   }
 
   const fetchImpl = params.fetchImpl ?? fetch;
+  const controller = new AbortController();
 
   try {
-    const response = await fetchImpl(
-      getOpenAIUrl("chat/completions", params.baseUrl),
-      {
+    const response = await withOperationTimeout({
+      error: new ModelInvocationTimeoutError("request"),
+      onTimeout: () => controller.abort(),
+      promise: fetchImpl(getOpenAIUrl("chat/completions", params.baseUrl), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -573,9 +615,10 @@ export async function generateModelAnswerFromCitations(params: {
           temperature: 0.2,
           messages: buildAnswerMessages(params),
         }),
-        signal: AbortSignal.timeout(15_000),
-      },
-    );
+        signal: controller.signal,
+      }),
+      timeoutMs: params.timeoutMs ?? MODEL_REQUEST_TIMEOUT_MS,
+    });
 
     if (!response.ok) {
       throw {
@@ -604,6 +647,8 @@ export async function streamModelAnswerFromCitations(params: {
   model?: string;
   fetchImpl?: typeof fetch;
   onTextDelta?: (delta: string) => Promise<void> | void;
+  responseTimeoutMs?: number;
+  streamIdleTimeoutMs?: number;
 }): Promise<{
   answer: string;
   finishReason: string;
@@ -618,11 +663,13 @@ export async function streamModelAnswerFromCitations(params: {
   }
 
   const fetchImpl = params.fetchImpl ?? fetch;
+  const controller = new AbortController();
 
   try {
-    const response = await fetchImpl(
-      getOpenAIUrl("chat/completions", params.baseUrl),
-      {
+    const response = await withOperationTimeout({
+      error: new ModelInvocationTimeoutError("request"),
+      onTimeout: () => controller.abort(),
+      promise: fetchImpl(getOpenAIUrl("chat/completions", params.baseUrl), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -634,9 +681,10 @@ export async function streamModelAnswerFromCitations(params: {
           stream: true,
           messages: buildAnswerMessages(params),
         }),
-        signal: AbortSignal.timeout(20_000),
-      },
-    );
+        signal: controller.signal,
+      }),
+      timeoutMs: params.responseTimeoutMs ?? MODEL_REQUEST_TIMEOUT_MS,
+    });
 
     if (!response.ok) {
       throw {
@@ -655,7 +703,16 @@ export async function streamModelAnswerFromCitations(params: {
     let finishReason = "stop";
 
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await withOperationTimeout({
+        error: new ModelInvocationTimeoutError(
+          answer ? "stream-idle" : "first-token",
+        ),
+        onTimeout: () => controller.abort(),
+        promise: reader.read(),
+        timeoutMs: answer
+          ? (params.streamIdleTimeoutMs ?? MODEL_STREAM_IDLE_TIMEOUT_MS)
+          : (params.responseTimeoutMs ?? MODEL_FIRST_TOKEN_TIMEOUT_MS),
+      });
 
       if (done) {
         break;
@@ -734,11 +791,12 @@ export async function streamModelAnswerFromCitations(params: {
 export async function searchKnowledge(
   input: SearchKnowledgeRequest,
   options: {
+    userId: string;
     apiKey?: string;
     baseUrl?: string;
     model?: string;
     fetchImpl?: typeof fetch;
-  } = {},
+  },
 ): Promise<SearchKnowledgeResult> {
   const parsedInput = SearchKnowledgeRequestSchema.parse(input);
   const collectionId = coerceCollectionId(parsedInput);
@@ -746,6 +804,11 @@ export async function searchKnowledge(
     ...parsedInput,
     collectionId,
   };
+
+  if (collectionId) {
+    await requireKnowledgeCollection(options.userId, collectionId);
+  }
+
   const limit = effectiveInput.limit ?? DEFAULT_SEARCH_LIMIT;
   const rewrittenQueries = await rewriteSearchQueries(
     parsedInput.query,
@@ -755,9 +818,9 @@ export async function searchKnowledge(
   const lexicalGroups = rewrittenQueries.map((query) => ({
     hits:
       query === parsedInput.query
-        ? lexicalSearchSingle(query, effectiveInput)
+        ? lexicalSearchSingle(query, effectiveInput, options.userId)
         : annotateRecallPaths(
-            lexicalSearchSingle(query, effectiveInput),
+            lexicalSearchSingle(query, effectiveInput, options.userId),
             "查询改写",
           ),
     weight: query === parsedInput.query ? 1.15 : 1,
@@ -766,6 +829,7 @@ export async function searchKnowledge(
     rewrittenQueries.map(async (query) => {
       const result = await searchKnowledgeVectors({
         ...effectiveInput,
+        userId: options.userId,
         query,
       });
 
@@ -806,11 +870,12 @@ export async function searchKnowledge(
 export async function answerKnowledgeQuestion(
   input: AskKnowledgeRequest,
   options: {
+    userId: string;
     apiKey?: string;
     baseUrl?: string;
     model?: string;
     fetchImpl?: typeof fetch;
-  } = {},
+  },
 ): Promise<AskKnowledgeResult> {
   const parsedInput = AskKnowledgeRequestSchema.parse(input);
   const limit = parsedInput.limit ?? DEFAULT_ASK_LIMIT;
@@ -843,6 +908,7 @@ export async function answerKnowledgeQuestion(
 }
 
 export async function generateGroundedAnswer(params: {
+  userId: string;
   query: string;
   collectionId?: string;
   limit?: number;
@@ -860,6 +926,7 @@ export async function generateGroundedAnswer(params: {
       limit: params.limit,
     },
     {
+      userId: params.userId,
       fetchImpl: params.fetchImpl,
     },
   );

@@ -7,6 +7,9 @@ import {
 } from "ai";
 import { ChatReplyStreamDataEventSchema } from "@atlas-kb/schema";
 import type {
+  LoginRequest,
+  LoginResult,
+  Session,
   ChatMessageFeedback,
   ChatMessageFeedbackRequest,
   ChatMessagesData,
@@ -33,6 +36,11 @@ import type {
   SearchKnowledgeRequest,
   SearchKnowledgeResult,
 } from "@atlas-kb/schema";
+import {
+  clearAuthToken,
+  getAuthToken,
+  notifyAuthExpired,
+} from "./auth-storage";
 import { getApiBaseUrl } from "./env";
 
 interface SuccessEnvelope<T> {
@@ -74,6 +82,10 @@ type ChatReplyStreamUIMessage = UIMessage<
   }
 >;
 
+const INTERNAL_PROVIDER_ERROR_PATTERN =
+  /OPENAI_BASE_URL|OPENAI_MODEL|OPENAI_API_KEY|API Key|中转服务|原始错误/i;
+const TIMEOUT_ERROR_PATTERN = /timed out|timeout|ETIMEDOUT|AbortError/i;
+
 function resolveApiUrl(path: string): string {
   return new URL(path, getApiBaseUrl()).toString();
 }
@@ -92,6 +104,27 @@ function parseDownloadFilename(headerValue: string | null): string | undefined {
   return basicMatch?.[1];
 }
 
+function sanitizeErrorMessage(message: string): string {
+  const normalized = message.trim();
+
+  if (!normalized) {
+    return "请求失败";
+  }
+
+  if (
+    INTERNAL_PROVIDER_ERROR_PATTERN.test(normalized) &&
+    TIMEOUT_ERROR_PATTERN.test(normalized)
+  ) {
+    return "知识库回答超时，请稍后重试。";
+  }
+
+  if (INTERNAL_PROVIDER_ERROR_PATTERN.test(normalized)) {
+    return "知识库回答暂时不可用，请稍后重试。";
+  }
+
+  return normalized;
+}
+
 async function readPayload<T>(response: Response): Promise<T> {
   const payload = (await response.json()) as JsonPayload<T>;
 
@@ -100,23 +133,30 @@ async function readPayload<T>(response: Response): Promise<T> {
   }
 
   if (!payload.success) {
-    throw new Error(payload.error.message);
+    throw new Error(sanitizeErrorMessage(payload.error.message));
   }
 
   return payload.data;
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getAuthToken();
   const response = await fetch(resolveApiUrl(path), {
     ...init,
     headers: {
       Accept: "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init?.body instanceof FormData
         ? {}
         : { "Content-Type": "application/json" }),
       ...(init?.headers ?? {}),
     },
   });
+
+  if (response.status === 401) {
+    clearAuthToken();
+    notifyAuthExpired();
+  }
 
   if (!response.ok) {
     try {
@@ -135,7 +175,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
-    return error.message;
+    return sanitizeErrorMessage(error.message);
   }
 
   return "请求失败";
@@ -157,8 +197,33 @@ function getStreamDataEvents(
     }
 
     const parsed = ChatReplyStreamDataEventSchema.safeParse(part.data);
-    return parsed.success ? [parsed.data] : [];
+    if (!parsed.success) {
+      return [];
+    }
+
+    const event: ChatReplyStreamDataEvent =
+      parsed.data.type === "reply-error"
+        ? {
+            ...parsed.data,
+            message: sanitizeErrorMessage(parsed.data.message),
+          }
+        : parsed.data;
+
+    return [event];
   });
+}
+
+function getAuthorizedHeaders(
+  overrides?: HeadersInit,
+  contentType?: string,
+): HeadersInit {
+  const token = getAuthToken();
+
+  return {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(contentType ? { "Content-Type": contentType } : {}),
+    ...(overrides ?? {}),
+  };
 }
 
 async function getStreamRequestError(response: Response): Promise<Error> {
@@ -166,13 +231,13 @@ async function getStreamRequestError(response: Response): Promise<Error> {
     const payload = (await response.clone().json()) as FailureEnvelope;
 
     if (!payload.success) {
-      return new Error(payload.error.message);
+      return new Error(sanitizeErrorMessage(payload.error.message));
     }
   } catch {
     const text = (await response.text()).trim();
 
     if (text) {
-      return new Error(text);
+      return new Error(sanitizeErrorMessage(text));
     }
   }
 
@@ -187,6 +252,21 @@ export function getKnowledgeSourceDownloadUrl(sourceId: string): string {
 
 export async function fetchDashboardSummary(): Promise<DashboardSummary> {
   return requestJson<DashboardSummary>("/api/dashboard/summary");
+}
+
+export async function loginRequest(body: LoginRequest): Promise<LoginResult> {
+  return requestJson<LoginResult>("/api/auth/login", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function fetchCurrentSessionRequest(): Promise<Session> {
+  return requestJson<Session>("/api/auth/me");
 }
 
 export async function fetchHealthStatus(): Promise<HealthData> {
@@ -440,13 +520,20 @@ export async function streamChatReplyRequest(params: {
     ),
     {
       method: "POST",
-      headers: {
-        Accept: "text/event-stream",
-        "Content-Type": "application/json",
-      },
+      headers: getAuthorizedHeaders(
+        {
+          Accept: "text/event-stream",
+        },
+        "application/json",
+      ),
       body: JSON.stringify(params.body),
     },
   );
+
+  if (response.status === 401) {
+    clearAuthToken();
+    notifyAuthExpired();
+  }
 
   if (!response.ok) {
     throw await getStreamRequestError(response);
@@ -499,7 +586,14 @@ export async function downloadKnowledgeSourceRequest(params: {
   sourceId: string;
   filename?: string;
 }): Promise<void> {
-  const response = await fetch(getKnowledgeSourceDownloadUrl(params.sourceId));
+  const response = await fetch(getKnowledgeSourceDownloadUrl(params.sourceId), {
+    headers: getAuthorizedHeaders(),
+  });
+
+  if (response.status === 401) {
+    clearAuthToken();
+    notifyAuthExpired();
+  }
 
   if (!response.ok) {
     let errorMessage = "资料下载失败";
@@ -507,7 +601,7 @@ export async function downloadKnowledgeSourceRequest(params: {
     try {
       const payload = (await response.json()) as FailureEnvelope;
       if (!payload.success) {
-        errorMessage = payload.error.message;
+        errorMessage = sanitizeErrorMessage(payload.error.message);
       }
     } catch {
       errorMessage = `资料下载失败 (${response.status})`;

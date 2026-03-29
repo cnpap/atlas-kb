@@ -187,6 +187,7 @@ export const KnowledgeUrlImportRequestSchema =
 
 export const KnowledgeSourceUpdateRequestSchema =
   KnowledgeSourceMetadataSchema.extend({
+    content: z.string().trim().min(1).optional(),
     status: KnowledgeSourceStatusSchema.optional(),
   });
 

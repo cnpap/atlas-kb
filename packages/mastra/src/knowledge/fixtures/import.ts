@@ -4,6 +4,7 @@ import {
   getKnowledgeSpace,
 } from "../repository";
 import { uploadKnowledgeDocument } from "../ingest";
+import { ensureDefaultUser } from "../users";
 import { DEPARTMENT_FIXTURE_SPACE, loadDepartmentFixtures } from ".";
 
 export async function importDepartmentFixtures(): Promise<{
@@ -12,18 +13,27 @@ export async function importDepartmentFixtures(): Promise<{
   skipped: string[];
   spaceId: string;
 }> {
-  const existingSpace = await getKnowledgeSpace(DEPARTMENT_FIXTURE_SPACE.id);
+  const user = await ensureDefaultUser();
+  const existingSpace = await getKnowledgeSpace(
+    user.id,
+    DEPARTMENT_FIXTURE_SPACE.id,
+  );
 
   if (!existingSpace) {
     await createKnowledgeSpace({
-      description: DEPARTMENT_FIXTURE_SPACE.description,
-      id: DEPARTMENT_FIXTURE_SPACE.id,
-      name: DEPARTMENT_FIXTURE_SPACE.name,
+      userId: user.id,
+      input: {
+        description: DEPARTMENT_FIXTURE_SPACE.description,
+        id: DEPARTMENT_FIXTURE_SPACE.id,
+        name: DEPARTMENT_FIXTURE_SPACE.name,
+      },
     });
   }
 
   const existingDocuments = new Set(
-    (await getKnowledgeSpaceDocuments(DEPARTMENT_FIXTURE_SPACE.id)).documents
+    (
+      await getKnowledgeSpaceDocuments(user.id, DEPARTMENT_FIXTURE_SPACE.id)
+    ).documents
       .map((document) => document.sourceFilename)
       .filter((filename): filename is string => Boolean(filename)),
   );
@@ -38,6 +48,7 @@ export async function importDepartmentFixtures(): Promise<{
     }
 
     await uploadKnowledgeDocument({
+      userId: user.id,
       file: new File([fixture.content], fixture.filename, {
         type: "text/markdown",
       }),

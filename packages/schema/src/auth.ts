@@ -4,8 +4,8 @@ import { createApiSuccessResponseSchema } from "./api";
 const TimestampSchema = z.iso.datetime();
 
 export const AuthUserSchema = z.object({
-  email: z.email(),
-  role: z.literal("admin"),
+  id: z.string().trim().min(1),
+  username: z.string().trim().min(1).max(64),
 });
 
 export const AuthorizationHeadersSchema = z.object({
@@ -13,7 +13,7 @@ export const AuthorizationHeadersSchema = z.object({
 });
 
 export const LoginRequestSchema = z.object({
-  email: z.email(),
+  username: z.string().trim().min(1).max(64),
   password: z.string().min(1),
 });
 

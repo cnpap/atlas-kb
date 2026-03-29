@@ -20,18 +20,21 @@ function buildDownloadFilename(params: {
   return `${params.title}.txt`;
 }
 
-export async function getKnowledgeSourceDownload(sourceId: string): Promise<{
+export async function getKnowledgeSourceDownload(params: {
+  userId: string;
+  sourceId: string;
+}): Promise<{
   body: Uint8Array;
   filename: string;
   mimeType: string;
 }> {
-  const source = await getDocumentById(sourceId);
+  const source = await getDocumentById(params.userId, params.sourceId);
 
   if (!source) {
-    throw new NotFoundError(`Knowledge source "${sourceId}" not found`);
+    throw new NotFoundError(`Knowledge source "${params.sourceId}" not found`);
   }
 
-  const version = await getLatestSourceVersion(sourceId);
+  const version = await getLatestSourceVersion(params.userId, params.sourceId);
 
   if (version?.filePath) {
     return {
@@ -73,6 +76,7 @@ export async function getKnowledgeSourceDownload(sourceId: string): Promise<{
 }
 
 export async function getKnowledgeDocumentDownload(params: {
+  userId: string;
   documentId: string;
   spaceId: string;
 }): Promise<{
@@ -80,7 +84,7 @@ export async function getKnowledgeDocumentDownload(params: {
   filename: string;
   mimeType: string;
 }> {
-  const source = await getDocumentById(params.documentId);
+  const source = await getDocumentById(params.userId, params.documentId);
 
   if (!source || source.collectionId !== params.spaceId) {
     throw new NotFoundError(
@@ -88,5 +92,8 @@ export async function getKnowledgeDocumentDownload(params: {
     );
   }
 
-  return getKnowledgeSourceDownload(params.documentId);
+  return getKnowledgeSourceDownload({
+    userId: params.userId,
+    sourceId: params.documentId,
+  });
 }

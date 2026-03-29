@@ -69,3 +69,12 @@ export {
   updateImportJob,
   updateKnowledgeCollection,
 } from "./repository";
+export {
+  authenticateUser,
+  createUser,
+  ensureDefaultUser,
+  getAuthUserById,
+  getDefaultPassword,
+  getDefaultUsername,
+  requireAuthUser,
+} from "./users";

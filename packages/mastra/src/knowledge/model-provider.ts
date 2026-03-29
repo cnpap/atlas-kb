@@ -7,6 +7,22 @@ import {
 } from "@atlas-kb/errors";
 import { getOpenAIBaseUrl, getOpenAIModel } from "./config";
 
+type ModelProviderLogContext = {
+  hasOpenAIApiKey: boolean;
+  openAIBaseUrl: string;
+  openAIModel: string;
+};
+
+export class ModelInvocationTimeoutError extends Error {
+  readonly phase: "request" | "first-token" | "stream-idle";
+
+  constructor(phase: "request" | "first-token" | "stream-idle") {
+    super("知识库回答超时，请稍后重试。");
+    this.name = "ModelInvocationTimeoutError";
+    this.phase = phase;
+  }
+}
+
 function readNumericField(
   value: unknown,
   key: "status" | "statusCode",
@@ -62,12 +78,43 @@ function extractStatusCode(error: unknown): number | undefined {
   return Number.parseInt(match[1] || "", 10) || undefined;
 }
 
-function buildProviderContext(): string {
-  return [
-    `当前 OPENAI_BASE_URL=${getOpenAIBaseUrl()}。`,
-    `当前 OPENAI_MODEL=${getOpenAIModel()}。`,
-    "请确认该中转服务可正常透传官方 OpenAI API，且该模型对当前 API Key 可用。",
-  ].join(" ");
+export function getModelProviderLogContext(): ModelProviderLogContext {
+  return {
+    hasOpenAIApiKey: Boolean(process.env.OPENAI_API_KEY?.trim()),
+    openAIBaseUrl: getOpenAIBaseUrl(),
+    openAIModel: getOpenAIModel(),
+  };
+}
+
+function readErrorText(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "";
+  }
+
+  const parts = [error.message];
+
+  if (error.cause instanceof Error) {
+    parts.push(error.cause.message);
+  }
+
+  return parts.join(" ").trim();
+}
+
+function logModelProviderIssue(
+  action: string,
+  details: string,
+  error?: unknown,
+): void {
+  const errorName = error instanceof Error ? error.name : undefined;
+  const errorMessage = readErrorText(error);
+
+  console.error("[atlas-kb/mastra] model provider issue", {
+    action,
+    details,
+    errorMessage: errorMessage || undefined,
+    errorName,
+    ...getModelProviderLogContext(),
+  });
 }
 
 export function requireChatModelProvider(): void {
@@ -75,8 +122,9 @@ export function requireChatModelProvider(): void {
     return;
   }
 
+  logModelProviderIssue("配置检查", "缺少 OPENAI_API_KEY。");
   throw new ModelProviderConfigurationError(
-    `${buildProviderContext()} 缺少 OPENAI_API_KEY，聊天不会再回退到 mock 回答。`,
+    "知识库回答暂时不可用，请稍后重试。",
   );
 }
 
@@ -88,45 +136,66 @@ export function mapModelProviderError(
     return error;
   }
 
-  const context = buildProviderContext();
   const statusCode = extractStatusCode(error);
+  const errorText = readErrorText(error);
+
+  if (error instanceof ModelInvocationTimeoutError) {
+    logModelProviderIssue(
+      action,
+      `模型调用在 ${error.phase} 阶段触发本地超时。`,
+      error,
+    );
+    return new ModelProviderUnavailableError(
+      "知识库回答超时，请稍后重试。",
+      error,
+    );
+  }
 
   if (statusCode === 401) {
+    logModelProviderIssue(action, "模型服务返回 401。", error);
     return new ModelProviderConfigurationError(
-      `${action} 被模型服务拒绝，返回 401。${context} 请检查 OPENAI_API_KEY 是否正确。`,
+      "知识库回答暂时不可用，请稍后重试。",
       error,
     );
   }
 
   if (statusCode === 403) {
+    logModelProviderIssue(action, "模型服务返回 403。", error);
     return new ModelProviderPermissionError(
-      `${action} 被模型服务拒绝，返回 403。${context} 如果使用第三方 OpenAI-compatible 服务，通常还需要显式设置 OPENAI_MODEL。`,
+      "知识库回答暂时不可用，请稍后重试。",
       error,
     );
   }
 
   if (statusCode === 429) {
+    logModelProviderIssue(action, "模型服务返回 429。", error);
     return new ModelProviderRateLimitError(
-      `${action} 触发模型服务限流，返回 429。${context}`,
+      "知识库回答暂时繁忙，请稍后重试。",
       error,
     );
   }
 
   if (typeof statusCode === "number" && statusCode >= 500) {
+    logModelProviderIssue(action, `模型服务返回 ${statusCode}。`, error);
     return new ModelProviderUnavailableError(
-      `${action} 失败，模型服务返回 ${statusCode}。${context}`,
+      "知识库回答暂时不可用，请稍后重试。",
       error,
     );
   }
 
-  if (error instanceof Error && error.message.trim()) {
+  if (errorText) {
+    logModelProviderIssue(action, errorText, error);
     return new ModelProviderUnavailableError(
-      `${action} 失败。${context} 原始错误: ${error.message.trim()}`,
+      "知识库回答暂时不可用，请稍后重试。",
       error,
     );
   }
 
-  return new ModelProviderUnavailableError(`${action} 失败。${context}`, error);
+  logModelProviderIssue(action, "模型服务返回未知错误。", error);
+  return new ModelProviderUnavailableError(
+    "知识库回答暂时不可用，请稍后重试。",
+    error,
+  );
 }
 
 export function throwMappedModelProviderError(

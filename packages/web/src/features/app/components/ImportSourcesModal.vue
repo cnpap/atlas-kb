@@ -1,0 +1,271 @@
+<script setup lang="ts">
+  import { computed, ref, watch } from "vue";
+  import { Check, LoaderCircle, Trash2, Upload } from "lucide-vue-next";
+  import { formatFileSize } from "@/lib/knowledge-ui";
+
+  type ImportMode = "file" | "text";
+
+  const props = defineProps<{
+    open: boolean;
+    pending?: boolean;
+  }>();
+
+  const emit = defineEmits<{
+    "submit:file": [
+      payload: { files: File[]; summary?: string; tags?: string[] },
+    ];
+    "submit:text": [
+      payload: {
+        content: string;
+        summary?: string;
+        tags?: string[];
+        title?: string;
+      },
+    ];
+    "update:open": [value: boolean];
+  }>();
+
+  const mode = ref<ImportMode>("file");
+  const queuedFiles = ref<File[]>([]);
+  const summary = ref("");
+  const tags = ref("");
+  const textTitle = ref("");
+  const textSummary = ref("");
+  const textTags = ref("");
+  const textContent = ref("");
+
+  const canSubmit = computed(() => {
+    if (props.pending) {
+      return false;
+    }
+
+    if (mode.value === "file") {
+      return queuedFiles.value.length > 0;
+    }
+
+    return Boolean(textContent.value.trim());
+  });
+
+  watch(
+    () => props.open,
+    (isOpen) => {
+      if (isOpen) {
+        return;
+      }
+
+      mode.value = "file";
+      queuedFiles.value = [];
+      summary.value = "";
+      tags.value = "";
+      textTitle.value = "";
+      textSummary.value = "";
+      textTags.value = "";
+      textContent.value = "";
+    },
+  );
+
+  function parseTags(input: string): string[] | undefined {
+    const values = input
+      .split(/[,\n]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    return values.length > 0 ? [...new Set(values)] : undefined;
+  }
+
+  function handleFileChange(event: Event) {
+    const input = event.target as HTMLInputElement | null;
+    const files = Array.from(input?.files || []);
+
+    if (files.length > 0) {
+      queuedFiles.value = [...queuedFiles.value, ...files];
+    }
+
+    if (input) {
+      input.value = "";
+    }
+  }
+
+  function removeFile(index: number) {
+    queuedFiles.value = queuedFiles.value.filter(
+      (_, currentIndex) => currentIndex !== index,
+    );
+  }
+
+  function submit() {
+    if (mode.value === "file") {
+      emit("submit:file", {
+        files: queuedFiles.value,
+        summary: summary.value.trim() || undefined,
+        tags: parseTags(tags.value),
+      });
+      return;
+    }
+
+    emit("submit:text", {
+      title: textTitle.value.trim() || undefined,
+      summary: textSummary.value.trim() || undefined,
+      tags: parseTags(textTags.value),
+      content: textContent.value.trim(),
+    });
+  }
+
+  function updateOpen(value: boolean) {
+    emit("update:open", value);
+  }
+</script>
+
+<template>
+  <UModal
+    :open="open"
+    title="添加文件到当前分组"
+    description="支持批量上传文件，也支持直接录入文本资料。"
+    :close="!pending"
+    @update:open="updateOpen"
+  >
+    <template #body>
+      <div class="space-y-4 py-2">
+        <div class="segmented-tabs w-full">
+          <button
+            class="segmented-tab flex-1"
+            :class="mode === 'file' ? 'is-active' : ''"
+            type="button"
+            @click="mode = 'file'"
+          >
+            文件上传
+          </button>
+          <button
+            class="segmented-tab flex-1"
+            :class="mode === 'text' ? 'is-active' : ''"
+            type="button"
+            @click="mode = 'text'"
+          >
+            手动录入
+          </button>
+        </div>
+
+        <template v-if="mode === 'file'">
+          <label
+            class="field-shell flex cursor-pointer flex-col items-center justify-center gap-2 py-8 text-center"
+          >
+            <Upload class="size-8 text-[var(--text-dim)]" />
+            <p class="text-sm font-medium">
+              {{ queuedFiles.length > 0 ? `已选择 ${queuedFiles.length} 个文件，可继续添加` : '点击选择多个文件' }}
+            </p>
+            <p class="text-[10px] text-[var(--text-dim)]">
+              支持 PDF、DOCX、Markdown、文本、HTML、JSON、CSV、XML、YAML。
+            </p>
+            <input
+              type="file"
+              multiple
+              class="hidden"
+              @change="handleFileChange"
+            >
+          </label>
+
+          <div v-if="queuedFiles.length > 0" class="space-y-2">
+            <div
+              v-for="(file, index) in queuedFiles"
+              :key="`${file.name}:${file.size}:${file.lastModified}:${index}`"
+              class="rounded-[10px] border border-[var(--border-soft)] bg-white px-3 py-2"
+            >
+              <div class="flex items-center gap-3">
+                <div class="min-w-0 flex-1">
+                  <p
+                    class="truncate text-sm font-medium text-[var(--text-strong)]"
+                  >
+                    {{ file.name }}
+                  </p>
+                  <p class="mt-1 text-[10px] text-[var(--text-dim)]">
+                    {{ formatFileSize(file.size) }}
+                  </p>
+                </div>
+                <button
+                  class="soft-button !p-1.5"
+                  type="button"
+                  @click="removeFile(index)"
+                >
+                  <Trash2 class="size-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="space-y-1.5">
+            <p class="section-label">统一摘要 (可选)</p>
+            <textarea
+              v-model="summary"
+              class="field-shell w-full text-sm !min-h-[80px]"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <p class="section-label">统一标签 (用逗号分隔)</p>
+            <input
+              v-model="tags"
+              class="field-shell w-full text-sm"
+              placeholder="例如：研究, 会议纪要"
+            >
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="space-y-1.5">
+            <p class="section-label">资料标题</p>
+            <input
+              v-model="textTitle"
+              class="field-shell w-full text-sm"
+              placeholder="输入资料名称"
+            >
+          </div>
+          <div class="space-y-1.5">
+            <p class="section-label">摘要 (可选)</p>
+            <textarea
+              v-model="textSummary"
+              class="field-shell w-full text-sm !min-h-[80px]"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <p class="section-label">正文内容</p>
+            <textarea
+              v-model="textContent"
+              class="field-shell w-full text-sm !min-h-[180px]"
+              placeholder="在这里粘贴或输入资料正文..."
+            />
+          </div>
+          <div class="space-y-1.5">
+            <p class="section-label">标签 (用逗号分隔)</p>
+            <input
+              v-model="textTags"
+              class="field-shell w-full text-sm"
+              placeholder="标签1, 标签2..."
+            >
+          </div>
+        </template>
+      </div>
+    </template>
+    <template #footer>
+      <div class="flex w-full justify-end gap-2">
+        <button
+          class="soft-button"
+          type="button"
+          :disabled="pending"
+          @click="emit('update:open', false)"
+        >
+          取消
+        </button>
+        <button
+          class="soft-button primary"
+          type="button"
+          :disabled="!canSubmit"
+          @click="submit"
+        >
+          <LoaderCircle v-if="pending" class="size-4 animate-spin" />
+          <Check v-else class="size-4" />
+          <span
+            >{{ mode === "file" ? `上传 ${queuedFiles.length} 个文件` : "保存文本资料" }}</span
+          >
+        </button>
+      </div>
+    </template>
+  </UModal>
+</template>

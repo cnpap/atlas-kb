@@ -2,6 +2,7 @@ import { failure } from "@atlas-kb/schema";
 import { cors } from "@elysiajs/cors";
 import { Elysia } from "elysia";
 import { isApiHttpError } from "@atlas-kb/errors";
+import { authRoutes } from "./routes/auth";
 import { chatRoutes } from "./routes/chat";
 import { getAllowedWebOrigins } from "./env";
 import { dashboardRoutes } from "./routes/dashboard";
@@ -39,6 +40,7 @@ export function createApp() {
         allowedHeaders: ["Authorization", "Content-Type"],
       }),
     )
+    .use(authRoutes)
     .use(chatRoutes)
     .use(dashboardRoutes)
     .use(healthRoutes)

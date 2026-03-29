@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from "vue-router";
 import MainLayout from "@/layouts/MainLayout.vue";
+import { initializeAuthSession } from "@/lib/auth-session";
+import { getAuthToken } from "@/lib/auth-storage";
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -10,11 +12,12 @@ const router = createRouter({
     },
     {
       path: "/login",
-      redirect: "/app",
-    },
-    {
-      path: "/ask",
-      redirect: "/app",
+      name: "login",
+      component: () => import("@/features/auth/views/LoginView.vue"),
+      meta: {
+        title: "登录",
+        public: true,
+      },
     },
     {
       path: "/kb",
@@ -26,44 +29,19 @@ const router = createRouter({
         `/app?group=${encodeURIComponent(String(to.params.spaceId))}&panel=library`,
     },
     {
-      path: "/app/overview",
-      redirect: "/app",
-    },
-    {
-      path: "/app/search",
-      redirect: "/app?panel=citations",
-    },
-    {
-      path: "/app/chat",
-      redirect: "/app",
-    },
-    {
-      path: "/app/collections",
-      redirect: "/app?panel=library",
-    },
-    {
-      path: "/app/collections/:collectionId",
-      redirect: (to) =>
-        `/app?group=${encodeURIComponent(String(to.params.collectionId))}&panel=library`,
-    },
-    {
-      path: "/app/imports",
-      redirect: "/app?panel=library",
-    },
-    {
-      path: "/app/settings",
-      redirect: "/app?panel=library",
-    },
-    {
       path: "/app",
       component: MainLayout,
+      meta: {
+        requiresAuth: true,
+      },
       children: [
         {
           path: "",
           name: "app-workspace",
           component: () => import("@/features/app/views/WorkspaceView.vue"),
           meta: {
-            title: "个人知识库",
+            title: "Atlas KB",
+            requiresAuth: true,
           },
         },
       ],
@@ -71,8 +49,59 @@ const router = createRouter({
   ],
 });
 
-router.afterEach(() => {
-  document.title = "个人知识库";
+router.beforeEach(async (to) => {
+  const token = getAuthToken();
+  const isPublicRoute = Boolean(to.meta.public);
+
+  if (isPublicRoute) {
+    if (!token) {
+      return true;
+    }
+
+    const session = await initializeAuthSession();
+    if (session) {
+      const next =
+        typeof to.query.next === "string" && to.query.next.trim()
+          ? to.query.next
+          : "/app";
+      return next;
+    }
+
+    return true;
+  }
+
+  if (!to.meta.requiresAuth) {
+    return true;
+  }
+
+  if (!token) {
+    return {
+      path: "/login",
+      query: {
+        next: to.fullPath,
+      },
+    };
+  }
+
+  const session = await initializeAuthSession();
+
+  if (!session) {
+    return {
+      path: "/login",
+      query: {
+        next: to.fullPath,
+      },
+    };
+  }
+
+  return true;
+});
+
+router.afterEach((to) => {
+  document.title =
+    typeof to.meta.title === "string" && to.meta.title.trim()
+      ? to.meta.title
+      : "Atlas KB";
 });
 
 export { router };

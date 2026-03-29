@@ -4,6 +4,13 @@ import {
   type UIMessage,
   type UIMessageStreamWriter,
 } from "ai";
+import {
+  ApiHttpError,
+  ModelProviderConfigurationError,
+  ModelProviderPermissionError,
+  ModelProviderRateLimitError,
+  ModelProviderUnavailableError,
+} from "@atlas-kb/errors";
 import type {
   ChatReplyFinal,
   ChatReplyRequest,
@@ -28,6 +35,7 @@ import {
   runKnowledgeAgentQuestion,
   streamKnowledgeAgentQuestion,
 } from "./agent";
+import { getModelProviderLogContext } from "./model-provider";
 
 export {
   createChatSession,
@@ -98,21 +106,60 @@ function writeStreamEvent(
   }
 }
 
+const TIMEOUT_ERROR_PATTERN = /timed out|timeout|ETIMEDOUT|AbortError/i;
+
+function readErrorText(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "";
+  }
+
+  const parts = [error.message];
+
+  if (error.cause instanceof Error) {
+    parts.push(error.cause.message);
+  }
+
+  return parts.join(" ").trim();
+}
+
 function getErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) {
+  const errorText = readErrorText(error);
+
+  if (TIMEOUT_ERROR_PATTERN.test(errorText)) {
+    return "知识库回答超时，请稍后重试。";
+  }
+
+  if (error instanceof ApiHttpError && error.message.trim()) {
     return error.message;
+  }
+
+  if (error instanceof ModelProviderRateLimitError) {
+    return "知识库回答暂时繁忙，请稍后重试。";
+  }
+
+  if (
+    error instanceof ModelProviderConfigurationError ||
+    error instanceof ModelProviderPermissionError ||
+    error instanceof ModelProviderUnavailableError
+  ) {
+    return "知识库回答暂时不可用，请稍后重试。";
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
   }
 
   return "AI 对话失败";
 }
 
 export async function createChatReply(params: {
+  userId: string;
   sessionId: string;
   input: ChatReplyRequest;
   fetchImpl?: typeof fetch;
 }): Promise<ChatReplyFinal> {
   void params.fetchImpl;
-  const session = await requireChatSession(params.sessionId);
+  const session = await requireChatSession(params.userId, params.sessionId);
   const parsedInput = ChatReplyRequestSchema.parse(params.input);
   const collectionId = parsedInput.collectionId ?? session.collectionId;
 
@@ -121,6 +168,7 @@ export async function createChatReply(params: {
   }
 
   const userMessage = await appendChatMessage({
+    userId: params.userId,
     sessionId: session.id,
     role: "user",
     content: parsedInput.query,
@@ -129,15 +177,17 @@ export async function createChatReply(params: {
     question: parsedInput.query,
     spaceId: collectionId,
     limit: parsedInput.limit,
+    userId: params.userId,
   });
   const assistantMessage = await appendChatMessage({
+    userId: params.userId,
     sessionId: session.id,
     role: "assistant",
     content: answer.answer,
     citations: answer.citations,
     retrieval: answer.search,
   });
-  const refreshedSession = await requireChatSession(session.id);
+  const refreshedSession = await requireChatSession(params.userId, session.id);
 
   return {
     session: refreshedSession,
@@ -150,9 +200,13 @@ export async function createChatReply(params: {
 
 export async function streamChatReply(params: {
   input: ChatReplyStreamRequest;
+  userId: string;
 }): Promise<Response> {
   const parsedInput = ChatReplyStreamRequestSchema.parse(params.input);
-  const session = await requireChatSession(parsedInput.sessionId);
+  const session = await requireChatSession(
+    params.userId,
+    parsedInput.sessionId,
+  );
   const collectionId = parsedInput.collectionId ?? session.collectionId;
 
   if (!collectionId) {
@@ -160,6 +214,7 @@ export async function streamChatReply(params: {
   }
 
   const userMessage = await appendChatMessage({
+    userId: params.userId,
     sessionId: session.id,
     role: "user",
     content: parsedInput.query,
@@ -218,6 +273,7 @@ export async function streamChatReply(params: {
             question: parsedInput.query,
             spaceId: collectionId,
             limit: parsedInput.limit,
+            userId: params.userId,
             onStreamPart: async (part) => {
               if (part.type === "text-delta") {
                 writeTextDelta(String(part.textDelta ?? ""));
@@ -238,6 +294,7 @@ export async function streamChatReply(params: {
           finishText();
 
           const assistantMessage = await appendChatMessage({
+            userId: params.userId,
             sessionId: session.id,
             role: "assistant",
             content: answer.answer,
@@ -245,7 +302,10 @@ export async function streamChatReply(params: {
             retrieval: answer.search,
             trace: answer.trace,
           });
-          const refreshedSession = await requireChatSession(session.id);
+          const refreshedSession = await requireChatSession(
+            params.userId,
+            session.id,
+          );
 
           writeStreamEvent(writer, {
             type: "reply-completed",
@@ -261,6 +321,13 @@ export async function streamChatReply(params: {
           });
         } catch (error) {
           finishText();
+          if (!(error instanceof ApiHttpError)) {
+            console.error("[atlas-kb/mastra] streamChatReply failed", {
+              errorMessage: readErrorText(error) || undefined,
+              errorName: error instanceof Error ? error.name : undefined,
+              ...getModelProviderLogContext(),
+            });
+          }
 
           writeStreamEvent(writer, {
             type: "reply-error",

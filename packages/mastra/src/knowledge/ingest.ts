@@ -64,6 +64,7 @@ type ImportResult = {
 };
 
 type QueuedFileImportTask = {
+  userId: string;
   collectionId: string;
   draft: KnowledgeSource;
   job: KnowledgeImportJob;
@@ -350,6 +351,7 @@ async function fetchUrlContent(url: string): Promise<{
 }
 
 async function finalizeImport(params: {
+  userId: string;
   collectionId: string;
   draft: KnowledgeSource;
   job: KnowledgeImportJob;
@@ -361,12 +363,14 @@ async function finalizeImport(params: {
   filePath?: string;
 }): Promise<ImportResult> {
   await updateImportJob({
+    userId: params.userId,
     jobId: params.job.id,
     stage: "chunking",
     status: "processing",
   });
 
   const source = await replaceSourceContent({
+    userId: params.userId,
     sourceId: params.draft.id,
     title: params.parsed.title,
     summary: params.summary,
@@ -383,6 +387,7 @@ async function finalizeImport(params: {
   });
 
   await updateImportJob({
+    userId: params.userId,
     jobId: params.job.id,
     stage: "embedding",
     status: "processing",
@@ -400,12 +405,16 @@ async function finalizeImport(params: {
   );
 
   await updateImportJob({
+    userId: params.userId,
     jobId: params.job.id,
     stage: "completed",
     status: "ready",
   });
 
-  const collection = await requireKnowledgeCollection(params.collectionId);
+  const collection = await requireKnowledgeCollection(
+    params.userId,
+    params.collectionId,
+  );
 
   return {
     collection,
@@ -422,6 +431,7 @@ async function finalizeImport(params: {
 }
 
 async function failImport(params: {
+  userId: string;
   draft: KnowledgeSource;
   job: KnowledgeImportJob;
   error: unknown;
@@ -430,6 +440,7 @@ async function failImport(params: {
     params.error instanceof Error ? params.error.message : "Import failed";
 
   const source = await replaceSourceContent({
+    userId: params.userId,
     sourceId: params.draft.id,
     title: params.draft.title,
     summary: params.draft.summary,
@@ -443,6 +454,7 @@ async function failImport(params: {
   });
 
   await updateImportJob({
+    userId: params.userId,
     jobId: params.job.id,
     stage: "completed",
     status: "failed",
@@ -450,6 +462,7 @@ async function failImport(params: {
   });
 
   const collection = await requireKnowledgeCollection(
+    params.userId,
     params.draft.collectionId,
   );
 
@@ -473,6 +486,7 @@ async function processQueuedFileImport(
 ): Promise<void> {
   try {
     await updateImportJob({
+      userId: params.userId,
       jobId: params.job.id,
       stage: "fetching",
       status: "processing",
@@ -481,6 +495,7 @@ async function processQueuedFileImport(
     const buffer = await readFile(params.filePath);
 
     await updateImportJob({
+      userId: params.userId,
       jobId: params.job.id,
       stage: "extracting",
       status: "processing",
@@ -492,6 +507,7 @@ async function processQueuedFileImport(
     const parsed = await parseFile(file);
 
     await finalizeImport({
+      userId: params.userId,
       collectionId: params.collectionId,
       draft: params.draft,
       job: params.job,
@@ -506,6 +522,7 @@ async function processQueuedFileImport(
     });
   } catch (error) {
     await failImport({
+      userId: params.userId,
       draft: params.draft,
       job: params.job,
       error,
@@ -514,11 +531,12 @@ async function processQueuedFileImport(
 }
 
 export async function importKnowledgeFile(params: {
+  userId: string;
   collectionId: string;
   file: File;
   input?: KnowledgeFileImportRequest;
 }): Promise<ImportResult> {
-  await requireKnowledgeCollection(params.collectionId);
+  await requireKnowledgeCollection(params.userId, params.collectionId);
 
   if (!isSupportedFile(params.file)) {
     throw new BadRequestError(
@@ -539,6 +557,7 @@ export async function importKnowledgeFile(params: {
     file: params.file,
   });
   const draft = await createSourceDraft({
+    userId: params.userId,
     collectionId: params.collectionId,
     sourceType: "file",
     title,
@@ -549,15 +568,20 @@ export async function importKnowledgeFile(params: {
     byteSize: params.file.size || undefined,
   });
   const job = await createImportJob({
+    userId: params.userId,
     collectionId: params.collectionId,
     sourceId: draft.id,
     sourceType: "file",
     attempt: 1,
   });
-  const collection = await requireKnowledgeCollection(params.collectionId);
+  const collection = await requireKnowledgeCollection(
+    params.userId,
+    params.collectionId,
+  );
 
   scheduleImportTask(() =>
     processQueuedFileImport({
+      userId: params.userId,
       collectionId: params.collectionId,
       draft,
       job,
@@ -578,15 +602,17 @@ export async function importKnowledgeFile(params: {
 }
 
 export async function importKnowledgeText(params: {
+  userId: string;
   collectionId: string;
   input: KnowledgeTextImportRequest;
 }): Promise<ImportResult> {
-  await requireKnowledgeCollection(params.collectionId);
+  await requireKnowledgeCollection(params.userId, params.collectionId);
   const title = resolveDraftTitle({
     title: params.input.title,
     fallback: resolveTextTitle(params.input.content),
   });
   const draft = await createSourceDraft({
+    userId: params.userId,
     collectionId: params.collectionId,
     sourceType: "text",
     title,
@@ -594,6 +620,7 @@ export async function importKnowledgeText(params: {
     tags: params.input.tags,
   });
   const job = await createImportJob({
+    userId: params.userId,
     collectionId: params.collectionId,
     sourceId: draft.id,
     sourceType: "text",
@@ -602,6 +629,7 @@ export async function importKnowledgeText(params: {
 
   try {
     return await finalizeImport({
+      userId: params.userId,
       collectionId: params.collectionId,
       draft,
       job,
@@ -615,6 +643,7 @@ export async function importKnowledgeText(params: {
     });
   } catch (error) {
     return failImport({
+      userId: params.userId,
       draft,
       job,
       error,
@@ -623,16 +652,18 @@ export async function importKnowledgeText(params: {
 }
 
 export async function importKnowledgeUrl(params: {
+  userId: string;
   collectionId: string;
   input: KnowledgeUrlImportRequest;
 }): Promise<ImportResult> {
-  await requireKnowledgeCollection(params.collectionId);
+  await requireKnowledgeCollection(params.userId, params.collectionId);
   const fetched = await fetchUrlContent(params.input.url);
   const title = resolveDraftTitle({
     title: params.input.title,
     fallback: fetched.title,
   });
   const draft = await createSourceDraft({
+    userId: params.userId,
     collectionId: params.collectionId,
     sourceType: "url",
     title,
@@ -642,6 +673,7 @@ export async function importKnowledgeUrl(params: {
     mimeType: fetched.contentType,
   });
   const job = await createImportJob({
+    userId: params.userId,
     collectionId: params.collectionId,
     sourceId: draft.id,
     sourceType: "url",
@@ -650,6 +682,7 @@ export async function importKnowledgeUrl(params: {
 
   try {
     return await finalizeImport({
+      userId: params.userId,
       collectionId: params.collectionId,
       draft,
       job,
@@ -666,6 +699,7 @@ export async function importKnowledgeUrl(params: {
     });
   } catch (error) {
     return failImport({
+      userId: params.userId,
       draft,
       job,
       error,
@@ -674,16 +708,19 @@ export async function importKnowledgeUrl(params: {
 }
 
 export async function refreshKnowledgeSource(
+  userId: string,
   sourceId: string,
 ): Promise<ImportResult> {
-  const source = await requireKnowledgeSource(sourceId);
+  const source = await requireKnowledgeSource(userId, sourceId);
 
   if (source.sourceType !== "url" || !source.sourceUrl) {
     throw new BadRequestError("Only URL sources can be refreshed");
   }
 
-  const attempt = (await getLatestSourceVersion(sourceId))?.version ?? 1;
+  const attempt =
+    (await getLatestSourceVersion(userId, sourceId))?.version ?? 1;
   const job = await createImportJob({
+    userId,
     collectionId: source.collectionId,
     sourceId,
     sourceType: source.sourceType,
@@ -694,6 +731,7 @@ export async function refreshKnowledgeSource(
     const fetched = await fetchUrlContent(source.sourceUrl);
 
     return await finalizeImport({
+      userId,
       collectionId: source.collectionId,
       draft: source,
       job,
@@ -710,6 +748,7 @@ export async function refreshKnowledgeSource(
     });
   } catch (error) {
     return failImport({
+      userId,
       draft: source,
       job,
       error,
@@ -718,21 +757,23 @@ export async function refreshKnowledgeSource(
 }
 
 export async function retryKnowledgeSource(
+  userId: string,
   sourceId: string,
 ): Promise<ImportResult> {
-  const source = await requireKnowledgeSource(sourceId);
-  const latestVersion = await getLatestSourceVersion(sourceId);
+  const source = await requireKnowledgeSource(userId, sourceId);
+  const latestVersion = await getLatestSourceVersion(userId, sourceId);
   const attempt = Math.max(
     (latestVersion?.version ?? source.latestVersion) + 1,
     1,
   );
 
   if (source.sourceType === "url" && source.sourceUrl) {
-    return refreshKnowledgeSource(sourceId);
+    return refreshKnowledgeSource(userId, sourceId);
   }
 
   if (source.sourceType === "file" && latestVersion?.filePath) {
     const job = await createImportJob({
+      userId,
       collectionId: source.collectionId,
       sourceId,
       sourceType: source.sourceType,
@@ -751,6 +792,7 @@ export async function retryKnowledgeSource(
       const parsed = await parseFile(file);
 
       return await finalizeImport({
+        userId,
         collectionId: source.collectionId,
         draft: source,
         job,
@@ -765,6 +807,7 @@ export async function retryKnowledgeSource(
       });
     } catch (error) {
       return failImport({
+        userId,
         draft: source,
         job,
         error,
@@ -773,6 +816,7 @@ export async function retryKnowledgeSource(
   }
 
   const job = await createImportJob({
+    userId,
     collectionId: source.collectionId,
     sourceId,
     sourceType: source.sourceType,
@@ -781,6 +825,7 @@ export async function retryKnowledgeSource(
 
   try {
     return await finalizeImport({
+      userId,
       collectionId: source.collectionId,
       draft: source,
       job,
@@ -798,6 +843,7 @@ export async function retryKnowledgeSource(
     });
   } catch (error) {
     return failImport({
+      userId,
       draft: source,
       job,
       error,
@@ -806,18 +852,20 @@ export async function retryKnowledgeSource(
 }
 
 export async function updateKnowledgeSource(
+  userId: string,
   sourceId: string,
   input: KnowledgeSourceUpdateRequest,
 ): Promise<KnowledgeSource> {
-  const source = await requireKnowledgeSource(sourceId);
+  const source = await requireKnowledgeSource(userId, sourceId);
 
   return replaceSourceContent({
+    userId,
     sourceId,
     title: input.title?.trim() || source.title,
     summary: input.summary?.trim() || source.summary,
-    content: source.content,
+    content: input.content?.trim() || source.content,
     tags: input.tags ?? source.tags,
-    parser: "metadata-update",
+    parser: input.content?.trim() ? "manual-edit" : "metadata-update",
     mimeType: source.mimeType,
     byteSize: source.byteSize,
     sourceFilename: source.sourceFilename,
@@ -827,6 +875,7 @@ export async function updateKnowledgeSource(
 }
 
 export async function uploadKnowledgeDocument(params: {
+  userId: string;
   file: File;
   metadata?: KnowledgeUploadMetadata;
   spaceId: string;
@@ -837,6 +886,7 @@ export async function uploadKnowledgeDocument(params: {
   indexed: boolean;
 }> {
   const result = await importKnowledgeFile({
+    userId: params.userId,
     collectionId: params.spaceId,
     file: params.file,
     input: {
@@ -885,17 +935,19 @@ function toBatchAccepted(params: {
 }
 
 export async function importKnowledgeFiles(params: {
+  userId: string;
   collectionId: string;
   files: File[];
   input?: KnowledgeBatchFileImportRequest;
 }): Promise<KnowledgeBatchImportData> {
-  await requireKnowledgeCollection(params.collectionId);
+  await requireKnowledgeCollection(params.userId, params.collectionId);
 
   const results: KnowledgeBatchImportItem[] = [];
 
   for (const file of params.files) {
     try {
       const result = await importKnowledgeFile({
+        userId: params.userId,
         collectionId: params.collectionId,
         file,
         input: {
@@ -920,7 +972,10 @@ export async function importKnowledgeFiles(params: {
     }
   }
 
-  const collection = await requireKnowledgeCollection(params.collectionId);
+  const collection = await requireKnowledgeCollection(
+    params.userId,
+    params.collectionId,
+  );
   const acceptedCount = results.filter((item) => item.accepted).length;
   const rejectedCount = results.length - acceptedCount;
 

@@ -14,7 +14,7 @@ import {
   getQdrantUrl,
 } from "./config";
 import { getKnowledgeDatabase } from "./db";
-import { getDocumentById } from "./repository";
+import { getDocumentByIdUnchecked } from "./repository";
 import { buildSearchSnippet, getKnowledgeSourceMetadata } from "./search-utils";
 
 interface EmbeddingResponse {
@@ -36,6 +36,7 @@ interface QdrantQueryResponse {
 
 interface KnowledgeChunkPayload {
   chunkId: string;
+  ownerUserId: string;
   sourceId: string;
   collectionId: string;
   chunkIndex: number;
@@ -182,6 +183,7 @@ function readSourceChunks(sourceId: string): KnowledgeChunkPayload[] {
       `
         SELECT
           chunk_id,
+          owner_user_id,
           source_id,
           collection_id,
           chunk_index,
@@ -196,6 +198,7 @@ function readSourceChunks(sourceId: string): KnowledgeChunkPayload[] {
     )
     .all(sourceId) as Array<{
     chunk_id: string;
+    owner_user_id: string;
     source_id: string;
     collection_id: string;
     chunk_index: number;
@@ -207,6 +210,7 @@ function readSourceChunks(sourceId: string): KnowledgeChunkPayload[] {
 
   return rows.map((row) => ({
     chunkId: row.chunk_id,
+    ownerUserId: row.owner_user_id,
     sourceId: row.source_id,
     collectionId: row.collection_id,
     chunkIndex: row.chunk_index,
@@ -296,7 +300,9 @@ function dedupeHits(
 }
 
 export async function searchKnowledgeVectors(
-  input: SearchKnowledgeRequest,
+  input: SearchKnowledgeRequest & {
+    userId: string;
+  },
 ): Promise<SearchKnowledgeResult | undefined> {
   if (!canUseVectorSearch()) {
     return undefined;
@@ -318,18 +324,26 @@ export async function searchKnowledgeVectors(
           limit: Math.max(input.limit ?? 5, 12),
           with_payload: true,
           with_vector: false,
-          filter: input.collectionId
-            ? {
-                must: [
-                  {
-                    key: "collectionId",
-                    match: {
-                      value: input.collectionId,
+          filter: {
+            must: [
+              {
+                key: "ownerUserId",
+                match: {
+                  value: input.userId,
+                },
+              },
+              ...(input.collectionId
+                ? [
+                    {
+                      key: "collectionId",
+                      match: {
+                        value: input.collectionId,
+                      },
                     },
-                  },
-                ],
-              }
-            : undefined,
+                  ]
+                : []),
+            ],
+          },
         }),
         signal: AbortSignal.timeout(10_000),
       },
@@ -348,7 +362,7 @@ export async function searchKnowledgeVectors(
             return undefined;
           }
 
-          const source = await getDocumentById(chunk.sourceId);
+          const source = await getDocumentByIdUnchecked(chunk.sourceId);
           if (!source || source.status !== "ready") {
             return undefined;
           }

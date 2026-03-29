@@ -56,6 +56,7 @@ import {
 } from "@atlas-kb/schema";
 import { Elysia, t } from "elysia";
 import { basename, extname } from "node:path";
+import { requireAuthenticatedSession } from "../auth";
 
 function parseTagString(input?: string): string[] | undefined {
   const value = input?.trim();
@@ -125,9 +126,10 @@ const uploadBody = t.Object({
 export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   .get(
     "/collections",
-    async () => {
+    async ({ headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
       return success({
-        collections: await listKnowledgeCollections(),
+        collections: await listKnowledgeCollections(session.user.id),
       });
     },
     {
@@ -136,9 +138,13 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .post(
     "/collections",
-    async ({ body }) => {
+    async ({ body, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
       return success({
-        collection: await createKnowledgeCollection(body),
+        collection: await createKnowledgeCollection({
+          userId: session.user.id,
+          input: body,
+        }),
       });
     },
     {
@@ -148,8 +154,11 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .get(
     "/collections/:collectionId",
-    async ({ params }) => {
-      return success(await getKnowledgeCollectionData(params.collectionId));
+    async ({ params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success(
+        await getKnowledgeCollectionData(session.user.id, params.collectionId),
+      );
     },
     {
       params: KnowledgeCollectionIdParamsSchema,
@@ -158,9 +167,11 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .patch(
     "/collections/:collectionId",
-    async ({ body, params }) => {
+    async ({ body, params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
       return success({
         collection: await updateKnowledgeCollection({
+          userId: session.user.id,
           collectionId: params.collectionId,
           input: body,
         }),
@@ -172,17 +183,22 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
       response: KnowledgeCollectionResponseSchema,
     },
   )
-  .delete("/collections/:collectionId", async ({ params }) => {
-    await deleteKnowledgeCollection(params.collectionId);
+  .delete("/collections/:collectionId", async ({ params, headers }) => {
+    const session = await requireAuthenticatedSession(headers.authorization);
+    await deleteKnowledgeCollection(session.user.id, params.collectionId);
     return success({
       ok: true as const,
     });
   })
   .get(
     "/collections/:collectionId/sources",
-    async ({ params }) => {
+    async ({ params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
       return success(
-        await getKnowledgeCollectionSourcesData(params.collectionId),
+        await getKnowledgeCollectionSourcesData(
+          session.user.id,
+          params.collectionId,
+        ),
       );
     },
     {
@@ -192,9 +208,11 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .post(
     "/collections/:collectionId/imports/file",
-    async ({ body, params }) => {
+    async ({ body, params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
       return success(
         await importKnowledgeFile({
+          userId: session.user.id,
           collectionId: params.collectionId,
           file: body.file,
           input: KnowledgeFileImportRequestSchema.parse({
@@ -213,7 +231,8 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .post(
     "/collections/:collectionId/imports/files",
-    async ({ params, request }) => {
+    async ({ params, request, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
       const form = await request.formData();
       const files = form
         .getAll("files")
@@ -225,6 +244,7 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
 
       return success(
         await importKnowledgeFiles({
+          userId: session.user.id,
           collectionId: params.collectionId,
           files,
           input: KnowledgeBatchFileImportRequestSchema.parse({
@@ -241,9 +261,11 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .post(
     "/collections/:collectionId/imports/text",
-    async ({ body, params }) => {
+    async ({ body, params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
       return success(
         await importKnowledgeText({
+          userId: session.user.id,
           collectionId: params.collectionId,
           input: body,
         }),
@@ -257,9 +279,10 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .get(
     "/imports",
-    async () => {
+    async ({ headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
       return success({
-        jobs: await listImportJobs(),
+        jobs: await listImportJobs(session.user.id),
       });
     },
     {
@@ -268,8 +291,11 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .get(
     "/sources/:sourceId",
-    async ({ params }) => {
-      return success(await getKnowledgeSourceData(params.sourceId));
+    async ({ params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success(
+        await getKnowledgeSourceData(session.user.id, params.sourceId),
+      );
     },
     {
       params: KnowledgeSourceIdParamsSchema,
@@ -278,9 +304,14 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .patch(
     "/sources/:sourceId",
-    async ({ body, params }) => {
+    async ({ body, params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
       return success({
-        source: await updateKnowledgeSource(params.sourceId, body),
+        source: await updateKnowledgeSource(
+          session.user.id,
+          params.sourceId,
+          body,
+        ),
       });
     },
     {
@@ -289,16 +320,20 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
       response: KnowledgeSourceResponseSchema,
     },
   )
-  .delete("/sources/:sourceId", async ({ params }) => {
-    await deleteKnowledgeSource(params.sourceId);
+  .delete("/sources/:sourceId", async ({ params, headers }) => {
+    const session = await requireAuthenticatedSession(headers.authorization);
+    await deleteKnowledgeSource(session.user.id, params.sourceId);
     return success({
       ok: true as const,
     });
   })
   .post(
     "/sources/:sourceId/refresh",
-    async ({ params }) => {
-      return success(await refreshKnowledgeSource(params.sourceId));
+    async ({ params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success(
+        await refreshKnowledgeSource(session.user.id, params.sourceId),
+      );
     },
     {
       params: KnowledgeSourceIdParamsSchema,
@@ -307,8 +342,11 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .post(
     "/sources/:sourceId/reprocess",
-    async ({ params }) => {
-      return success(await retryKnowledgeSource(params.sourceId));
+    async ({ params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success(
+        await retryKnowledgeSource(session.user.id, params.sourceId),
+      );
     },
     {
       params: KnowledgeSourceIdParamsSchema,
@@ -317,9 +355,13 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .get(
     "/sources/:sourceId/download",
-    async ({ params }) => {
+    async ({ params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
       return toDownloadResponse(
-        await getKnowledgeSourceDownload(params.sourceId),
+        await getKnowledgeSourceDownload({
+          userId: session.user.id,
+          sourceId: params.sourceId,
+        }),
       );
     },
     {
@@ -328,8 +370,9 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .post(
     "/search",
-    async ({ body }) => {
-      return success(await searchKnowledge(body));
+    async ({ body, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success(await searchKnowledge(body, { userId: session.user.id }));
     },
     {
       body: SearchKnowledgeRequestSchema,
@@ -338,9 +381,10 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .get(
     "/spaces",
-    async () => {
+    async ({ headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
       return success({
-        spaces: await listKnowledgeSpaces(),
+        spaces: await listKnowledgeSpaces(session.user.id),
       });
     },
     {
@@ -349,9 +393,13 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .post(
     "/spaces",
-    async ({ body }) => {
+    async ({ body, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
       return success({
-        space: await createKnowledgeSpace(body),
+        space: await createKnowledgeSpace({
+          userId: session.user.id,
+          input: body,
+        }),
       });
     },
     {
@@ -361,8 +409,11 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .get(
     "/spaces/:spaceId/documents",
-    async ({ params }) => {
-      return success(await getKnowledgeSpaceDocuments(params.spaceId));
+    async ({ params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success(
+        await getKnowledgeSpaceDocuments(session.user.id, params.spaceId),
+      );
     },
     {
       params: KnowledgeSpaceIdParamsSchema,
@@ -371,9 +422,11 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .post(
     "/spaces/:spaceId/documents/upload",
-    async ({ body, params }) => {
+    async ({ body, params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
       return success(
         await uploadKnowledgeDocument({
+          userId: session.user.id,
           file: body.file,
           metadata: KnowledgeUploadMetadataSchema.parse({
             title: body.title?.trim() || undefined,
@@ -392,8 +445,14 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .get(
     "/spaces/:spaceId/documents/:documentId/download",
-    async ({ params }) => {
-      return toDownloadResponse(await getKnowledgeDocumentDownload(params));
+    async ({ params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return toDownloadResponse(
+        await getKnowledgeDocumentDownload({
+          userId: session.user.id,
+          ...params,
+        }),
+      );
     },
     {
       params: KnowledgeDocumentDownloadParamsSchema,
@@ -401,9 +460,11 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   )
   .post(
     "/ask",
-    async ({ body }) => {
+    async ({ body, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
       return success(
         await answerKnowledgeQuestion(body, {
+          userId: session.user.id,
           fetchImpl: fetch,
         }),
       );

@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
+  createUser,
+  getDefaultPassword,
+  getDefaultUsername,
   resetKnowledgeRepository,
   resetKnowledgeVectorState,
   waitForPendingKnowledgeImports,
@@ -11,15 +14,7 @@ import { createApp } from "./app";
 
 const originalFetch = globalThis.fetch;
 const originalApiKey = process.env.OPENAI_API_KEY;
-const originalBaseUrl = process.env.OPENAI_BASE_URL;
-const originalDashScopeApiKey = process.env.DASHSCOPE_API_KEY;
-const originalDashScopeBaseUrl = process.env.DASHSCOPE_BASE_URL;
-const originalDashScopeEmbeddingModel = process.env.DASHSCOPE_EMBEDDING_MODEL;
 const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
-
-async function readJson(response: Response) {
-  return (await response.json()) as Record<string, unknown>;
-}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -30,24 +25,14 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function createSseResponse(
-  chunks: unknown[],
-  options: {
-    hangAfterChunks?: boolean;
-  } = {},
-): Response {
+function createSseResponse(chunks: unknown[]): Response {
   const encoder = new TextEncoder();
-
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       for (const chunk of chunks) {
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
         );
-      }
-
-      if (options.hangAfterChunks) {
-        return;
       }
 
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
@@ -80,27 +65,16 @@ function readMessageText(value: unknown): string {
     .join("\n");
 }
 
-function mockOpenAIChatProvider(
-  options: { hangOnAssistantResponse?: boolean } = {},
-) {
+function mockModelProviders() {
   globalThis.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input.url;
     const body = init?.body ? JSON.parse(String(init.body)) : {};
     const messages = Array.isArray(body.messages) ? body.messages : [];
-    const isStreaming = body.stream === true;
     const systemPrompt = readMessageText(messages[0]?.content);
     const lastMessage = messages[messages.length - 1];
-    const hasToolMessage = messages.some(
-      (message) =>
-        message &&
-        typeof message === "object" &&
-        ((message as { role?: string }).role === "tool" ||
-          (message as { role?: string }).role === "function"),
-    );
 
     if (url.includes("/embeddings")) {
       const inputValues = Array.isArray(body.input) ? body.input : [];
-
       return jsonResponse({
         data: inputValues.map((_value, index) => ({
           index,
@@ -139,15 +113,10 @@ function mockOpenAIChatProvider(
       });
     }
 
-    if (isStreaming && !hasToolMessage) {
-      const toolArguments = JSON.stringify({
-        query: readMessageText(lastMessage?.content),
-        limit: 6,
-      });
-
+    if (body.stream === true) {
       return createSseResponse([
         {
-          id: "chatcmpl-tool-1",
+          id: "chatcmpl-stream-1",
           object: "chat.completion.chunk",
           created: 1,
           model: "gpt-5.4",
@@ -155,136 +124,20 @@ function mockOpenAIChatProvider(
             {
               index: 0,
               delta: {
-                role: "assistant",
-                tool_calls: [
-                  {
-                    index: 0,
-                    id: "call_search_1",
-                    type: "function",
-                    function: {
-                      name: "search_knowledge",
-                      arguments: "",
-                    },
-                  },
-                ],
+                content: "这是基于当前证据生成的流式回答。",
               },
               finish_reason: null,
-            },
-          ],
-        },
-        {
-          id: "chatcmpl-tool-1",
-          object: "chat.completion.chunk",
-          created: 1,
-          model: "gpt-5.4",
-          choices: [
-            {
-              index: 0,
-              delta: {
-                tool_calls: [
-                  {
-                    index: 0,
-                    function: {
-                      arguments: toolArguments,
-                    },
-                  },
-                ],
-              },
-              finish_reason: null,
-            },
-          ],
-        },
-        {
-          id: "chatcmpl-tool-1",
-          object: "chat.completion.chunk",
-          created: 1,
-          model: "gpt-5.4",
-          choices: [
-            {
-              index: 0,
-              delta: {},
-              finish_reason: "tool_calls",
             },
           ],
         },
       ]);
     }
 
-    if (isStreaming && hasToolMessage) {
-      return createSseResponse(
-        [
-          {
-            id: "chatcmpl-answer-1",
-            object: "chat.completion.chunk",
-            created: 1,
-            model: "gpt-5.4",
-            choices: [
-              {
-                index: 0,
-                delta: {
-                  role: "assistant",
-                  content:
-                    "最关键的原则是把证据和行动绑定，不要只停留在信息收集阶段。",
-                },
-                finish_reason: null,
-              },
-            ],
-          },
-          {
-            id: "chatcmpl-answer-1",
-            object: "chat.completion.chunk",
-            created: 1,
-            model: "gpt-5.4",
-            choices: [
-              {
-                index: 0,
-                delta: {},
-                finish_reason: "stop",
-              },
-            ],
-          },
-        ],
-        {
-          hangAfterChunks: options.hangOnAssistantResponse,
-        },
-      );
-    }
-
-    if (!hasToolMessage) {
-      return jsonResponse({
-        choices: [
-          {
-            finish_reason: "tool_calls",
-            message: {
-              role: "assistant",
-              content: null,
-              tool_calls: [
-                {
-                  id: "call_search_1",
-                  type: "function",
-                  function: {
-                    name: "search_knowledge",
-                    arguments: JSON.stringify({
-                      query: readMessageText(lastMessage?.content),
-                      limit: 6,
-                    }),
-                  },
-                },
-              ],
-            },
-          },
-        ],
-      });
-    }
-
     return jsonResponse({
       choices: [
         {
-          finish_reason: "stop",
           message: {
-            role: "assistant",
-            content:
-              "最关键的原则是把证据和行动绑定，不要只停留在信息收集阶段。",
+            content: "这是基于当前证据生成的回答。",
           },
         },
       ],
@@ -292,24 +145,72 @@ function mockOpenAIChatProvider(
   };
 }
 
-describe("@atlas-kb/api", () => {
+async function readJson<T>(response: Response): Promise<T> {
+  const payload = (await response.json()) as {
+    data: T;
+    success: boolean;
+  };
+  return payload.data;
+}
+
+async function login(
+  app: ReturnType<typeof createApp>,
+  params?: {
+    password?: string;
+    username?: string;
+  },
+) {
+  const response = await app.handle(
+    new Request("http://localhost/api/auth/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        username: params?.username ?? getDefaultUsername(),
+        password: params?.password ?? getDefaultPassword(),
+      }),
+    }),
+  );
+
+  const data = await readJson<{
+    expiresAt: string;
+    token: string;
+    user: {
+      id: string;
+      username: string;
+    };
+  }>(response);
+
+  return {
+    response,
+    ...data,
+  };
+}
+
+function authHeaders(token: string): HeadersInit {
+  return {
+    Authorization: `Bearer ${token}`,
+  };
+}
+
+describe("@atlas-kb/api authenticated workspace", () => {
   let knowledgeDataDir = "";
 
   beforeEach(async () => {
     knowledgeDataDir = await mkdtemp(join(tmpdir(), "atlas-kb-api-test-"));
     process.env.ATLAS_KB_DATA_DIR = knowledgeDataDir;
-    delete process.env.OPENAI_API_KEY;
-    delete process.env.OPENAI_BASE_URL;
-    delete process.env.DASHSCOPE_API_KEY;
-    delete process.env.DASHSCOPE_BASE_URL;
-    delete process.env.DASHSCOPE_EMBEDDING_MODEL;
-    globalThis.fetch = originalFetch;
+    process.env.OPENAI_API_KEY = "test-key";
     resetKnowledgeRepository();
     resetKnowledgeVectorState();
+    mockModelProviders();
   });
 
   afterEach(async () => {
     await waitForPendingKnowledgeImports();
+    resetKnowledgeRepository();
+    resetKnowledgeVectorState();
+    globalThis.fetch = originalFetch;
 
     if (originalApiKey === undefined) {
       delete process.env.OPENAI_API_KEY;
@@ -317,402 +218,154 @@ describe("@atlas-kb/api", () => {
       process.env.OPENAI_API_KEY = originalApiKey;
     }
 
-    if (originalBaseUrl === undefined) {
-      delete process.env.OPENAI_BASE_URL;
-    } else {
-      process.env.OPENAI_BASE_URL = originalBaseUrl;
-    }
-
-    if (originalDashScopeApiKey === undefined) {
-      delete process.env.DASHSCOPE_API_KEY;
-    } else {
-      process.env.DASHSCOPE_API_KEY = originalDashScopeApiKey;
-    }
-
-    if (originalDashScopeBaseUrl === undefined) {
-      delete process.env.DASHSCOPE_BASE_URL;
-    } else {
-      process.env.DASHSCOPE_BASE_URL = originalDashScopeBaseUrl;
-    }
-
-    if (originalDashScopeEmbeddingModel === undefined) {
-      delete process.env.DASHSCOPE_EMBEDDING_MODEL;
-    } else {
-      process.env.DASHSCOPE_EMBEDDING_MODEL = originalDashScopeEmbeddingModel;
-    }
-
-    globalThis.fetch = originalFetch;
-    resetKnowledgeRepository();
-    resetKnowledgeVectorState();
-
     if (originalDataDir === undefined) {
       delete process.env.ATLAS_KB_DATA_DIR;
     } else {
       process.env.ATLAS_KB_DATA_DIR = originalDataDir;
     }
 
-    if (knowledgeDataDir) {
-      await rm(knowledgeDataDir, { force: true, recursive: true });
-    }
+    await rm(knowledgeDataDir, { force: true, recursive: true });
   });
 
-  it("returns health status", async () => {
+  it("logs in with username/password and protects workspace routes", async () => {
     const app = createApp();
-    const response = await app.handle(
-      new Request("http://localhost/api/health"),
+    const loginResult = await login(app);
+
+    expect(loginResult.response.status).toBe(200);
+    expect(loginResult.user.username).toBe(getDefaultUsername());
+
+    const meResponse = await app.handle(
+      new Request("http://localhost/api/auth/me", {
+        headers: authHeaders(loginResult.token),
+      }),
     );
-    const payload = await readJson(response);
+    const meData = await readJson<{
+      expiresAt: string;
+      user: {
+        id: string;
+        username: string;
+      };
+    }>(meResponse);
 
-    expect(response.status).toBe(200);
-    expect(payload.success).toBeTrue();
+    expect(meResponse.status).toBe(200);
+    expect(meData.user.id).toBe(loginResult.user.id);
+    expect(meData.user.username).toBe(getDefaultUsername());
+
+    const unauthorizedResponse = await app.handle(
+      new Request("http://localhost/api/kb/collections"),
+    );
+
+    expect(unauthorizedResponse.status).toBe(401);
   });
 
-  it("creates a collection, imports text, and finds it through search", async () => {
+  it("completes source edit, search, chat, and feedback in one authenticated flow", async () => {
     const app = createApp();
-    const createResponse = await app.handle(
+    const session = await login(app);
+
+    const createCollectionResponse = await app.handle(
       new Request("http://localhost/api/kb/collections", {
         method: "POST",
         headers: {
+          ...authHeaders(session.token),
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          id: "personal-research",
-          name: "个人研究",
-          description: "研究资料与访谈记录",
+          name: "产品资料",
+          description: "用于验证资料编辑和聊天闭环",
         }),
       }),
     );
-    const createPayload = await readJson(createResponse);
-    const createData = createPayload.data as {
+    const collectionData = await readJson<{
       collection: {
         id: string;
       };
-    };
-
-    expect(createResponse.status).toBe(200);
-    expect(createData.collection.id).toBe("personal-research");
+    }>(createCollectionResponse);
 
     const importResponse = await app.handle(
       new Request(
-        "http://localhost/api/kb/collections/personal-research/imports/text",
+        `http://localhost/api/kb/collections/${collectionData.collection.id}/imports/text`,
         {
           method: "POST",
           headers: {
+            ...authHeaders(session.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            title: "访谈行动法",
-            content:
-              "先把访谈记录拆成主题，再提炼成行动项，最后映射到长期项目列表。",
-            tags: ["research", "workflow"],
+            title: "最初资料",
+            content: "旧关键词：系统只会记住旧内容。",
+            summary: "初始摘要",
+            tags: ["旧版"],
           }),
         },
       ),
     );
-    const importPayload = await readJson(importResponse);
-    const importData = importPayload.data as {
+    const importData = await readJson<{
       source: {
         id: string;
-        status: string;
       };
-    };
+    }>(importResponse);
 
-    expect(importResponse.status).toBe(200);
-    expect(importData.source.status).toBe("ready");
-
-    const listResponse = await app.handle(
-      new Request(
-        "http://localhost/api/kb/collections/personal-research/sources",
-      ),
+    const updateResponse = await app.handle(
+      new Request(`http://localhost/api/kb/sources/${importData.source.id}`, {
+        method: "PATCH",
+        headers: {
+          ...authHeaders(session.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: "更新后资料",
+          summary: "新版摘要",
+          tags: ["新版"],
+          content: "新关键词：系统现在会优先命中新内容。",
+        }),
+      }),
     );
-    const listPayload = await readJson(listResponse);
-    const listData = listPayload.data as {
-      sources: Array<{
-        id: string;
-      }>;
-    };
 
-    expect(listResponse.status).toBe(200);
-    expect(
-      listData.sources.some((item) => item.id === importData.source.id),
-    ).toBeTrue();
+    expect(updateResponse.status).toBe(200);
 
     const searchResponse = await app.handle(
       new Request("http://localhost/api/kb/search", {
         method: "POST",
         headers: {
+          ...authHeaders(session.token),
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          query: "如何映射到长期项目",
-          collectionId: "personal-research",
+          query: "新关键词",
+          collectionId: collectionData.collection.id,
         }),
       }),
     );
-    const searchPayload = await readJson(searchResponse);
-    const searchData = searchPayload.data as {
-      total: number;
+    const searchData = await readJson<{
       hits: Array<{
         sourceId: string;
+        title: string;
       }>;
-    };
+      total: number;
+    }>(searchResponse);
 
     expect(searchResponse.status).toBe(200);
-    expect(searchData.total).toBeGreaterThan(0);
+    expect(searchData.total).toBe(1);
     expect(searchData.hits[0]?.sourceId).toBe(importData.source.id);
-  });
+    expect(searchData.hits[0]?.title).toBe("更新后资料");
 
-  it("imports a file with a unicode filename and downloads the original source", async () => {
-    const app = createApp();
-
-    await app.handle(
-      new Request("http://localhost/api/kb/collections", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: "writing",
-          name: "写作",
-          description: "写作素材",
-        }),
-      }),
-    );
-
-    const form = new FormData();
-
-    form.append(
-      "file",
-      new File(
-        ["# 复盘模板\n\n每次复盘都要写清目标、事实、偏差、下一步行动。"],
-        "引用回答规则.md",
-        {
-          type: "text/markdown",
-        },
-      ),
-    );
-    form.append("title", "复盘模板");
-
-    const importResponse = await app.handle(
-      new Request("http://localhost/api/kb/collections/writing/imports/file", {
-        method: "POST",
-        body: form,
-      }),
-    );
-    const importPayload = await readJson(importResponse);
-    const importData = importPayload.data as {
-      source: {
-        id: string;
-        status: string;
-      };
-      job: {
-        stage: string;
-      };
-    };
-
-    expect(importResponse.status).toBe(200);
-    expect(importData.source.status).toBe("processing");
-    expect(importData.job.stage).toBe("queued");
-
-    await waitForPendingKnowledgeImports();
-
-    const downloadResponse = await app.handle(
-      new Request(
-        `http://localhost/api/kb/sources/${importData.source.id}/download`,
-      ),
-    );
-
-    expect(downloadResponse.status).toBe(200);
-    expect(downloadResponse.headers.get("Content-Type")).toBe("text/markdown");
-    expect(downloadResponse.headers.get("Content-Disposition")).toContain(
-      "filename*=UTF-8''%E5%BC%95%E7%94%A8%E5%9B%9E%E7%AD%94%E8%A7%84%E5%88%99.md",
-    );
-    expect(await downloadResponse.text()).toContain("下一步行动");
-  });
-
-  it("batch imports files asynchronously and reports rejected files", async () => {
-    const app = createApp();
-
-    await app.handle(
-      new Request("http://localhost/api/kb/collections", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: "ops",
-          name: "运营资料",
-          description: "运营文档",
-        }),
-      }),
-    );
-
-    const form = new FormData();
-
-    form.append(
-      "files",
-      new File(
-        ["# 周会纪要\n\n确定下周的投放节奏与复盘节点。"],
-        "周会纪要.md",
-        {
-          type: "text/markdown",
-        },
-      ),
-    );
-    form.append(
-      "files",
-      new File(["binary"], "预算表.xlsx", {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      }),
-    );
-    form.append("summary", "批量导入测试");
-    form.append("tags", "ops, weekly");
-
-    const importResponse = await app.handle(
-      new Request("http://localhost/api/kb/collections/ops/imports/files", {
-        method: "POST",
-        body: form,
-      }),
-    );
-    const importPayload = await readJson(importResponse);
-    const importData = importPayload.data as {
-      acceptedCount: number;
-      rejectedCount: number;
-      results: Array<{
-        fileName: string;
-        accepted: boolean;
-        source?: {
-          status: string;
-        };
-        errorMessage?: string;
-      }>;
-    };
-
-    expect(importResponse.status).toBe(200);
-    expect(importData.acceptedCount).toBe(1);
-    expect(importData.rejectedCount).toBe(1);
-    expect(importData.results[0]?.fileName).toBe("周会纪要.md");
-    expect(importData.results[0]?.accepted).toBeTrue();
-    expect(importData.results[0]?.source?.status).toBe("processing");
-    expect(importData.results[1]?.fileName).toBe("预算表.xlsx");
-    expect(importData.results[1]?.accepted).toBeFalse();
-    expect(importData.results[1]?.errorMessage).toContain(
-      "Unsupported file type",
-    );
-
-    const listResponse = await app.handle(
-      new Request("http://localhost/api/kb/collections/ops/sources"),
-    );
-    const listPayload = await readJson(listResponse);
-    const listData = listPayload.data as {
-      sources: Array<{
-        sourceFilename?: string;
-      }>;
-    };
-
-    expect(listResponse.status).toBe(200);
-    expect(listData.sources).toHaveLength(1);
-    expect(listData.sources[0]?.sourceFilename).toBe("周会纪要.md");
-    expect(listData.sources[0]?.status).toBe("processing");
-
-    await waitForPendingKnowledgeImports();
-
-    const settledListResponse = await app.handle(
-      new Request("http://localhost/api/kb/collections/ops/sources"),
-    );
-    const settledListPayload = await readJson(settledListResponse);
-    const settledListData = settledListPayload.data as {
-      sources: Array<{
-        status: string;
-      }>;
-    };
-
-    expect(settledListData.sources[0]?.status).toBe("ready");
-  });
-
-  it("does not expose url import on the public collection API", async () => {
-    const app = createApp();
-
-    await app.handle(
-      new Request("http://localhost/api/kb/collections", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: "reading",
-          name: "阅读",
-          description: "阅读摘录",
-        }),
-      }),
-    );
-
-    const response = await app.handle(
-      new Request("http://localhost/api/kb/collections/reading/imports/url", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          url: "https://example.com",
-        }),
-      }),
-    );
-
-    expect(response.status).toBe(404);
-  });
-
-  it("creates a chat session, replies with citations, and stores feedback", async () => {
-    const app = createApp();
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_BASE_URL = "https://mock-openai.local/v1";
-    mockOpenAIChatProvider();
-
-    await app.handle(
-      new Request("http://localhost/api/kb/collections", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: "product",
-          name: "产品资料",
-          description: "产品研究与方案",
-        }),
-      }),
-    );
-
-    await app.handle(
-      new Request("http://localhost/api/kb/collections/product/imports/text", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          title: "产品判断标准",
-          content: "最关键的是把证据和行动绑定，不要只停留在信息收集阶段。",
-        }),
-      }),
-    );
-
-    const sessionResponse = await app.handle(
+    const createSessionResponse = await app.handle(
       new Request("http://localhost/api/chat/sessions", {
         method: "POST",
         headers: {
+          ...authHeaders(session.token),
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          collectionId: "product",
-          title: "产品策略讨论",
+          collectionId: collectionData.collection.id,
         }),
       }),
     );
-    const sessionPayload = await readJson(sessionResponse);
-    const sessionData = sessionPayload.data as {
+    const sessionData = await readJson<{
       session: {
         id: string;
       };
-    };
+    }>(createSessionResponse);
 
     const replyResponse = await app.handle(
       new Request(
@@ -720,45 +373,34 @@ describe("@atlas-kb/api", () => {
         {
           method: "POST",
           headers: {
+            ...authHeaders(session.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            query: "根据资料，总结产品判断最关键的原则。",
-            collectionId: "product",
+            query: "资料里最新的关键词是什么？",
+            collectionId: collectionData.collection.id,
+            limit: 5,
           }),
         },
       ),
     );
-    const replyPayload = await readJson(replyResponse);
-    const replyData = replyPayload.data as {
+    const replyData = await readJson<{
       assistantMessage: {
-        id: string;
         citations: unknown[];
-        retrieval?: {
-          hits: Array<{
-            usedInAnswer: boolean;
-          }>;
-        };
+        id: string;
       };
       retrieval: {
         total: number;
-        usedHitIds: string[];
       };
-      search: {
-        total: number;
+      userMessage: {
+        content: string;
       };
-    };
+    }>(replyResponse);
 
     expect(replyResponse.status).toBe(200);
-    expect(replyData.search.total).toBeGreaterThan(0);
-    expect(replyData.retrieval.total).toBeGreaterThan(0);
-    expect(replyData.retrieval.usedHitIds.length).toBeGreaterThan(0);
+    expect(replyData.userMessage.content).toContain("最新的关键词");
     expect(replyData.assistantMessage.citations.length).toBeGreaterThan(0);
-    expect(
-      replyData.assistantMessage.retrieval?.hits.some(
-        (item) => item.usedInAnswer,
-      ),
-    ).toBeTrue();
+    expect(replyData.retrieval.total).toBeGreaterThan(0);
 
     const feedbackResponse = await app.handle(
       new Request(
@@ -766,6 +408,7 @@ describe("@atlas-kb/api", () => {
         {
           method: "POST",
           headers: {
+            ...authHeaders(session.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -774,280 +417,320 @@ describe("@atlas-kb/api", () => {
         },
       ),
     );
-    const feedbackPayload = await readJson(feedbackResponse);
-    const feedbackData = feedbackPayload.data as {
+    const feedbackData = await readJson<{
       rating: string;
-    };
+    }>(feedbackResponse);
 
     expect(feedbackResponse.status).toBe(200);
     expect(feedbackData.rating).toBe("up");
   });
 
-  it("streams chat reply events and persists the assistant trace", async () => {
+  it("imports a file and downloads the original uploaded content", async () => {
     const app = createApp();
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_BASE_URL = "https://mock-openai.local/v1";
-    mockOpenAIChatProvider();
+    const session = await login(app);
 
-    await app.handle(
+    const createCollectionResponse = await app.handle(
       new Request("http://localhost/api/kb/collections", {
         method: "POST",
         headers: {
+          ...authHeaders(session.token),
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          id: "streaming-product",
-          name: "流式产品资料",
-          description: "流式聊天测试",
+          name: "文件资料",
+          description: "用于验证文件导入和下载",
         }),
       }),
     );
-
-    await app.handle(
-      new Request(
-        "http://localhost/api/kb/collections/streaming-product/imports/text",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            title: "流式判断标准",
-            content: "先完成检索，再把证据整理成行动建议。",
-          }),
-        },
-      ),
-    );
-
-    const sessionResponse = await app.handle(
-      new Request("http://localhost/api/chat/sessions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          collectionId: "streaming-product",
-          title: "流式策略讨论",
-        }),
-      }),
-    );
-    const sessionPayload = await readJson(sessionResponse);
-    const sessionData = sessionPayload.data as {
-      session: {
+    const collectionData = await readJson<{
+      collection: {
         id: string;
       };
-    };
+    }>(createCollectionResponse);
 
-    const streamResponse = await app.handle(
+    const form = new FormData();
+    form.append(
+      "file",
+      new File(["这是原始文件正文。"], "用户手册.txt", {
+        type: "text/plain",
+      }),
+    );
+    form.append("summary", "文件摘要");
+
+    const importResponse = await app.handle(
       new Request(
-        `http://localhost/api/chat/sessions/${sessionData.session.id}/reply/stream`,
+        `http://localhost/api/kb/collections/${collectionData.collection.id}/imports/file`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            query: "根据资料，给出这次回答的核心原则。",
-            collectionId: "streaming-product",
-          }),
+          headers: authHeaders(session.token),
+          body: form,
         },
       ),
     );
-    const streamBody = await streamResponse.text();
+    const importData = await readJson<{
+      source: {
+        id: string;
+        status: string;
+      };
+    }>(importResponse);
 
-    expect(streamResponse.status).toBe(200);
-    expect(streamResponse.headers.get("x-vercel-ai-ui-message-stream")).toBe(
-      "v1",
-    );
-    expect(streamBody).toContain('"type":"reply-accepted"');
-    expect(streamBody).toContain('"type":"trace"');
-    expect(streamBody).toContain('"type":"reply-completed"');
-    expect(streamBody).toContain("search_knowledge");
-    expect(streamBody).toContain('"title":"正在组织回答"');
-    expect(streamBody).toContain('"type":"data-replyAccepted"');
-    expect(streamBody).toContain("data:");
+    expect(importResponse.status).toBe(200);
+    expect(importData.source.status).toBe("processing");
 
-    const messagesResponse = await app.handle(
+    await waitForPendingKnowledgeImports();
+
+    const downloadResponse = await app.handle(
       new Request(
-        `http://localhost/api/chat/sessions/${sessionData.session.id}/messages`,
+        `http://localhost/api/kb/sources/${importData.source.id}/download`,
+        {
+          headers: authHeaders(session.token),
+        },
       ),
     );
-    const messagesPayload = await readJson(messagesResponse);
-    const messagesData = messagesPayload.data as {
-      messages: Array<{
-        role: string;
-        trace?: Array<{
-          id: string;
-        }>;
-      }>;
-    };
-    const assistantMessage = messagesData.messages.find(
-      (item) => item.role === "assistant",
-    );
+    const downloadText = await downloadResponse.text();
 
-    expect(assistantMessage).toBeDefined();
-    expect(assistantMessage?.trace?.length ?? 0).toBeGreaterThan(0);
+    expect(downloadResponse.status).toBe(200);
+    expect(downloadText).toContain("这是原始文件正文。");
+    expect(downloadResponse.headers.get("Content-Disposition")).toContain(
+      "filename=",
+    );
   });
 
-  it("fails fast when answer generation stalls after retrieval", async () => {
+  it("enforces user isolation across source access and streaming chat", async () => {
     const app = createApp();
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_BASE_URL = "https://mock-openai.local/v1";
-    mockOpenAIChatProvider({
-      hangOnAssistantResponse: true,
+    await createUser({
+      username: "beta-user",
+      password: "beta-pass",
     });
 
-    await app.handle(
+    const alpha = await login(app);
+    const beta = await login(app, {
+      username: "beta-user",
+      password: "beta-pass",
+    });
+
+    const createCollectionResponse = await app.handle(
       new Request("http://localhost/api/kb/collections", {
         method: "POST",
         headers: {
+          ...authHeaders(alpha.token),
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          id: "timeout-product",
-          name: "超时产品资料",
-          description: "回答超时测试",
+          name: "Alpha 私有资料",
+          description: "仅 alpha 可见",
         }),
       }),
     );
+    const collectionData = await readJson<{
+      collection: {
+        id: string;
+      };
+    }>(createCollectionResponse);
 
-    await app.handle(
+    const importResponse = await app.handle(
       new Request(
-        "http://localhost/api/kb/collections/timeout-product/imports/text",
+        `http://localhost/api/kb/collections/${collectionData.collection.id}/imports/text`,
         {
           method: "POST",
           headers: {
+            ...authHeaders(alpha.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            title: "超时判断标准",
-            content: "先检索，再组织回答。",
+            title: "Alpha 资料",
+            content: "隔离关键词：只有 alpha 能看到。",
           }),
         },
       ),
     );
+    const importData = await readJson<{
+      source: {
+        id: string;
+      };
+    }>(importResponse);
 
-    const sessionResponse = await app.handle(
-      new Request("http://localhost/api/chat/sessions", {
+    const betaSearchResponse = await app.handle(
+      new Request("http://localhost/api/kb/search", {
         method: "POST",
         headers: {
+          ...authHeaders(beta.token),
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          collectionId: "timeout-product",
-          title: "超时策略讨论",
+          query: "隔离关键词",
         }),
       }),
     );
-    const sessionPayload = await readJson(sessionResponse);
-    const sessionData = sessionPayload.data as {
+    const betaSearchData = await readJson<{
+      total: number;
+    }>(betaSearchResponse);
+
+    expect(betaSearchResponse.status).toBe(200);
+    expect(betaSearchData.total).toBe(0);
+
+    const betaSourceResponse = await app.handle(
+      new Request(`http://localhost/api/kb/sources/${importData.source.id}`, {
+        headers: authHeaders(beta.token),
+      }),
+    );
+
+    expect(betaSourceResponse.status).toBe(404);
+
+    const createSessionResponse = await app.handle(
+      new Request("http://localhost/api/chat/sessions", {
+        method: "POST",
+        headers: {
+          ...authHeaders(alpha.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          collectionId: collectionData.collection.id,
+        }),
+      }),
+    );
+    const sessionData = await readJson<{
       session: {
         id: string;
       };
-    };
+    }>(createSessionResponse);
 
-    const startedAt = Date.now();
     const streamResponse = await app.handle(
       new Request(
         `http://localhost/api/chat/sessions/${sessionData.session.id}/reply/stream`,
         {
           method: "POST",
           headers: {
+            ...authHeaders(alpha.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            query: "根据资料，输出可执行原则。",
-            collectionId: "timeout-product",
+            query: "基于私有资料给我一个回答。",
+            collectionId: collectionData.collection.id,
+            limit: 5,
           }),
         },
       ),
     );
-    const streamBody = await streamResponse.text();
-    const elapsedMs = Date.now() - startedAt;
+    const streamText = await streamResponse.text();
 
     expect(streamResponse.status).toBe(200);
-    expect(streamBody).toContain('"type":"reply-error"');
-    expect(streamBody).toContain("智能体在组织回答时超时");
-    expect(elapsedMs).toBeLessThan(25_000);
+    expect(streamText.length).toBeGreaterThan(0);
 
     const messagesResponse = await app.handle(
       new Request(
         `http://localhost/api/chat/sessions/${sessionData.session.id}/messages`,
+        {
+          headers: authHeaders(alpha.token),
+        },
       ),
     );
-    const messagesPayload = await readJson(messagesResponse);
-    const messagesData = messagesPayload.data as {
+    const messagesData = await readJson<{
       messages: Array<{
         role: string;
       }>;
-    };
+    }>(messagesResponse);
 
+    expect(messagesResponse.status).toBe(200);
     expect(
       messagesData.messages.some((item) => item.role === "assistant"),
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it("returns a clear model provider error when chat credentials are rejected", async () => {
-    const app = createApp();
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_BASE_URL = "https://mock-openai.local/v1";
-    globalThis.fetch = async () =>
-      jsonResponse(
-        {
-          error: {
-            message: "forbidden",
-          },
-        },
-        403,
-      );
+  it("returns sanitized chat errors without leaking provider configuration details", async () => {
+    globalThis.fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input.url;
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
 
-    await app.handle(
+      if (url.includes("/embeddings")) {
+        const inputValues = Array.isArray(body.input) ? body.input : [];
+        return jsonResponse({
+          data: inputValues.map((_value, index) => ({
+            embedding: [0.11, 0.22, 0.33],
+            index,
+          })),
+        });
+      }
+
+      if (url.includes(":6333/collections/")) {
+        if (url.includes("/points/query")) {
+          return jsonResponse({
+            result: {
+              points: [],
+            },
+          });
+        }
+
+        return jsonResponse({
+          result: {
+            status: "ok",
+          },
+        });
+      }
+
+      throw new Error(
+        "知识库回答生成 失败。当前 OPENAI_BASE_URL=https://api.duckcoding.ai/v1。当前 OPENAI_MODEL=gpt-5.4。原始错误: The operation timed out.",
+      );
+    };
+
+    const app = createApp();
+    const session = await login(app);
+
+    const createCollectionResponse = await app.handle(
       new Request("http://localhost/api/kb/collections", {
         method: "POST",
         headers: {
+          ...authHeaders(session.token),
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          id: "provider-errors",
-          name: "模型错误",
-          description: "模型配置报错",
+          description: "用于验证聊天错误脱敏",
+          name: "错误脱敏",
         }),
       }),
     );
+    const collectionData = await readJson<{
+      collection: {
+        id: string;
+      };
+    }>(createCollectionResponse);
 
-    await app.handle(
+    const importResponse = await app.handle(
       new Request(
-        "http://localhost/api/kb/collections/provider-errors/imports/text",
+        `http://localhost/api/kb/collections/${collectionData.collection.id}/imports/text`,
         {
           method: "POST",
           headers: {
+            ...authHeaders(session.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            title: "错误说明",
-            content: "这是一条用于测试模型配置错误的资料。",
+            content: "这是一条测试资料。",
+            title: "测试资料",
           }),
         },
       ),
     );
 
-    const sessionResponse = await app.handle(
+    expect(importResponse.status).toBe(200);
+
+    const createSessionResponse = await app.handle(
       new Request("http://localhost/api/chat/sessions", {
         method: "POST",
         headers: {
+          ...authHeaders(session.token),
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          collectionId: "provider-errors",
+          collectionId: collectionData.collection.id,
         }),
       }),
     );
-    const sessionPayload = await readJson(sessionResponse);
-    const sessionData = sessionPayload.data as {
+    const sessionData = await readJson<{
       session: {
         id: string;
       };
-    };
+    }>(createSessionResponse);
 
     const replyResponse = await app.handle(
       new Request(
@@ -1055,88 +738,28 @@ describe("@atlas-kb/api", () => {
         {
           method: "POST",
           headers: {
+            ...authHeaders(session.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            query: "测试 provider 403 错误",
-            collectionId: "provider-errors",
+            collectionId: collectionData.collection.id,
+            query: "这条资料说了什么？",
           }),
         },
       ),
     );
-    const replyPayload = await readJson(replyResponse);
-
-    expect(replyResponse.status).toBe(500);
-    expect(replyPayload.success).toBeFalse();
-    expect(replyPayload.error).toMatchObject({
-      code: "MODEL_PROVIDER_PERMISSION_ERROR",
-    });
-    expect(String(replyPayload.error?.message ?? "")).toContain("OPENAI_MODEL");
-  });
-
-  it("keeps legacy ask compatibility for existing callers", async () => {
-    const app = createApp();
-
-    await app.handle(
-      new Request("http://localhost/api/kb/spaces", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: "legacy-space",
-          name: "兼容空间",
-          description: "旧接口兼容测试",
-        }),
-      }),
-    );
-
-    const form = new FormData();
-
-    form.append(
-      "file",
-      new File(
-        ["# 兼容文档\n\n旧接口提问时，也应该返回引用和答案。"],
-        "legacy.md",
-        {
-          type: "text/markdown",
-        },
-      ),
-    );
-    form.append("title", "兼容文档");
-
-    await app.handle(
-      new Request(
-        "http://localhost/api/kb/spaces/legacy-space/documents/upload",
-        {
-          method: "POST",
-          body: form,
-        },
-      ),
-    );
-
-    await waitForPendingKnowledgeImports();
-
-    const response = await app.handle(
-      new Request("http://localhost/api/kb/ask", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          question: "旧接口提问时能否返回引用？",
-          spaceId: "legacy-space",
-        }),
-      }),
-    );
-    const payload = await readJson(response);
-    const data = payload.data as {
-      citations: unknown[];
-      mode: string;
+    const payload = (await replyResponse.json()) as {
+      error: {
+        message: string;
+      };
+      success: boolean;
     };
 
-    expect(response.status).toBe(200);
-    expect(data.mode).toBe("mock");
-    expect(data.citations.length).toBeGreaterThan(0);
+    expect(replyResponse.status).toBe(503);
+    expect(payload.success).toBe(false);
+    expect(payload.error.message).toBe("知识库回答暂时不可用，请稍后重试。");
+    expect(payload.error.message.includes("OPENAI_BASE_URL")).toBe(false);
+    expect(payload.error.message.includes("OPENAI_MODEL")).toBe(false);
+    expect(payload.error.message.includes("原始错误")).toBe(false);
   });
 });

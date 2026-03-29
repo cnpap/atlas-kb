@@ -7,6 +7,8 @@ import {
   createChatReply,
   createChatSession,
   createKnowledgeCollection,
+  createUser,
+  ensureDefaultUser,
   importKnowledgeText,
   resetKnowledgeRepository,
   resetKnowledgeVectorState,
@@ -14,8 +16,11 @@ import {
   searchKnowledge,
   waitForPendingKnowledgeImports,
 } from "./index";
+import { streamModelAnswerFromCitations } from "./search";
 
 const originalFetch = globalThis.fetch;
+const originalApiKey = process.env.OPENAI_API_KEY;
+const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -51,13 +56,6 @@ function mockOpenAIChatProvider() {
     const messages = Array.isArray(body.messages) ? body.messages : [];
     const systemPrompt = readMessageText(messages[0]?.content);
     const lastMessage = messages[messages.length - 1];
-    const hasToolMessage = messages.some(
-      (message) =>
-        message &&
-        typeof message === "object" &&
-        ((message as { role?: string }).role === "tool" ||
-          (message as { role?: string }).role === "function"),
-    );
 
     if (url.includes("/embeddings")) {
       const inputValues = Array.isArray(body.input) ? body.input : [];
@@ -100,54 +98,13 @@ function mockOpenAIChatProvider() {
       });
     }
 
-    if (systemPrompt.includes("You are Atlas KB.")) {
-      return jsonResponse({
-        choices: [
-          {
-            finish_reason: "stop",
-            message: {
-              role: "assistant",
-              content: "最该解决的问题是把证据和行动绑定，而不是继续堆积资料。",
-            },
-          },
-        ],
-      });
-    }
-
-    if (!hasToolMessage) {
-      return jsonResponse({
-        choices: [
-          {
-            finish_reason: "tool_calls",
-            message: {
-              role: "assistant",
-              content: null,
-              tool_calls: [
-                {
-                  id: "call_search_1",
-                  type: "function",
-                  function: {
-                    name: "search_knowledge",
-                    arguments: JSON.stringify({
-                      query: readMessageText(lastMessage?.content),
-                      limit: 5,
-                    }),
-                  },
-                },
-              ],
-            },
-          },
-        ],
-      });
-    }
-
     return jsonResponse({
       choices: [
         {
           finish_reason: "stop",
           message: {
             role: "assistant",
-            content: "最该解决的问题是把证据和行动绑定，而不是继续堆积资料。",
+            content: "最关键的新结论是系统只会返回当前用户自己的证据。",
           },
         },
       ],
@@ -155,26 +112,47 @@ function mockOpenAIChatProvider() {
   };
 }
 
+function createDelayedSseResponse(
+  chunks: Array<{
+    body: unknown;
+    delayMs: number;
+  }>,
+): Response {
+  const encoder = new TextEncoder();
+
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      async start(controller) {
+        for (const chunk of chunks) {
+          await Bun.sleep(chunk.delayMs);
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(chunk.body)}\n\n`),
+          );
+        }
+
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      },
+    }),
+    {
+      headers: {
+        "Content-Type": "text/event-stream",
+      },
+    },
+  );
+}
+
 describe("@atlas-kb/mastra knowledge flow", () => {
   let knowledgeDataDir = "";
-  const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
-  const originalApiKey = process.env.OPENAI_API_KEY;
-  const originalBaseUrl = process.env.OPENAI_BASE_URL;
-  const originalDashScopeApiKey = process.env.DASHSCOPE_API_KEY;
-  const originalDashScopeBaseUrl = process.env.DASHSCOPE_BASE_URL;
-  const originalDashScopeEmbeddingModel = process.env.DASHSCOPE_EMBEDDING_MODEL;
 
   beforeEach(async () => {
     knowledgeDataDir = await mkdtemp(join(tmpdir(), "atlas-kb-mastra-test-"));
     process.env.ATLAS_KB_DATA_DIR = knowledgeDataDir;
-    delete process.env.OPENAI_API_KEY;
-    delete process.env.OPENAI_BASE_URL;
-    delete process.env.DASHSCOPE_API_KEY;
-    delete process.env.DASHSCOPE_BASE_URL;
-    delete process.env.DASHSCOPE_EMBEDDING_MODEL;
+    process.env.OPENAI_API_KEY = "test-key";
     globalThis.fetch = originalFetch;
     resetKnowledgeRepository();
     resetKnowledgeVectorState();
+    mockOpenAIChatProvider();
   });
 
   afterEach(async () => {
@@ -194,163 +172,250 @@ describe("@atlas-kb/mastra knowledge flow", () => {
       process.env.OPENAI_API_KEY = originalApiKey;
     }
 
-    if (originalBaseUrl === undefined) {
-      delete process.env.OPENAI_BASE_URL;
-    } else {
-      process.env.OPENAI_BASE_URL = originalBaseUrl;
-    }
-
-    if (originalDashScopeApiKey === undefined) {
-      delete process.env.DASHSCOPE_API_KEY;
-    } else {
-      process.env.DASHSCOPE_API_KEY = originalDashScopeApiKey;
-    }
-
-    if (originalDashScopeBaseUrl === undefined) {
-      delete process.env.DASHSCOPE_BASE_URL;
-    } else {
-      process.env.DASHSCOPE_BASE_URL = originalDashScopeBaseUrl;
-    }
-
-    if (originalDashScopeEmbeddingModel === undefined) {
-      delete process.env.DASHSCOPE_EMBEDDING_MODEL;
-    } else {
-      process.env.DASHSCOPE_EMBEDDING_MODEL = originalDashScopeEmbeddingModel;
-    }
-
-    if (knowledgeDataDir) {
-      await rm(knowledgeDataDir, { force: true, recursive: true });
-    }
-
     globalThis.fetch = originalFetch;
+    await rm(knowledgeDataDir, { force: true, recursive: true });
   });
 
-  it("returns lexical hits from imported personal notes", async () => {
-    const collection = await createKnowledgeCollection({
-      id: "learning-notes",
-      name: "学习笔记",
-      description: "方法论与复盘",
+  it("returns lexical hits only for the current user", async () => {
+    const alpha = await ensureDefaultUser();
+    const beta = await createUser({
+      username: "beta-search",
+      password: "beta-pass",
     });
 
-    const imported = await importKnowledgeText({
-      collectionId: collection.id,
+    const alphaCollection = await createKnowledgeCollection({
+      userId: alpha.id,
       input: {
-        title: "复盘方法",
-        content: "好的复盘从目标开始，再记录事实、偏差、原因和下一步行动。",
+        id: "alpha-search",
+        name: "Alpha Search",
+        description: "alpha private notes",
       },
     });
-    const result = await searchKnowledge({
-      query: "复盘应该怎么开始",
-      collectionId: collection.id,
-    });
-
-    expect(result.total).toBeGreaterThan(0);
-    expect(result.engine).toBe("lexical");
-    expect(result.hits[0]?.sourceId).toBe(imported.source.id);
-    expect(result.hits[0]?.recallPaths).toContain("关键词召回");
-    expect(result.usedHitIds).toHaveLength(0);
-  });
-
-  it("imports text into a custom collection and retrieves it", async () => {
-    const collection = await createKnowledgeCollection({
-      id: "writing-system",
-      name: "写作系统",
-      description: "写作方法论与范例",
-    });
-
-    const imported = await importKnowledgeText({
-      collectionId: collection.id,
+    await importKnowledgeText({
+      userId: alpha.id,
+      collectionId: alphaCollection.id,
       input: {
-        title: "研究整理原则",
-        content:
-          "第一步先按主题拆解材料，第二步提取可执行动作，第三步把洞察映射到长期项目。",
-        tags: ["writing", "research"],
+        title: "Alpha Doc",
+        content: "隔离搜索关键词：只有 alpha 可以检索到。",
       },
     });
 
-    const result = await searchKnowledge({
-      query: "如何把材料映射到长期项目",
-      collectionId: collection.id,
-      limit: 5,
-    });
+    const alphaResult = await searchKnowledge(
+      {
+        query: "隔离搜索关键词",
+      },
+      {
+        userId: alpha.id,
+      },
+    );
+    const betaResult = await searchKnowledge(
+      {
+        query: "隔离搜索关键词",
+      },
+      {
+        userId: beta.id,
+      },
+    );
 
-    expect(imported.source.status).toBe("ready");
-    expect(result.total).toBeGreaterThan(0);
-    expect(result.hits[0]?.sourceId).toBe(imported.source.id);
-    expect(result.hits[0]?.sourceType).toBe("text");
-    expect(result.queryVariants.length).toBeGreaterThan(0);
+    expect(alphaResult.total).toBe(1);
+    expect(alphaResult.hits[0]?.title).toBe("Alpha Doc");
+    expect(betaResult.total).toBe(0);
   });
 
-  it("returns a mock grounded answer without provider credentials", async () => {
+  it("answers grounded questions from the current user's collection", async () => {
+    const user = await ensureDefaultUser();
     const collection = await createKnowledgeCollection({
-      id: "answer-evidence",
-      name: "回答证据",
-      description: "回答规则",
+      userId: user.id,
+      input: {
+        id: "grounded-answer",
+        name: "Grounded Answer",
+        description: "用于验证 grounded answer",
+      },
     });
 
     await importKnowledgeText({
+      userId: user.id,
       collectionId: collection.id,
       input: {
-        title: "引用原则",
-        content: "回答时要明确指出证据来源，并且在证据不足时直接说明不确定。",
+        title: "Grounded Doc",
+        content: "核心结论：检索和回答必须绑定到同一份真实证据。",
       },
     });
 
-    const result = await answerKnowledgeQuestion({
-      question: "回答时如何处理证据不足？",
-      collectionId: collection.id,
-    });
+    const result = await answerKnowledgeQuestion(
+      {
+        question: "这份资料里的核心结论是什么？",
+        collectionId: collection.id,
+      },
+      {
+        userId: user.id,
+      },
+    );
 
-    expect(result.mode).toBe("mock");
     expect(result.citations.length).toBeGreaterThan(0);
-    expect(result.answer).toContain("我找到了");
+    expect(result.answer).toContain("当前用户自己的证据");
   });
 
-  it("creates a chat reply and stores assistant feedback", async () => {
-    process.env.OPENAI_API_KEY = "test-key";
-    process.env.OPENAI_BASE_URL = "https://mock-openai.local/v1";
-    mockOpenAIChatProvider();
-
+  it("creates chat replies and stores assistant feedback within one user scope", async () => {
+    const user = await ensureDefaultUser();
     const collection = await createKnowledgeCollection({
-      id: "product-research",
-      name: "产品研究",
-      description: "用户研究与产品洞察",
+      userId: user.id,
+      input: {
+        id: "chat-scope",
+        name: "Chat Scope",
+        description: "用于验证聊天闭环",
+      },
     });
 
     await importKnowledgeText({
+      userId: user.id,
       collectionId: collection.id,
       input: {
-        title: "用户访谈总结",
-        content:
-          "用户最大的问题不是缺资料，而是不知道哪些证据值得转化为行动项。好的知识系统应该把证据与行动保持绑定。",
-        tags: ["research"],
+        title: "Chat Doc",
+        content: "聊天结论：回答必须引用当前 collection 里的资料。",
       },
     });
 
     const session = await createChatSession({
-      title: "研究洞察",
+      userId: user.id,
       collectionId: collection.id,
     });
     const reply = await createChatReply({
+      userId: user.id,
       sessionId: session.id,
       input: {
-        query: "根据现有资料，总结知识系统最该解决的问题。",
+        query: "基于资料告诉我聊天结论",
         collectionId: collection.id,
       },
     });
+
+    expect(reply.assistantMessage.citations.length).toBeGreaterThan(0);
+    expect(reply.retrieval.total).toBeGreaterThan(0);
+
     const feedback = await saveMessageFeedback({
+      userId: user.id,
       messageId: reply.assistantMessage.id,
       input: {
         rating: "up",
       },
     });
 
-    expect(reply.assistantMessage.citations.length).toBeGreaterThan(0);
-    expect(reply.search.total).toBeGreaterThan(0);
-    expect(reply.retrieval.usedHitIds.length).toBeGreaterThan(0);
-    expect(
-      reply.assistantMessage.retrieval?.hits.some((item) => item.usedInAnswer),
-    ).toBeTrue();
     expect(feedback.rating).toBe("up");
+  });
+
+  it("allows a long-running stream as long as chunks keep arriving before the idle timeout", async () => {
+    const result = await streamModelAnswerFromCitations({
+      citations: [
+        {
+          chunkId: "chunk-1",
+          collectionId: "collection-1",
+          sourceId: "source-1",
+          snippet: "这是第一段证据。",
+          title: "证据一",
+        },
+      ],
+      fetchImpl: async () =>
+        createDelayedSseResponse([
+          {
+            body: {
+              choices: [
+                {
+                  delta: {
+                    content: "第一段",
+                  },
+                  finish_reason: null,
+                  index: 0,
+                },
+              ],
+              created: 1,
+              id: "chunk-1",
+              model: "gpt-5.4",
+              object: "chat.completion.chunk",
+            },
+            delayMs: 5,
+          },
+          {
+            body: {
+              choices: [
+                {
+                  delta: {
+                    content: "第二段",
+                  },
+                  finish_reason: "stop",
+                  index: 0,
+                },
+              ],
+              created: 2,
+              id: "chunk-2",
+              model: "gpt-5.4",
+              object: "chat.completion.chunk",
+            },
+            delayMs: 35,
+          },
+        ]),
+      question: "总结一下证据",
+      responseTimeoutMs: 20,
+      streamIdleTimeoutMs: 60,
+    });
+
+    expect(result.answer).toBe("第一段第二段");
+  });
+
+  it("fails with a generic timeout message when a stream goes idle", async () => {
+    await expect(
+      streamModelAnswerFromCitations({
+        citations: [
+          {
+            chunkId: "chunk-1",
+            collectionId: "collection-1",
+            sourceId: "source-1",
+            snippet: "这是第一段证据。",
+            title: "证据一",
+          },
+        ],
+        fetchImpl: async () =>
+          createDelayedSseResponse([
+            {
+              body: {
+                choices: [
+                  {
+                    delta: {
+                      content: "第一段",
+                    },
+                    finish_reason: null,
+                    index: 0,
+                  },
+                ],
+                created: 1,
+                id: "chunk-1",
+                model: "gpt-5.4",
+                object: "chat.completion.chunk",
+              },
+              delayMs: 5,
+            },
+            {
+              body: {
+                choices: [
+                  {
+                    delta: {
+                      content: "第二段",
+                    },
+                    finish_reason: "stop",
+                    index: 0,
+                  },
+                ],
+                created: 2,
+                id: "chunk-2",
+                model: "gpt-5.4",
+                object: "chat.completion.chunk",
+              },
+              delayMs: 50,
+            },
+          ]),
+        question: "总结一下证据",
+        responseTimeoutMs: 20,
+        streamIdleTimeoutMs: 20,
+      }),
+    ).rejects.toThrow("知识库回答超时，请稍后重试。");
   });
 });

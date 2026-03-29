@@ -1,5 +1,5 @@
-import { Marked, Renderer } from "@/lib/vendor/marked";
-import type { Tokens } from "@/lib/vendor/marked";
+import MarkdownIt from "markdown-it";
+import type { RenderRule } from "markdown-it/lib/renderer.mjs";
 
 function escapeHtml(value: string): string {
   return value
@@ -44,29 +44,46 @@ function sanitizeHref(href: string): string | null {
   return null;
 }
 
-const renderer = new Renderer();
-
-renderer.html = ({ text }: Tokens.HTML | Tokens.Tag) => escapeHtml(text);
-renderer.link = function ({ href, title, tokens }: Tokens.Link): string {
-  const safeHref = sanitizeHref(href);
-  const text = this.parser.parseInline(tokens);
-
-  if (!safeHref) {
-    return text;
-  }
-
-  const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
-
-  return `<a href="${escapeHtml(safeHref)}" target="_blank" rel="noreferrer noopener"${titleAttr}>${text}</a>`;
-};
-renderer.image = ({ text }: Tokens.Image) => escapeHtml(text || "[图片]");
-
-const markdown = new Marked({
+const markdown = new MarkdownIt({
   breaks: true,
-  gfm: true,
-  renderer,
+  html: false,
+  linkify: true,
 });
 
+markdown.validateLink = (url) => sanitizeHref(url) !== null;
+
+const defaultLinkOpen: RenderRule = (tokens, idx, options, _env, self) =>
+  self.renderToken(tokens, idx, options);
+
+markdown.renderer.rules.link_open = (tokens, idx, options, env, self) => {
+  const token = tokens[idx];
+
+  if (!token) {
+    return defaultLinkOpen(tokens, idx, options, env, self);
+  }
+
+  const href = token.attrGet("href");
+  const safeHref = href ? sanitizeHref(href) : null;
+
+  if (!safeHref) {
+    return defaultLinkOpen(tokens, idx, options, env, self);
+  }
+
+  token.attrSet("href", safeHref);
+  token.attrSet("target", "_blank");
+  token.attrSet("rel", "noreferrer noopener");
+  return defaultLinkOpen(tokens, idx, options, env, self);
+};
+
+markdown.renderer.rules.image = (tokens, idx, options, env, self) => {
+  const token = tokens[idx];
+  const alt = token
+    ? self.renderInlineAsText(token.children ?? [], options, env).trim()
+    : "";
+
+  return escapeHtml(alt ? `[图片] ${alt}` : "[图片]");
+};
+
 export function renderMarkdown(content: string): string {
-  return markdown.parse(content) as string;
+  return markdown.render(content);
 }

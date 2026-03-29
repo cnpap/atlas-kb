@@ -121,6 +121,7 @@ export async function runKnowledgeAgentQuestion(params: {
   limit?: number;
   question: string;
   spaceId: string;
+  userId: string;
 }): Promise<{
   answer: string;
   citations: AskKnowledgeCitation[];
@@ -131,7 +132,7 @@ export async function runKnowledgeAgentQuestion(params: {
 }> {
   const limit = params.limit ?? 3;
 
-  await requireKnowledgeSpace(params.spaceId);
+  await requireKnowledgeSpace(params.userId, params.spaceId);
   requireChatModelProvider();
 
   const search = annotateAnswerUsage(
@@ -143,6 +144,7 @@ export async function runKnowledgeAgentQuestion(params: {
           limit,
         },
         {
+          userId: params.userId,
           apiKey: "",
         },
       ),
@@ -178,6 +180,7 @@ export async function streamKnowledgeAgentQuestion(params: {
   limit?: number;
   question: string;
   spaceId: string;
+  userId: string;
   onStreamPart?: (part: StreamPart) => Promise<void> | void;
   onTraceEvent?: (event: ChatTraceEvent) => Promise<void> | void;
 }): Promise<{
@@ -201,7 +204,7 @@ export async function streamKnowledgeAgentQuestion(params: {
   });
 
   try {
-    await requireKnowledgeSpace(params.spaceId);
+    await requireKnowledgeSpace(params.userId, params.spaceId);
     requireChatModelProvider();
 
     const limit = params.limit ?? 3;
@@ -214,6 +217,7 @@ export async function streamKnowledgeAgentQuestion(params: {
             limit,
           },
           {
+            userId: params.userId,
             // Keep the retrieval path short. Skip the model-based query rewrite.
             apiKey: "",
           },
@@ -319,13 +323,6 @@ export async function streamKnowledgeAgentQuestion(params: {
     await trace.upsert({
       id: "status:reply",
       kind: "status",
-      state: "failed",
-      title: "回答生成失败",
-      detail: message,
-    });
-    await trace.upsert({
-      id: "status:error",
-      kind: "error",
       state: "failed",
       title: "回答生成失败",
       detail: message,

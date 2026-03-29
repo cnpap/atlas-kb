@@ -45,10 +45,11 @@ when you intentionally want the web app to call a different API origin directly.
 
 ## Default Login
 
-- Email: `admin@atlas-kb.local`
+- Username: `admin`
 - Password: `atlas-kb-dev`
 
-Override them in `.env` for anything beyond local development.
+Override them in `.env` with `ATLAS_KB_DEFAULT_USERNAME` and
+`ATLAS_KB_DEFAULT_PASSWORD` for anything beyond local development.
 
 ## OpenAI Config
 

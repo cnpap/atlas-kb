@@ -1,4 +1,4 @@
-import { runKnowledgeAgentQuestion } from "../knowledge";
+import { ensureDefaultUser, runKnowledgeAgentQuestion } from "../knowledge";
 import { DEPARTMENT_FIXTURE_SPACE } from "../knowledge/fixtures";
 import { importDepartmentFixtures } from "../knowledge/fixtures/import";
 
@@ -24,6 +24,7 @@ if (!process.env.OPENAI_API_KEY?.trim()) {
 }
 
 const importResult = await importDepartmentFixtures();
+const user = await ensureDefaultUser();
 
 console.log(
   `[atlas-kb/mastra] department fixtures ready in "${importResult.spaceId}" (imported=${importResult.imported.length}, skipped=${importResult.skipped.length})`,
@@ -33,6 +34,7 @@ for (const testCase of TEST_CASES) {
   const result = await runKnowledgeAgentQuestion({
     question: testCase.question,
     spaceId: DEPARTMENT_FIXTURE_SPACE.id,
+    userId: user.id,
   });
 
   console.log(`\n[question] ${result.question}`);

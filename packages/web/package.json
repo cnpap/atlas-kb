@@ -20,13 +20,14 @@
     "@vueuse/core": "14.2.1",
     "ai": "*",
     "lucide-vue-next": "0.577.0",
-    "marked": "17.0.5",
+    "markdown-it": "^14.1.1",
     "vue": "^3.5.29",
     "vue-router": "^4.5.1"
   },
   "devDependencies": {
     "@cnpap/vue-jump": "0.0.1",
     "@tailwindcss/vite": "4.2.1",
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^24.10.1",
     "@vitejs/plugin-vue": "^6.0.2",
     "tailwindcss": "4.2.1",

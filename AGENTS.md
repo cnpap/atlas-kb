@@ -75,6 +75,14 @@ Rules:
 2. Keep API contracts in `@atlas-kb/schema`.
 3. Prefer code that is easy to unit test.
 
+## Frontend UI Rules
+
+1. Conversation and message-stream UIs must render each message or trace step as a flat, independent block.
+2. Do not wrap multiple messages or trace steps inside an outer card-like container.
+3. Do not use nested cards, nested bordered containers, or decorative multi-layer borders for chat/message blocks. A single subtle border on a flat message block is allowed.
+4. Do not use large-radius visual language in chat/message blocks; keep radii tight and restrained.
+5. Avoid placeholder English UI labels such as `YOU` in the product interface unless the feature explicitly requires English copy.
+
 ## Frontend API Rule
 
 Frontend code must call backend interfaces through `packages/web/src/lib/api-client.ts`.

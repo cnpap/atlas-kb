@@ -3,6 +3,7 @@ import {
   SearchKnowledgeResultSchema,
 } from "@atlas-kb/schema";
 import { createTool } from "@mastra/core/tools";
+import { ensureDefaultUser } from "../knowledge";
 import { searchKnowledge } from "../knowledge/search";
 
 const SEARCH_KNOWLEDGE_TOOL_ID = "search_knowledge";
@@ -20,11 +21,17 @@ export function createSearchKnowledgeTool(
     inputSchema: SearchKnowledgeRequestSchema,
     outputSchema: SearchKnowledgeResultSchema,
     execute: async (input) => {
-      return searchKnowledge({
-        ...input,
-        limit: input.limit ?? options.defaultLimit,
-        spaceId: options.lockedSpaceId ?? input.spaceId,
-      });
+      const user = await ensureDefaultUser();
+      return searchKnowledge(
+        {
+          ...input,
+          limit: input.limit ?? options.defaultLimit,
+          spaceId: options.lockedSpaceId ?? input.spaceId,
+        },
+        {
+          userId: user.id,
+        },
+      );
     },
   });
 }
