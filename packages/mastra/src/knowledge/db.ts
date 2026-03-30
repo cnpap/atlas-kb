@@ -1,95 +1,123 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import { Database } from "bun:sqlite";
-import { getKnowledgeDatabasePath } from "./config";
+import postgres, { type Sql } from "postgres";
+import { getDatabaseUrl } from "./config";
 
-const CURRENT_SCHEMA_VERSION = 2;
+let sqlCache: Sql | undefined;
+let sqlUrlCache = "";
+let schemaInitPromise: Promise<void> | undefined;
 
-let databaseCache: Database | undefined;
-let databasePathCache = "";
+function createSqlClient(): Sql {
+  return postgres(getDatabaseUrl(), {
+    max: 10,
+    idle_timeout: 20,
+    connect_timeout: 30,
+    onnotice() {},
+    prepare: false,
+  });
+}
 
-function recreateSchema(database: Database): void {
-  database.exec(`
-    PRAGMA foreign_keys = OFF;
+export function getKnowledgeDatabase(): Sql {
+  const nextUrl = getDatabaseUrl();
 
-    DROP TABLE IF EXISTS chat_feedback;
-    DROP TABLE IF EXISTS chat_messages;
-    DROP TABLE IF EXISTS chat_sessions;
-    DROP TABLE IF EXISTS source_chunks_fts;
-    DROP TABLE IF EXISTS source_chunks;
-    DROP TABLE IF EXISTS import_jobs;
-    DROP TABLE IF EXISTS source_versions;
-    DROP TABLE IF EXISTS sources;
-    DROP TABLE IF EXISTS collections;
-    DROP TABLE IF EXISTS users;
+  if (!sqlCache || sqlUrlCache !== nextUrl) {
+    void sqlCache?.end({ timeout: 1 });
+    sqlCache = createSqlClient();
+    sqlUrlCache = nextUrl;
+    schemaInitPromise = undefined;
+  }
 
-    PRAGMA foreign_keys = ON;
-  `);
+  return sqlCache;
+}
 
-  database.exec(`
-    CREATE TABLE users (
+export async function ensureKnowledgeDatabase(): Promise<Sql> {
+  const sql = getKnowledgeDatabase();
+
+  if (!schemaInitPromise) {
+    schemaInitPromise = initializeSchema(sql);
+  }
+
+  await schemaInitPromise;
+  return sql;
+}
+
+async function initializeSchema(sql: Sql) {
+  await sql`
+    CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
+    )
+  `;
 
-    CREATE TABLE collections (
+  await sql`
+    CREATE TABLE IF NOT EXISTS collections (
       id TEXT PRIMARY KEY,
       owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       description TEXT NOT NULL,
       color TEXT NOT NULL,
       icon TEXT NOT NULL,
-      is_pinned INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      last_activity_at TEXT NOT NULL
-    );
+      is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      last_activity_at TIMESTAMPTZ NOT NULL
+    )
+  `;
 
-    CREATE TABLE sources (
+  await sql`
+    CREATE TABLE IF NOT EXISTS sources (
       id TEXT PRIMARY KEY,
       owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+      document_id TEXT NOT NULL,
       title TEXT NOT NULL,
       summary TEXT NOT NULL,
       excerpt TEXT NOT NULL,
       content_preview TEXT NOT NULL,
       content TEXT NOT NULL,
-      tags_json TEXT NOT NULL,
+      tags_json JSONB NOT NULL,
       source_type TEXT NOT NULL,
       legacy_source TEXT NOT NULL,
       status TEXT NOT NULL,
       source_filename TEXT,
       source_url TEXT,
       mime_type TEXT,
-      byte_size INTEGER,
-      latest_version INTEGER NOT NULL,
-      ready_at TEXT,
-      last_processed_at TEXT,
-      snapshot_updated_at TEXT,
+      byte_size BIGINT,
+      latest_version INTEGER NOT NULL DEFAULT 1,
+      ready_at TIMESTAMPTZ,
+      last_processed_at TIMESTAMPTZ,
+      snapshot_updated_at TIMESTAMPTZ,
       failure_message TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
+      original_path TEXT,
+      index_path TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
+    )
+  `;
 
-    CREATE TABLE source_versions (
-      id TEXT PRIMARY KEY,
-      source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
-      version_number INTEGER NOT NULL,
-      parser TEXT NOT NULL,
-      content TEXT NOT NULL,
-      content_preview TEXT NOT NULL,
-      mime_type TEXT,
-      byte_size INTEGER,
-      file_path TEXT,
-      snapshot_html TEXT,
-      source_url TEXT,
-      created_at TEXT NOT NULL
-    );
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_collections_owner
+    ON collections (owner_user_id, updated_at DESC)
+  `;
 
-    CREATE TABLE import_jobs (
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_sources_owner
+    ON sources (owner_user_id, updated_at DESC)
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_sources_collection
+    ON sources (collection_id, updated_at DESC)
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_sources_document
+    ON sources (owner_user_id, document_id)
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS import_jobs (
       id TEXT PRIMARY KEY,
       owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -99,119 +127,93 @@ function recreateSchema(database: Database): void {
       status TEXT NOT NULL,
       attempt INTEGER NOT NULL,
       error_message TEXT,
-      started_at TEXT NOT NULL,
-      finished_at TEXT
-    );
+      started_at TIMESTAMPTZ NOT NULL,
+      finished_at TIMESTAMPTZ
+    )
+  `;
 
-    CREATE TABLE source_chunks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      chunk_id TEXT NOT NULL UNIQUE,
-      owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
-      collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
-      chunk_index INTEGER NOT NULL,
-      section_path TEXT,
-      title TEXT NOT NULL,
-      text TEXT NOT NULL,
-      lexical_text TEXT NOT NULL,
-      tags_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_import_jobs_owner
+    ON import_jobs (owner_user_id, started_at DESC)
+  `;
 
-    CREATE VIRTUAL TABLE source_chunks_fts USING fts5(
-      chunk_id UNINDEXED,
-      title,
-      lexical_text,
-      tokenize = 'unicode61 remove_diacritics 2'
-    );
-
-    CREATE TABLE chat_sessions (
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_sessions (
       id TEXT PRIMARY KEY,
       owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
       collection_id TEXT REFERENCES collections(id) ON DELETE SET NULL,
       preview TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      last_message_at TEXT NOT NULL
-    );
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      last_message_at TIMESTAMPTZ NOT NULL
+    )
+  `;
 
-    CREATE TABLE chat_messages (
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_chat_sessions_owner
+    ON chat_sessions (owner_user_id, last_message_at DESC)
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_messages (
       id TEXT PRIMARY KEY,
       owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
-      citations_json TEXT NOT NULL,
-      retrieval_json TEXT,
-      trace_json TEXT,
-      created_at TEXT NOT NULL
-    );
+      citations_json JSONB NOT NULL,
+      retrieval_json JSONB,
+      trace_json JSONB,
+      created_at TIMESTAMPTZ NOT NULL
+    )
+  `;
 
-    CREATE TABLE chat_feedback (
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_session
+    ON chat_messages (session_id, created_at ASC)
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_feedback (
       id TEXT PRIMARY KEY,
       owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
       rating TEXT NOT NULL,
       note TEXT,
-      created_at TEXT NOT NULL
-    );
+      created_at TIMESTAMPTZ NOT NULL
+    )
+  `;
 
-    CREATE INDEX idx_users_username ON users(username);
-    CREATE INDEX idx_collections_owner ON collections(owner_user_id, updated_at DESC);
-    CREATE INDEX idx_sources_owner ON sources(owner_user_id, updated_at DESC);
-    CREATE INDEX idx_sources_collection ON sources(collection_id, updated_at DESC);
-    CREATE INDEX idx_sources_status ON sources(owner_user_id, status);
-    CREATE INDEX idx_source_versions_source ON source_versions(source_id, version_number DESC);
-    CREATE INDEX idx_import_jobs_owner ON import_jobs(owner_user_id, started_at DESC);
-    CREATE INDEX idx_source_chunks_owner ON source_chunks(owner_user_id, collection_id);
-    CREATE INDEX idx_chat_sessions_owner ON chat_sessions(owner_user_id, last_message_at DESC);
-    CREATE INDEX idx_chat_messages_session ON chat_messages(session_id, created_at ASC);
-    CREATE INDEX idx_chat_messages_owner ON chat_messages(owner_user_id, session_id);
-  `);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_chat_feedback_owner
+    ON chat_feedback (owner_user_id, created_at DESC)
+  `;
 
-  database.exec(`PRAGMA user_version = ${CURRENT_SCHEMA_VERSION};`);
+  await sql`
+    CREATE TABLE IF NOT EXISTS briefing_exports (
+      id TEXT PRIMARY KEY,
+      owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+      document_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      form_json JSONB NOT NULL,
+      citations_json JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL
+    )
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_briefing_exports_source
+    ON briefing_exports (source_id, created_at DESC)
+  `;
 }
 
-function openDatabase(): Database {
-  const databasePath = getKnowledgeDatabasePath();
-  mkdirSync(dirname(databasePath), { recursive: true });
-  const database = new Database(databasePath, {
-    create: true,
-    strict: true,
+export async function resetKnowledgeDatabase(): Promise<void> {
+  const sql = await ensureKnowledgeDatabase();
+
+  await sql.begin(async (transaction) => {
+    await transaction`TRUNCATE TABLE briefing_exports, chat_feedback, chat_messages, chat_sessions, import_jobs, sources, collections, users CASCADE`;
   });
-
-  database.exec(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
-  `);
-
-  const row = database.query("PRAGMA user_version;").get() as {
-    user_version?: number;
-  } | null;
-  const version = Number(row?.user_version ?? 0);
-
-  if (version !== CURRENT_SCHEMA_VERSION) {
-    recreateSchema(database);
-  }
-
-  databasePathCache = databasePath;
-  return database;
-}
-
-export function getKnowledgeDatabase(): Database {
-  const databasePath = getKnowledgeDatabasePath();
-
-  if (!databaseCache || databasePathCache !== databasePath) {
-    databaseCache?.close();
-    databaseCache = openDatabase();
-  }
-
-  return databaseCache;
-}
-
-export function resetKnowledgeDatabase(): void {
-  databaseCache?.close();
-  databaseCache = undefined;
-  databasePathCache = "";
 }

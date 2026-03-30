@@ -2,853 +2,494 @@ import { BadRequestError } from "@atlas-kb/errors";
 import type {
   KnowledgeBatchFileImportRequest,
   KnowledgeBatchImportData,
-  KnowledgeBatchImportItem,
   KnowledgeCollection,
   KnowledgeFileImportRequest,
+  KnowledgeImportData,
   KnowledgeImportJob,
-  KnowledgeRetrievalEngine,
   KnowledgeSource,
   KnowledgeSourceUpdateRequest,
   KnowledgeTextImportRequest,
-  KnowledgeUrlImportRequest,
   KnowledgeUploadMetadata,
+  KnowledgeUrlImportRequest,
 } from "@atlas-kb/schema";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, extname, resolve } from "node:path";
-import mammoth from "mammoth";
-import { PDFParse } from "pdf-parse";
-import { JSDOM } from "jsdom";
-import { Readability } from "@mozilla/readability";
-import { getKnowledgeUploadsDir } from "./config";
-import { replaceKnowledgeSourceVectorIndex } from "./qdrant";
+import {
+  buildTextSourceContent,
+  extractFileContent,
+  storeTextSourceFile,
+  storeUploadedSourceFile,
+  writeSourceIndexText,
+} from "./storage";
+import { getKnowledgeServiceForUser } from "./runtime";
 import {
   createImportJob,
   createSourceDraft,
-  getLatestSourceVersion,
+  getStoredSourceRecord,
   replaceSourceContent,
   requireKnowledgeCollection,
   requireKnowledgeSource,
   updateImportJob,
 } from "./repository";
-import { normalizeWhitespace } from "./search-utils";
-
-const TEXT_FILE_EXTENSIONS = new Set([
-  ".csv",
-  ".html",
-  ".json",
-  ".md",
-  ".markdown",
-  ".txt",
-  ".xml",
-  ".yaml",
-  ".yml",
-]);
-
-const URL_FETCH_TIMEOUT_MS = 15_000;
-
-type ParsedContent = {
-  byteSize?: number;
-  content: string;
-  mimeType?: string;
-  parser: string;
-  snapshotHtml?: string;
-  title: string;
-};
+import { buildSummary, normalizeWhitespace } from "./search-utils";
 
 type ImportResult = {
   collection: KnowledgeCollection;
   source: KnowledgeSource;
   job: KnowledgeImportJob;
-  engine: KnowledgeRetrievalEngine;
+  engine: "hybrid";
   indexed: boolean;
 };
 
-type QueuedFileImportTask = {
+function parseTags(tags?: string[]): string[] {
+  return [...new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean))];
+}
+
+function resolveTitle(input: {
+  explicitTitle?: string;
+  extractedTitle: string;
+}) {
+  return input.explicitTitle?.trim() || input.extractedTitle;
+}
+
+async function indexSourceDocument(args: {
+  userId: string;
+  indexPath: string;
+  title: string;
+}) {
+  const service = await getKnowledgeServiceForUser(args.userId);
+
+  return service.indexKnowledgeDocument({
+    target: args.indexPath,
+    title: args.title,
+  });
+}
+
+async function finalizeImport(args: {
   userId: string;
   collectionId: string;
-  draft: KnowledgeSource;
-  job: KnowledgeImportJob;
-  filePath: string;
-  sourceFilename: string;
-  title: string;
-  summary?: string;
-  tags: string[];
-  mimeType?: string;
-};
-
-const MAX_CONCURRENT_IMPORTS = 2;
-
-const pendingImportTasks: Array<() => Promise<void>> = [];
-const activeImportTasks = new Set<Promise<void>>();
-
-function getOriginalFilename(input: string): string {
-  const trimmed = basename(input || "upload.txt").trim();
-  return trimmed || "upload.txt";
-}
-
-function sanitizeFilename(input: string): string {
-  const trimmed = getOriginalFilename(input);
-  const sanitized = trimmed.replace(/[^a-zA-Z0-9._-]+/g, "-");
-  return sanitized || "upload.txt";
-}
-
-function resolveDraftTitle(params: {
-  title?: string;
-  fallback: string;
-}): string {
-  return params.title?.trim() || params.fallback;
-}
-
-function resolveTextTitle(content: string): string {
-  const firstLine = normalizeWhitespace(content).split("\n")[0]?.trim();
-
-  if (!firstLine) {
-    return "Untitled Note";
-  }
-
-  return firstLine.replace(/^#{1,6}\s+/, "").slice(0, 120);
-}
-
-function resolveFilenameTitle(filename: string): string {
-  const normalized = getOriginalFilename(filename);
-  const fallback = normalized.replace(/\.[^/.]+$/, "").trim();
-
-  return fallback || normalized;
-}
-
-function createQueuedImportResult(params: {
-  collection: KnowledgeCollection;
   source: KnowledgeSource;
   job: KnowledgeImportJob;
-}): ImportResult {
-  return {
-    collection: params.collection,
-    source: params.source,
-    job: params.job,
-    engine: "lexical",
-    indexed: false,
-  };
-}
-
-function runImportQueue(): void {
-  while (
-    activeImportTasks.size < MAX_CONCURRENT_IMPORTS &&
-    pendingImportTasks.length > 0
-  ) {
-    const nextTask = pendingImportTasks.shift();
-
-    if (!nextTask) {
-      return;
-    }
-
-    let taskPromise: Promise<void>;
-    taskPromise = nextTask()
-      .catch((error) => {
-        console.error(
-          "[atlas-kb/mastra] queued knowledge import failed:",
-          error,
-        );
-      })
-      .finally(() => {
-        activeImportTasks.delete(taskPromise);
-        runImportQueue();
-      });
-
-    activeImportTasks.add(taskPromise);
-  }
-}
-
-function scheduleImportTask(task: () => Promise<void>): void {
-  pendingImportTasks.push(task);
-  queueMicrotask(runImportQueue);
-}
-
-export async function waitForPendingKnowledgeImports(): Promise<void> {
-  runImportQueue();
-
-  while (pendingImportTasks.length > 0 || activeImportTasks.size > 0) {
-    if (activeImportTasks.size === 0) {
-      runImportQueue();
-      continue;
-    }
-
-    await Promise.allSettled([...activeImportTasks]);
-  }
-}
-
-function isSupportedFile(file: File): boolean {
-  const extension = extname(file.name).toLowerCase();
-  if (
-    extension === ".pdf" ||
-    extension === ".docx" ||
-    TEXT_FILE_EXTENSIONS.has(extension)
-  ) {
-    return true;
-  }
-
-  return Boolean(file.type?.startsWith("text/"));
-}
-
-function extractHtmlContent(params: {
-  html: string;
-  titleFallback: string;
-}): ParsedContent {
-  const dom = new JSDOM(params.html, {
-    url: "https://atlas-kb.local",
-  });
-  const readable = new Readability(dom.window.document).parse();
-  const title =
-    readable?.title?.trim() ||
-    dom.window.document.title?.trim() ||
-    params.titleFallback;
-  const content = normalizeWhitespace(
-    readable?.textContent || dom.window.document.body?.textContent || "",
-  );
-
-  if (!content) {
-    throw new BadRequestError("HTML content is empty after extraction");
-  }
-
-  return {
-    content,
-    parser: "html-readability",
-    snapshotHtml: params.html,
-    title,
-  };
-}
-
-async function parseFile(file: File): Promise<ParsedContent> {
-  const extension = extname(file.name).toLowerCase();
-  const displayName = getOriginalFilename(file.name);
-
-  if (!isSupportedFile(file)) {
-    throw new BadRequestError(
-      "Unsupported file type. Upload PDF, DOCX, markdown, text, HTML, JSON, CSV, XML, or YAML files.",
-    );
-  }
-
-  if (extension === ".pdf") {
-    const parser = new PDFParse({
-      data: new Uint8Array(await file.arrayBuffer()),
-    });
-    const parsed = await parser.getText();
-    const content = normalizeWhitespace(parsed.text || "");
-
-    await parser.destroy();
-
-    if (!content) {
-      throw new BadRequestError("PDF content could not be extracted");
-    }
-
-    return {
-      byteSize: file.size,
-      content,
-      mimeType: file.type || "application/pdf",
-      parser: "pdf-parse",
-      title: displayName.replace(/\.pdf$/i, "") || "PDF Document",
-    };
-  }
-
-  if (extension === ".docx") {
-    const result = await mammoth.extractRawText({
-      buffer: Buffer.from(await file.arrayBuffer()),
-    });
-    const content = normalizeWhitespace(result.value || "");
-
-    if (!content) {
-      throw new BadRequestError("DOCX content could not be extracted");
-    }
-
-    return {
-      byteSize: file.size,
-      content,
-      mimeType:
-        file.type ||
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      parser: "mammoth",
-      title: displayName.replace(/\.docx$/i, "") || "DOCX Document",
-    };
-  }
-
-  if (extension === ".html" || file.type === "text/html") {
-    return {
-      ...extractHtmlContent({
-        html: await file.text(),
-        titleFallback: displayName.replace(/\.html$/i, "") || "HTML Document",
-      }),
-      byteSize: file.size,
-      mimeType: file.type || "text/html",
-    };
-  }
-
-  const content = normalizeWhitespace(await file.text());
-  if (!content) {
-    throw new BadRequestError("Uploaded file is empty");
-  }
-
-  return {
-    byteSize: file.size,
-    content,
-    mimeType: file.type || undefined,
-    parser: "plain-text",
-    title: displayName.replace(/\.[^/.]+$/, "") || displayName,
-  };
-}
-
-async function storeUploadedFile(params: {
-  collectionId: string;
-  file: File;
-}): Promise<string> {
-  const uploadsDir = resolve(getKnowledgeUploadsDir(), params.collectionId);
-  const safeFilename = sanitizeFilename(params.file.name);
-  const storageName = `${Date.now()}-${safeFilename}`;
-  const storagePath = resolve(uploadsDir, storageName);
-
-  await mkdir(uploadsDir, { recursive: true });
-  await writeFile(storagePath, new Uint8Array(await params.file.arrayBuffer()));
-
-  return storagePath;
-}
-
-async function fetchUrlContent(url: string): Promise<{
-  contentType: string;
-  html?: string;
-  text: string;
   title: string;
-}> {
-  const response = await fetch(url, {
-    signal: AbortSignal.timeout(URL_FETCH_TIMEOUT_MS),
-  });
-
-  if (!response.ok) {
-    throw new BadRequestError(
-      `Failed to fetch URL with status ${response.status}`,
-    );
-  }
-
-  const contentType = response.headers.get("Content-Type") || "text/plain";
-  const body = await response.text();
-
-  if (contentType.includes("text/html")) {
-    const parsed = extractHtmlContent({
-      html: body,
-      titleFallback: url,
-    });
-
-    return {
-      contentType,
-      html: parsed.snapshotHtml,
-      text: parsed.content,
-      title: parsed.title,
-    };
-  }
-
-  return {
-    contentType,
-    text: normalizeWhitespace(body),
-    title: url,
-  };
-}
-
-async function finalizeImport(params: {
-  userId: string;
-  collectionId: string;
-  draft: KnowledgeSource;
-  job: KnowledgeImportJob;
-  parsed: ParsedContent;
-  tags: string[];
   summary?: string;
+  content: string;
+  tags: string[];
+  mimeType?: string;
+  byteSize?: number;
   sourceFilename?: string;
   sourceUrl?: string;
-  filePath?: string;
-}): Promise<ImportResult> {
+  originalPath?: string | null;
+  indexPath: string;
+}) {
   await updateImportJob({
-    userId: params.userId,
-    jobId: params.job.id,
-    stage: "chunking",
-    status: "processing",
-  });
-
-  const source = await replaceSourceContent({
-    userId: params.userId,
-    sourceId: params.draft.id,
-    title: params.parsed.title,
-    summary: params.summary,
-    content: params.parsed.content,
-    tags: params.tags,
-    parser: params.parsed.parser,
-    mimeType: params.parsed.mimeType,
-    byteSize: params.parsed.byteSize,
-    filePath: params.filePath,
-    snapshotHtml: params.parsed.snapshotHtml,
-    sourceFilename: params.sourceFilename,
-    sourceUrl: params.sourceUrl,
-    status: "ready",
-  });
-
-  await updateImportJob({
-    userId: params.userId,
-    jobId: params.job.id,
+    userId: args.userId,
+    jobId: args.job.id,
     stage: "embedding",
     status: "processing",
   });
 
-  const indexed = await replaceKnowledgeSourceVectorIndex(source.id).catch(
-    (error) => {
-      console.warn(
-        `[atlas-kb/mastra] vector index fallback for "${source.id}": ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-      );
-      return false;
-    },
-  );
-
-  await updateImportJob({
-    userId: params.userId,
-    jobId: params.job.id,
+  const indexed = await indexSourceDocument({
+    userId: args.userId,
+    indexPath: args.indexPath,
+    title: args.title,
+  });
+  const source = await replaceSourceContent({
+    userId: args.userId,
+    sourceId: args.source.id,
+    documentId: indexed.documentId,
+    title: args.title,
+    summary: args.summary,
+    content: args.content,
+    tags: args.tags,
+    mimeType: args.mimeType,
+    byteSize: args.byteSize,
+    sourceFilename: args.sourceFilename,
+    sourceUrl: args.sourceUrl,
+    status: "ready",
+    originalPath: args.originalPath,
+    indexPath: args.indexPath,
+  });
+  const job = await updateImportJob({
+    userId: args.userId,
+    jobId: args.job.id,
     stage: "completed",
     status: "ready",
   });
 
-  const collection = await requireKnowledgeCollection(
-    params.userId,
-    params.collectionId,
-  );
-
   return {
-    collection,
+    collection: await requireKnowledgeCollection(
+      args.userId,
+      args.collectionId,
+    ),
     source,
-    job: {
-      ...params.job,
-      stage: "completed",
-      status: "ready",
-      finishedAt: new Date().toISOString(),
-    },
-    engine: indexed ? "hybrid" : "lexical",
-    indexed,
-  };
+    job,
+    engine: "hybrid" as const,
+    indexed: true,
+  } satisfies ImportResult;
 }
 
-async function failImport(params: {
+async function failImport(args: {
   userId: string;
-  draft: KnowledgeSource;
+  source: KnowledgeSource;
   job: KnowledgeImportJob;
   error: unknown;
-}): Promise<ImportResult> {
+  summary?: string;
+  title: string;
+  tags: string[];
+  content?: string;
+  originalPath?: string | null;
+  indexPath: string;
+}) {
   const message =
-    params.error instanceof Error ? params.error.message : "Import failed";
-
+    args.error instanceof Error ? args.error.message : "Import failed";
   const source = await replaceSourceContent({
-    userId: params.userId,
-    sourceId: params.draft.id,
-    title: params.draft.title,
-    summary: params.draft.summary,
-    content: params.draft.content,
-    tags: params.draft.tags,
-    parser: "failed-import",
+    userId: args.userId,
+    sourceId: args.source.id,
+    documentId: args.source.documentId || `failed:${args.source.id}`,
+    title: args.title,
+    summary: args.summary,
+    content: args.content ?? args.source.content,
+    tags: args.tags,
     status: "failed",
     failureMessage: message,
-    sourceFilename: params.draft.sourceFilename,
-    sourceUrl: params.draft.sourceUrl,
+    sourceFilename: args.source.sourceFilename,
+    sourceUrl: args.source.sourceUrl,
+    mimeType: args.source.mimeType,
+    byteSize: args.source.byteSize,
+    originalPath: args.originalPath,
+    indexPath: args.indexPath,
   });
-
-  await updateImportJob({
-    userId: params.userId,
-    jobId: params.job.id,
+  const job = await updateImportJob({
+    userId: args.userId,
+    jobId: args.job.id,
     stage: "completed",
     status: "failed",
     errorMessage: message,
   });
 
-  const collection = await requireKnowledgeCollection(
-    params.userId,
-    params.draft.collectionId,
-  );
+  return {
+    collection: await requireKnowledgeCollection(
+      args.userId,
+      source.collectionId,
+    ),
+    source,
+    job,
+    engine: "hybrid" as const,
+    indexed: false,
+  } satisfies ImportResult;
+}
+
+async function createDraftSource(args: {
+  userId: string;
+  collectionId: string;
+  sourceId: string;
+  sourceType: KnowledgeSource["sourceType"];
+  title: string;
+  summary?: string;
+  tags: string[];
+  sourceFilename?: string;
+  sourceUrl?: string;
+  mimeType?: string;
+  byteSize?: number;
+  originalPath?: string | null;
+  indexPath: string;
+}) {
+  const source = await createSourceDraft({
+    sourceId: args.sourceId,
+    userId: args.userId,
+    collectionId: args.collectionId,
+    sourceType: args.sourceType,
+    title: args.title,
+    summary: args.summary,
+    tags: args.tags,
+    sourceFilename: args.sourceFilename,
+    sourceUrl: args.sourceUrl,
+    mimeType: args.mimeType,
+    byteSize: args.byteSize,
+    originalPath: args.originalPath,
+    indexPath: args.indexPath,
+  });
+  const job = await createImportJob({
+    userId: args.userId,
+    sourceId: source.id,
+    collectionId: args.collectionId,
+    sourceType: args.sourceType,
+    stage: "chunking",
+    status: "processing",
+    attempt: 1,
+  });
 
   return {
-    collection,
     source,
-    job: {
-      ...params.job,
-      stage: "completed",
-      status: "failed",
-      errorMessage: message,
-      finishedAt: new Date().toISOString(),
-    },
-    engine: "lexical",
-    indexed: false,
+    job,
   };
 }
 
-async function processQueuedFileImport(
-  params: QueuedFileImportTask,
-): Promise<void> {
-  try {
-    await updateImportJob({
-      userId: params.userId,
-      jobId: params.job.id,
-      stage: "fetching",
-      status: "processing",
-    });
-
-    const buffer = await readFile(params.filePath);
-
-    await updateImportJob({
-      userId: params.userId,
-      jobId: params.job.id,
-      stage: "extracting",
-      status: "processing",
-    });
-
-    const file = new File([buffer], params.sourceFilename, {
-      type: params.mimeType,
-    });
-    const parsed = await parseFile(file);
-
-    await finalizeImport({
-      userId: params.userId,
-      collectionId: params.collectionId,
-      draft: params.draft,
-      job: params.job,
-      parsed: {
-        ...parsed,
-        title: params.title,
-      },
-      tags: params.tags,
-      summary: params.summary,
-      sourceFilename: params.sourceFilename,
-      filePath: params.filePath,
-    });
-  } catch (error) {
-    await failImport({
-      userId: params.userId,
-      draft: params.draft,
-      job: params.job,
-      error,
-    });
-  }
-}
-
-export async function importKnowledgeFile(params: {
+export async function importKnowledgeFile(args: {
   userId: string;
   collectionId: string;
   file: File;
-  input?: KnowledgeFileImportRequest;
-}): Promise<ImportResult> {
-  await requireKnowledgeCollection(params.userId, params.collectionId);
+  input: KnowledgeFileImportRequest;
+}): Promise<KnowledgeImportData> {
+  await requireKnowledgeCollection(args.userId, args.collectionId);
 
-  if (!isSupportedFile(params.file)) {
-    throw new BadRequestError(
-      "Unsupported file type. Upload PDF, DOCX, markdown, text, HTML, JSON, CSV, XML, or YAML files.",
-    );
-  }
-
-  const originalFilename = getOriginalFilename(params.file.name);
-  const sourceFilename = getOriginalFilename(
-    params.input?.fileName?.trim() || originalFilename,
-  );
-  const title = resolveDraftTitle({
-    title: params.input?.title,
-    fallback: resolveFilenameTitle(sourceFilename),
-  });
-  const filePath = await storeUploadedFile({
-    collectionId: params.collectionId,
-    file: params.file,
-  });
-  const draft = await createSourceDraft({
-    userId: params.userId,
-    collectionId: params.collectionId,
-    sourceType: "file",
-    title,
-    summary: params.input?.summary,
-    tags: params.input?.tags,
-    sourceFilename,
-    mimeType: params.file.type || undefined,
-    byteSize: params.file.size || undefined,
-  });
-  const job = await createImportJob({
-    userId: params.userId,
-    collectionId: params.collectionId,
-    sourceId: draft.id,
-    sourceType: "file",
-    attempt: 1,
-  });
-  const collection = await requireKnowledgeCollection(
-    params.userId,
-    params.collectionId,
-  );
-
-  scheduleImportTask(() =>
-    processQueuedFileImport({
-      userId: params.userId,
-      collectionId: params.collectionId,
-      draft,
-      job,
-      filePath,
-      sourceFilename,
-      title,
-      summary: params.input?.summary,
-      tags: params.input?.tags ?? [],
-      mimeType: params.file.type || undefined,
-    }),
-  );
-
-  return createQueuedImportResult({
-    collection,
-    source: draft,
-    job,
-  });
-}
-
-export async function importKnowledgeText(params: {
-  userId: string;
-  collectionId: string;
-  input: KnowledgeTextImportRequest;
-}): Promise<ImportResult> {
-  await requireKnowledgeCollection(params.userId, params.collectionId);
-  const title = resolveDraftTitle({
-    title: params.input.title,
-    fallback: resolveTextTitle(params.input.content),
-  });
-  const draft = await createSourceDraft({
-    userId: params.userId,
-    collectionId: params.collectionId,
-    sourceType: "text",
-    title,
-    summary: params.input.summary,
-    tags: params.input.tags,
-  });
-  const job = await createImportJob({
-    userId: params.userId,
-    collectionId: params.collectionId,
-    sourceId: draft.id,
-    sourceType: "text",
-    attempt: 1,
-  });
-
-  try {
-    return await finalizeImport({
-      userId: params.userId,
-      collectionId: params.collectionId,
-      draft,
-      job,
-      parsed: {
-        content: normalizeWhitespace(params.input.content),
-        parser: "plain-text",
-        title,
-      },
-      tags: params.input.tags ?? [],
-      summary: params.input.summary,
-    });
-  } catch (error) {
-    return failImport({
-      userId: params.userId,
-      draft,
-      job,
-      error,
-    });
-  }
-}
-
-export async function importKnowledgeUrl(params: {
-  userId: string;
-  collectionId: string;
-  input: KnowledgeUrlImportRequest;
-}): Promise<ImportResult> {
-  await requireKnowledgeCollection(params.userId, params.collectionId);
-  const fetched = await fetchUrlContent(params.input.url);
-  const title = resolveDraftTitle({
-    title: params.input.title,
-    fallback: fetched.title,
-  });
-  const draft = await createSourceDraft({
-    userId: params.userId,
-    collectionId: params.collectionId,
-    sourceType: "url",
-    title,
-    summary: params.input.summary,
-    tags: params.input.tags,
-    sourceUrl: params.input.url,
-    mimeType: fetched.contentType,
-  });
-  const job = await createImportJob({
-    userId: params.userId,
-    collectionId: params.collectionId,
-    sourceId: draft.id,
-    sourceType: "url",
-    attempt: 1,
-  });
-
-  try {
-    return await finalizeImport({
-      userId: params.userId,
-      collectionId: params.collectionId,
-      draft,
-      job,
-      parsed: {
-        content: fetched.text,
-        mimeType: fetched.contentType,
-        parser: fetched.html ? "html-readability" : "remote-text",
-        snapshotHtml: fetched.html,
-        title,
-      },
-      tags: params.input.tags ?? [],
-      summary: params.input.summary,
-      sourceUrl: params.input.url,
-    });
-  } catch (error) {
-    return failImport({
-      userId: params.userId,
-      draft,
-      job,
-      error,
-    });
-  }
-}
-
-export async function refreshKnowledgeSource(
-  userId: string,
-  sourceId: string,
-): Promise<ImportResult> {
-  const source = await requireKnowledgeSource(userId, sourceId);
-
-  if (source.sourceType !== "url" || !source.sourceUrl) {
-    throw new BadRequestError("Only URL sources can be refreshed");
-  }
-
-  const attempt =
-    (await getLatestSourceVersion(userId, sourceId))?.version ?? 1;
-  const job = await createImportJob({
-    userId,
-    collectionId: source.collectionId,
+  const sourceId = crypto.randomUUID();
+  const fileName = args.file.name || `upload-${sourceId}`;
+  const bytes = new Uint8Array(await args.file.arrayBuffer());
+  const paths = await storeUploadedSourceFile({
     sourceId,
-    sourceType: source.sourceType,
-    attempt,
+    bytes,
+    fileName,
+  });
+  const extracted = await extractFileContent({
+    bytes,
+    fileName,
+  });
+  const indexedText = await writeSourceIndexText(sourceId, extracted.content);
+  const title = resolveTitle({
+    explicitTitle: args.input.title,
+    extractedTitle: extracted.title,
+  });
+  const tags = parseTags(args.input.tags);
+  const draft = await createDraftSource({
+    userId: args.userId,
+    collectionId: args.collectionId,
+    sourceId,
+    sourceType: "file",
+    title,
+    summary: args.input.summary?.trim() || buildSummary(extracted.content),
+    tags,
+    sourceFilename: fileName,
+    mimeType: extracted.mimeType,
+    byteSize: args.file.size,
+    originalPath: paths.originalPath,
+    indexPath: indexedText.indexPath,
   });
 
   try {
-    const fetched = await fetchUrlContent(source.sourceUrl);
-
     return await finalizeImport({
-      userId,
-      collectionId: source.collectionId,
-      draft: source,
-      job,
-      parsed: {
-        content: fetched.text,
-        mimeType: fetched.contentType,
-        parser: fetched.html ? "html-readability" : "remote-text",
-        snapshotHtml: fetched.html,
-        title: source.title,
-      },
-      tags: source.tags,
-      summary: source.summary,
-      sourceUrl: source.sourceUrl,
+      userId: args.userId,
+      collectionId: args.collectionId,
+      source: draft.source,
+      job: draft.job,
+      title,
+      summary: args.input.summary?.trim() || buildSummary(extracted.content),
+      content: extracted.content,
+      tags,
+      mimeType: extracted.mimeType,
+      byteSize: args.file.size,
+      sourceFilename: fileName,
+      originalPath: paths.originalPath,
+      indexPath: indexedText.indexPath,
     });
   } catch (error) {
     return failImport({
-      userId,
-      draft: source,
-      job,
+      userId: args.userId,
+      source: draft.source,
+      job: draft.job,
       error,
+      summary: args.input.summary?.trim() || buildSummary(extracted.content),
+      title,
+      tags,
+      content: extracted.content,
+      originalPath: paths.originalPath,
+      indexPath: indexedText.indexPath,
     });
   }
 }
 
-export async function retryKnowledgeSource(
-  userId: string,
-  sourceId: string,
-): Promise<ImportResult> {
-  const source = await requireKnowledgeSource(userId, sourceId);
-  const latestVersion = await getLatestSourceVersion(userId, sourceId);
-  const attempt = Math.max(
-    (latestVersion?.version ?? source.latestVersion) + 1,
-    1,
+export async function importKnowledgeFiles(args: {
+  userId: string;
+  collectionId: string;
+  files: File[];
+  input: KnowledgeBatchFileImportRequest;
+}): Promise<KnowledgeBatchImportData> {
+  const collection = await requireKnowledgeCollection(
+    args.userId,
+    args.collectionId,
   );
+  const results: KnowledgeBatchImportData["results"] = [];
 
-  if (source.sourceType === "url" && source.sourceUrl) {
-    return refreshKnowledgeSource(userId, sourceId);
-  }
-
-  if (source.sourceType === "file" && latestVersion?.filePath) {
-    const job = await createImportJob({
-      userId,
-      collectionId: source.collectionId,
-      sourceId,
-      sourceType: source.sourceType,
-      attempt,
-    });
-
+  for (const file of args.files) {
     try {
-      const buffer = await readFile(latestVersion.filePath);
-      const file = new File(
-        [buffer],
-        source.sourceFilename || `${source.title}.txt`,
-        {
-          type: latestVersion.mimeType,
+      const result = await importKnowledgeFile({
+        userId: args.userId,
+        collectionId: args.collectionId,
+        file,
+        input: {
+          summary: args.input.summary,
+          tags: args.input.tags,
+          title: undefined,
         },
-      );
-      const parsed = await parseFile(file);
+      });
 
-      return await finalizeImport({
-        userId,
-        collectionId: source.collectionId,
-        draft: source,
-        job,
-        parsed: {
-          ...parsed,
-          title: source.title,
-        },
-        tags: source.tags,
-        summary: source.summary,
-        sourceFilename: source.sourceFilename,
-        filePath: latestVersion.filePath,
+      results.push({
+        accepted: true,
+        fileName: file.name,
+        mimeType: file.type || undefined,
+        byteSize: file.size,
+        source: result.source,
+        job: result.job,
       });
     } catch (error) {
-      return failImport({
-        userId,
-        draft: source,
-        job,
-        error,
+      results.push({
+        accepted: false,
+        fileName: file.name,
+        mimeType: file.type || undefined,
+        byteSize: file.size,
+        errorMessage: error instanceof Error ? error.message : "导入失败",
       });
     }
   }
 
-  const job = await createImportJob({
-    userId,
-    collectionId: source.collectionId,
+  return {
+    collection,
+    results,
+    totalCount: results.length,
+    acceptedCount: results.filter((item) => item.accepted).length,
+    rejectedCount: results.filter((item) => !item.accepted).length,
+  };
+}
+
+export async function importKnowledgeText(args: {
+  userId: string;
+  collectionId: string;
+  input: KnowledgeTextImportRequest;
+}): Promise<KnowledgeImportData> {
+  await requireKnowledgeCollection(args.userId, args.collectionId);
+
+  const content = normalizeWhitespace(args.input.content);
+
+  if (!content) {
+    throw new BadRequestError("文本资料不能为空");
+  }
+
+  const sourceId = crypto.randomUUID();
+  const tags = parseTags(args.input.tags);
+  const title =
+    args.input.title?.trim() ||
+    buildTextSourceContent({
+      content,
+      fileName: `${sourceId}.md`,
+    }).title;
+  const original = await storeTextSourceFile({
     sourceId,
-    sourceType: source.sourceType,
-    attempt,
+    content,
+    fileName: `${title}.md`,
+  });
+  const indexedText = await writeSourceIndexText(sourceId, content);
+  const draft = await createDraftSource({
+    userId: args.userId,
+    collectionId: args.collectionId,
+    sourceId,
+    sourceType: "text",
+    title,
+    summary: args.input.summary?.trim() || buildSummary(content),
+    tags,
+    sourceFilename: `${title}.md`,
+    mimeType: "text/plain",
+    byteSize: content.length,
+    originalPath: original.originalPath,
+    indexPath: indexedText.indexPath,
   });
 
   try {
     return await finalizeImport({
-      userId,
-      collectionId: source.collectionId,
-      draft: source,
-      job,
-      parsed: {
-        content: latestVersion?.content || source.content,
-        mimeType: latestVersion?.mimeType || source.mimeType,
-        parser: latestVersion?.parser || "plain-text",
-        title: source.title,
-      },
-      tags: source.tags,
-      summary: source.summary,
-      sourceFilename: source.sourceFilename,
-      sourceUrl: source.sourceUrl,
-      filePath: latestVersion?.filePath,
+      userId: args.userId,
+      collectionId: args.collectionId,
+      source: draft.source,
+      job: draft.job,
+      title,
+      summary: args.input.summary?.trim() || buildSummary(content),
+      content,
+      tags,
+      mimeType: "text/plain",
+      byteSize: content.length,
+      sourceFilename: `${title}.md`,
+      originalPath: original.originalPath,
+      indexPath: indexedText.indexPath,
     });
   } catch (error) {
     return failImport({
-      userId,
-      draft: source,
-      job,
+      userId: args.userId,
+      source: draft.source,
+      job: draft.job,
       error,
+      summary: args.input.summary?.trim() || buildSummary(content),
+      title,
+      tags,
+      content,
+      originalPath: original.originalPath,
+      indexPath: indexedText.indexPath,
     });
   }
+}
+
+export async function importKnowledgeUrl(args: {
+  userId: string;
+  collectionId: string;
+  input: KnowledgeUrlImportRequest;
+}): Promise<KnowledgeImportData> {
+  const response = await fetch(args.input.url, {
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!response.ok) {
+    throw new BadRequestError(`URL 拉取失败: ${response.status}`);
+  }
+
+  const body = normalizeWhitespace(await response.text());
+
+  return importKnowledgeText({
+    userId: args.userId,
+    collectionId: args.collectionId,
+    input: {
+      title: args.input.title || args.input.url,
+      summary: args.input.summary,
+      tags: args.input.tags,
+      content: body,
+    },
+  });
+}
+
+async function reindexStoredSource(args: {
+  userId: string;
+  source: KnowledgeSource;
+  nextContent: string;
+  nextSummary?: string;
+  nextTags: string[];
+  nextTitle: string;
+}) {
+  const stored = await getStoredSourceRecord(args.userId, args.source.id);
+
+  if (!stored) {
+    throw new BadRequestError(`资料 "${args.source.id}" 不存在`);
+  }
+
+  const indexedText = await writeSourceIndexText(
+    args.source.id,
+    args.nextContent,
+  );
+  const indexed = await indexSourceDocument({
+    userId: args.userId,
+    indexPath: indexedText.indexPath,
+    title: args.nextTitle,
+  });
+
+  return replaceSourceContent({
+    userId: args.userId,
+    sourceId: args.source.id,
+    documentId: indexed.documentId,
+    title: args.nextTitle,
+    summary: args.nextSummary,
+    content: args.nextContent,
+    tags: args.nextTags,
+    mimeType: args.source.mimeType,
+    byteSize: args.source.byteSize,
+    sourceFilename: args.source.sourceFilename,
+    sourceUrl: args.source.sourceUrl,
+    status: "ready",
+    indexPath: indexedText.indexPath,
+    originalPath: stored.original_path,
+  });
 }
 
 export async function updateKnowledgeSource(
@@ -857,133 +498,140 @@ export async function updateKnowledgeSource(
   input: KnowledgeSourceUpdateRequest,
 ): Promise<KnowledgeSource> {
   const source = await requireKnowledgeSource(userId, sourceId);
+  const stored = await getStoredSourceRecord(userId, sourceId);
+
+  if (!stored) {
+    throw new BadRequestError(`资料 "${sourceId}" 不存在`);
+  }
+
+  const nextContent = normalizeWhitespace(input.content ?? source.content);
+  const nextTitle = input.title?.trim() || source.title;
+  const nextSummary = input.summary?.trim() || source.summary;
+  const nextTags = parseTags(input.tags ?? source.tags);
+  const contentChanged = nextContent !== source.content;
+  const titleChanged = nextTitle !== source.title;
+
+  if (contentChanged || titleChanged) {
+    return reindexStoredSource({
+      userId,
+      source,
+      nextContent,
+      nextSummary,
+      nextTags,
+      nextTitle,
+    });
+  }
 
   return replaceSourceContent({
     userId,
     sourceId,
-    title: input.title?.trim() || source.title,
-    summary: input.summary?.trim() || source.summary,
-    content: input.content?.trim() || source.content,
-    tags: input.tags ?? source.tags,
-    parser: input.content?.trim() ? "manual-edit" : "metadata-update",
+    documentId: source.documentId || `draft:${source.id}`,
+    title: nextTitle,
+    summary: nextSummary,
+    content: nextContent,
+    tags: nextTags,
     mimeType: source.mimeType,
     byteSize: source.byteSize,
     sourceFilename: source.sourceFilename,
     sourceUrl: source.sourceUrl,
     status: input.status ?? source.status,
+    indexPath: stored.index_path,
+    originalPath: stored.original_path,
   });
 }
 
-export async function uploadKnowledgeDocument(params: {
+export async function refreshKnowledgeSource(
+  userId: string,
+  sourceId: string,
+): Promise<KnowledgeImportData> {
+  const source = await requireKnowledgeSource(userId, sourceId);
+  const stored = await getStoredSourceRecord(userId, sourceId);
+
+  if (!stored) {
+    throw new BadRequestError(`资料 "${sourceId}" 不存在`);
+  }
+  const job = await createImportJob({
+    userId,
+    sourceId,
+    collectionId: source.collectionId,
+    sourceType: source.sourceType,
+    stage: "embedding",
+    status: "processing",
+    attempt: source.latestVersion + 1,
+  });
+
+  try {
+    const refreshed = await reindexStoredSource({
+      userId,
+      source,
+      nextContent: source.content,
+      nextSummary: source.summary,
+      nextTags: source.tags,
+      nextTitle: source.title,
+    });
+    const completedJob = await updateImportJob({
+      userId,
+      jobId: job.id,
+      stage: "completed",
+      status: "ready",
+    });
+
+    return {
+      collection: await requireKnowledgeCollection(userId, source.collectionId),
+      source: refreshed,
+      job: completedJob,
+      engine: "hybrid",
+      indexed: true,
+    };
+  } catch (error) {
+    return failImport({
+      userId,
+      source,
+      job,
+      error,
+      summary: source.summary,
+      title: source.title,
+      tags: source.tags,
+      content: source.content,
+      originalPath: stored.original_path,
+      indexPath: stored.index_path,
+    });
+  }
+}
+
+export async function retryKnowledgeSource(
+  userId: string,
+  sourceId: string,
+): Promise<KnowledgeImportData> {
+  return refreshKnowledgeSource(userId, sourceId);
+}
+
+export async function uploadKnowledgeDocument(args: {
   userId: string;
-  file: File;
-  metadata?: KnowledgeUploadMetadata;
   spaceId: string;
-}): Promise<{
-  document: KnowledgeSource;
-  space: KnowledgeCollection;
-  engine: KnowledgeRetrievalEngine;
-  indexed: boolean;
-}> {
+  file: File;
+  metadata: KnowledgeUploadMetadata;
+}) {
   const result = await importKnowledgeFile({
-    userId: params.userId,
-    collectionId: params.spaceId,
-    file: params.file,
+    userId: args.userId,
+    collectionId: args.spaceId,
+    file: args.file,
     input: {
-      title: params.metadata?.title,
-      summary: params.metadata?.summary,
-      tags: params.metadata?.tags,
+      title: args.metadata.title,
+      summary: args.metadata.summary,
+      tags: args.metadata.tags,
+      fileName: args.file.name,
     },
   });
 
   return {
-    document: result.source,
     space: result.collection,
-    engine: result.engine,
+    document: result.source,
     indexed: result.indexed,
+    engine: result.engine,
   };
 }
 
-function toBatchFailure(params: {
-  error: unknown;
-  file: File;
-}): KnowledgeBatchImportItem {
-  const errorMessage =
-    params.error instanceof Error ? params.error.message : "Import failed";
-
-  return {
-    fileName: getOriginalFilename(params.file.name),
-    mimeType: params.file.type || undefined,
-    byteSize: params.file.size,
-    accepted: false,
-    errorMessage,
-  };
-}
-
-function toBatchAccepted(params: {
-  file: File;
-  result: ImportResult;
-}): KnowledgeBatchImportItem {
-  return {
-    fileName: getOriginalFilename(params.file.name),
-    mimeType: params.file.type || undefined,
-    byteSize: params.file.size,
-    accepted: true,
-    source: params.result.source,
-    job: params.result.job,
-  };
-}
-
-export async function importKnowledgeFiles(params: {
-  userId: string;
-  collectionId: string;
-  files: File[];
-  input?: KnowledgeBatchFileImportRequest;
-}): Promise<KnowledgeBatchImportData> {
-  await requireKnowledgeCollection(params.userId, params.collectionId);
-
-  const results: KnowledgeBatchImportItem[] = [];
-
-  for (const file of params.files) {
-    try {
-      const result = await importKnowledgeFile({
-        userId: params.userId,
-        collectionId: params.collectionId,
-        file,
-        input: {
-          summary: params.input?.summary,
-          tags: params.input?.tags,
-        },
-      });
-
-      results.push(
-        toBatchAccepted({
-          file,
-          result,
-        }),
-      );
-    } catch (error) {
-      results.push(
-        toBatchFailure({
-          error,
-          file,
-        }),
-      );
-    }
-  }
-
-  const collection = await requireKnowledgeCollection(
-    params.userId,
-    params.collectionId,
-  );
-  const acceptedCount = results.filter((item) => item.accepted).length;
-  const rejectedCount = results.length - acceptedCount;
-
-  return {
-    collection,
-    results,
-    totalCount: results.length,
-    acceptedCount,
-    rejectedCount,
-  };
+export async function waitForPendingKnowledgeImports(): Promise<void> {
+  return;
 }

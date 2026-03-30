@@ -7,9 +7,11 @@ import {
 } from "ai";
 import { ChatReplyStreamDataEventSchema } from "@atlas-kb/schema";
 import type {
-  LoginRequest,
-  LoginResult,
-  Session,
+  BriefingExport,
+  BriefingExportCreateRequest,
+  BriefingExportData,
+  BriefingExportsData,
+  BriefingOpinionData,
   ChatMessageFeedback,
   ChatMessageFeedbackRequest,
   ChatMessagesData,
@@ -33,8 +35,11 @@ import type {
   KnowledgeSourceUpdateRequest,
   KnowledgeSourcesData,
   KnowledgeTextImportRequest,
+  LoginRequest,
+  LoginResult,
   SearchKnowledgeRequest,
   SearchKnowledgeResult,
+  Session,
 } from "@atlas-kb/schema";
 import {
   clearAuthToken,
@@ -580,6 +585,68 @@ export async function sendChatFeedbackRequest(params: {
       body: JSON.stringify(params.body),
     },
   );
+}
+
+export async function fetchBriefingOpinionRequest(
+  sourceId: string,
+): Promise<BriefingOpinionData> {
+  return requestJson<BriefingOpinionData>(
+    `/api/kb/sources/${encodeURIComponent(sourceId)}/briefing`,
+  );
+}
+
+export async function fetchBriefingExportHistoryRequest(
+  sourceId: string,
+): Promise<BriefingExportsData> {
+  return requestJson<BriefingExportsData>(
+    `/api/kb/sources/${encodeURIComponent(sourceId)}/exports`,
+  );
+}
+
+export async function createBriefingExportRequest(params: {
+  sourceId: string;
+  body: BriefingExportCreateRequest;
+}): Promise<BriefingExportData> {
+  return requestJson<BriefingExportData>(
+    `/api/kb/sources/${encodeURIComponent(params.sourceId)}/exports`,
+    {
+      method: "POST",
+      body: JSON.stringify(params.body),
+    },
+  );
+}
+
+export function downloadBriefingExportFile(exportRecord: BriefingExport): void {
+  const payload = {
+    id: exportRecord.id,
+    sourceId: exportRecord.sourceId,
+    documentId: exportRecord.documentId,
+    title: exportRecord.title,
+    summary: exportRecord.summary,
+    form: exportRecord.form,
+    citations: exportRecord.citations,
+    createdAt: exportRecord.createdAt,
+  };
+  const safeStem = exportRecord.title
+    .trim()
+    .replace(/[^\p{L}\p{N}._-]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
+  const timestamp = exportRecord.createdAt
+    .replace(/[:]/g, "-")
+    .replace(/\.\d+Z$/, "Z");
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json;charset=utf-8",
+  });
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = objectUrl;
+  link.download = `${safeStem || "briefing-export"}-${timestamp}.json`;
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
 }
 
 export async function downloadKnowledgeSourceRequest(params: {

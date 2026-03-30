@@ -1,13 +1,14 @@
 # Atlas KB
 
-Atlas KB is a Bun workspace for a local-first knowledge-base project with auth,
-file upload, and optional Qdrant vector retrieval.
+Atlas KB is a Bun workspace for a multi-user knowledge-base project with auth,
+file upload, chat retrieval, and briefing-opinion generation backed by
+`@cnpap/ops-agent-kit`.
 
 ## Packages
 
 - `@atlas-kb/schema`: shared Zod contracts
 - `@atlas-kb/errors`: shared API errors
-- `@atlas-kb/mastra`: Mastra runtime, ingestion, retrieval, and answer logic
+- `@atlas-kb/mastra`: Mastra runtime, `ops-agent-kit` integration, ingestion, retrieval, chat, and briefing export logic
 - `@atlas-kb/api`: Elysia API for auth, spaces, uploads, search, and ask
 - `@atlas-kb/web`: Vue web console for login and knowledge management
 
@@ -26,17 +27,19 @@ If you need the Mastra runtime separately:
 bun run mastra:dev
 ```
 
-To bring up Qdrant and the app in one command:
+To bring up the shared TimescaleDB + RustFS + Tika stack and the app in one command:
 
 ```bash
 bun run dev:local
 ```
 
-## Default URLs
+## Runtime Dependencies
 
 - API: `http://localhost:6112`
 - Web: `http://localhost:6111`
-- Qdrant: `http://localhost:6333`
+- Tika: `http://localhost:9998`
+- RustFS S3: `http://localhost:9000`
+- TimescaleDB: `postgresql://127.0.0.1:15432/ops_agent_kit`
 
 If `own209.test` resolves to your machine locally, the dev web server also accepts
 `http://own209.test:6111`. By default, Vite proxies `/api/*` to the local API, so
@@ -51,21 +54,25 @@ when you intentionally want the web app to call a different API origin directly.
 Override them in `.env` with `ATLAS_KB_DEFAULT_USERNAME` and
 `ATLAS_KB_DEFAULT_PASSWORD` for anything beyond local development.
 
-## OpenAI Config
+Atlas KB reads infrastructure values from `.env` and expects the shared services in
+`/root/docker/compose.yml`.
+
+Use a dedicated `LANCEDB_URI` scope for Atlas, for example
+`s3://ops-agent-kit/lancedb/atlas-kb`, instead of pointing at a shared root that
+already contains other knowledge indexes. This keeps the two `ops-agent-kit`
+tables isolated while still using the same Lance/S3 backend.
+
+## Model Config
 
 - `OPENAI_BASE_URL`: OpenAI-compatible base URL, default `https://api.openai.com/v1`
-- `OPENAI_API_KEY`: provider key used for ask
+- `OPENAI_API_KEY`: provider key used for chat and task generation
 - `OPENAI_MODEL`: defaults to `gpt-5.4`
-
-## Embedding Config
-
-- `DASHSCOPE_API_KEY`: preferred provider key for embeddings
-- `DASHSCOPE_BASE_URL`: defaults to `https://dashscope.aliyuncs.com/compatible-mode/v1`
-- `DASHSCOPE_EMBEDDING_MODEL`: defaults to `text-embedding-v4`
-
-If `DASHSCOPE_API_KEY` is absent, embeddings fall back to the OpenAI embedding config.
+- `EMBEDDING_*`: embedding model configuration consumed by `ops-agent-kit`
+- `RERANK_*`: rerank model configuration consumed by `ops-agent-kit`
+- `VISION_*`: multimodal model configuration for rich document tasks
 
 ## Upload Support
 
-The current ingestion path accepts text-like files: plain text, markdown, HTML,
-JSON, CSV, XML, and YAML.
+The current ingestion path accepts file and text uploads. File parsing is handled
+through Tika, and the indexed knowledge core lives in LanceDB + S3 via
+`@cnpap/ops-agent-kit`.

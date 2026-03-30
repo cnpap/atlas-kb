@@ -1,4 +1,9 @@
 export {
+  generateBriefingOpinion,
+  getBriefingExportHistory,
+  saveBriefingExport,
+} from "./briefing";
+export {
   createChatReply,
   createChatSession,
   deleteChatSession,
@@ -23,10 +28,6 @@ export {
   uploadKnowledgeDocument,
   waitForPendingKnowledgeImports,
 } from "./ingest";
-export {
-  detectPreferredRetrievalEngine,
-  resetKnowledgeVectorState,
-} from "./qdrant";
 export { runKnowledgeAgentQuestion } from "./agent";
 export {
   answerKnowledgeQuestion,
@@ -34,11 +35,12 @@ export {
   searchKnowledge,
 } from "./search";
 export {
-  archiveKnowledgeSource,
   appendChatMessage,
+  archiveKnowledgeSource,
   createImportJob,
   createKnowledgeCollection,
   createKnowledgeSpace,
+  createSourceDraft,
   deleteKnowledgeCollection,
   deleteKnowledgeSource,
   getChatMessagesData,
@@ -53,12 +55,13 @@ export {
   getKnowledgeSourceData,
   getKnowledgeSpace,
   getKnowledgeSpaceDocuments,
-  getLatestSourceVersion,
+  getStoredSourceRecord,
   listImportJobs,
   listKnowledgeCollections,
   listKnowledgeDocuments,
   listKnowledgeSources,
   listKnowledgeSpaces,
+  replaceSourceContent,
   requireChatSession,
   requireKnowledgeCollection,
   requireKnowledgeSource,
@@ -78,3 +81,4 @@ export {
   getDefaultUsername,
   requireAuthUser,
 } from "./users";
+export { resetKnowledgeRuntimeCache } from "./runtime";

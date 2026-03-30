@@ -4,7 +4,7 @@ import {
   getDefaultPassword,
   getDefaultUsername,
   resetKnowledgeRepository,
-  resetKnowledgeVectorState,
+  resetKnowledgeRuntimeCache,
   waitForPendingKnowledgeImports,
 } from "@atlas-kb/mastra/knowledge";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -15,6 +15,15 @@ import { createApp } from "./app";
 const originalFetch = globalThis.fetch;
 const originalApiKey = process.env.OPENAI_API_KEY;
 const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
+const originalLanceUri = process.env.LANCEDB_URI;
+
+function createTestLanceUri(): string {
+  const baseUri =
+    originalLanceUri?.replace(/\/+$/g, "") ??
+    "s3://ops-agent-kit/lancedb/atlas-kb";
+
+  return `${baseUri}/test-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -65,13 +74,66 @@ function readMessageText(value: unknown): string {
     .join("\n");
 }
 
+function readJsonRequestBody(
+  value: BodyInit | null | undefined,
+): Record<string, unknown> {
+  if (typeof value !== "string" || !value.trim()) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(value) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+async function readTextRequestBody(
+  value: BodyInit | null | undefined,
+): Promise<string> {
+  if (!value) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value instanceof Uint8Array) {
+    return new TextDecoder().decode(value);
+  }
+
+  if (value instanceof ArrayBuffer) {
+    return new TextDecoder().decode(new Uint8Array(value));
+  }
+
+  if (value instanceof Blob) {
+    return value.text();
+  }
+
+  return "";
+}
+
 function mockModelProviders() {
   globalThis.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input.url;
-    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    const body = readJsonRequestBody(init?.body);
     const messages = Array.isArray(body.messages) ? body.messages : [];
     const systemPrompt = readMessageText(messages[0]?.content);
     const lastMessage = messages[messages.length - 1];
+
+    if (url.includes("/rmeta/text")) {
+      const content = await readTextRequestBody(init?.body);
+
+      return jsonResponse([
+        {
+          "Content-Type": "text/plain",
+          "X-TIKA:content": content || "这是原始文件正文。",
+          "dc:title": "用户手册",
+          resourceName: "用户手册.txt",
+        },
+      ]);
+    }
 
     if (url.includes("/embeddings")) {
       const inputValues = Array.isArray(body.input) ? body.input : [];
@@ -200,16 +262,17 @@ describe("@atlas-kb/api authenticated workspace", () => {
   beforeEach(async () => {
     knowledgeDataDir = await mkdtemp(join(tmpdir(), "atlas-kb-api-test-"));
     process.env.ATLAS_KB_DATA_DIR = knowledgeDataDir;
+    process.env.LANCEDB_URI = createTestLanceUri();
     process.env.OPENAI_API_KEY = "test-key";
-    resetKnowledgeRepository();
-    resetKnowledgeVectorState();
+    resetKnowledgeRuntimeCache();
+    await resetKnowledgeRepository();
     mockModelProviders();
   });
 
   afterEach(async () => {
     await waitForPendingKnowledgeImports();
-    resetKnowledgeRepository();
-    resetKnowledgeVectorState();
+    resetKnowledgeRuntimeCache();
+    await resetKnowledgeRepository();
     globalThis.fetch = originalFetch;
 
     if (originalApiKey === undefined) {
@@ -224,6 +287,13 @@ describe("@atlas-kb/api authenticated workspace", () => {
       process.env.ATLAS_KB_DATA_DIR = originalDataDir;
     }
 
+    if (originalLanceUri === undefined) {
+      delete process.env.LANCEDB_URI;
+    } else {
+      process.env.LANCEDB_URI = originalLanceUri;
+    }
+
+    resetKnowledgeRuntimeCache();
     await rm(knowledgeDataDir, { force: true, recursive: true });
   });
 
@@ -475,7 +545,7 @@ describe("@atlas-kb/api authenticated workspace", () => {
     }>(importResponse);
 
     expect(importResponse.status).toBe(200);
-    expect(importData.source.status).toBe("processing");
+    expect(importData.source.status).toBe("ready");
 
     await waitForPendingKnowledgeImports();
 
@@ -640,7 +710,20 @@ describe("@atlas-kb/api authenticated workspace", () => {
   it("returns sanitized chat errors without leaking provider configuration details", async () => {
     globalThis.fetch = async (input, init) => {
       const url = typeof input === "string" ? input : input.url;
-      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      const body = readJsonRequestBody(init?.body);
+
+      if (url.includes("/rmeta/text")) {
+        const content = await readTextRequestBody(init?.body);
+
+        return jsonResponse([
+          {
+            "Content-Type": "text/plain",
+            "X-TIKA:content": content || "这是一条测试资料。",
+            "dc:title": "测试资料",
+            resourceName: "测试资料.txt",
+          },
+        ]);
+      }
 
       if (url.includes("/embeddings")) {
         const inputValues = Array.isArray(body.input) ? body.input : [];

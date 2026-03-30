@@ -1,5 +1,7 @@
 <script setup lang="ts">
   import type {
+    BriefingExport,
+    BriefingForm,
     ChatMessage,
     ChatTraceEvent,
     ChatSession,
@@ -12,12 +14,15 @@
   import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
   import { useRoute, useRouter } from "vue-router";
   import {
+    createBriefingExportRequest,
     createChatSessionRequest,
     createKnowledgeCollectionRequest,
     deleteChatSessionRequest,
     deleteKnowledgeCollectionRequest,
     deleteKnowledgeSourceRequest,
+    downloadBriefingExportFile,
     downloadKnowledgeSourceRequest,
+    fetchBriefingOpinionRequest,
     fetchChatMessagesRequest,
     fetchKnowledgeCollectionSources,
     getErrorMessage,
@@ -40,6 +45,7 @@
   import { generateClientId } from "@/lib/ids";
   import CollectionSettingsModal from "@/features/app/components/CollectionSettingsModal.vue";
   import CreateCollectionModal from "@/features/app/components/CreateCollectionModal.vue";
+  import BriefingOpinionModal from "@/features/app/components/BriefingOpinionModal.vue";
   import ImportSourcesModal from "@/features/app/components/ImportSourcesModal.vue";
   import SourceEditorModal from "@/features/app/components/SourceEditorModal.vue";
   import WorkspaceChatPane from "@/features/app/components/WorkspaceChatPane.vue";
@@ -62,14 +68,17 @@
   const sessions = ref<ChatSession[]>([]);
   const sources = ref<KnowledgeSource[]>([]);
   const messages = ref<ChatMessage[]>([]);
+  const briefingHistory = ref<BriefingExport[]>([]);
 
   const loadingCollections = ref(true);
   const loadingSessions = ref(true);
   const loadingMessages = ref(false);
   const loadingSources = ref(false);
+  const loadingBriefing = ref(false);
   const replying = ref(false);
   const creatingCollection = ref(false);
   const savingCollection = ref(false);
+  const savingBriefing = ref(false);
   const savingSource = ref(false);
   const importPending = ref(false);
   const sourceActionId = ref("");
@@ -78,8 +87,12 @@
   const sourceFilter = ref("");
   const selectedAssistantMessageId = ref("");
   const suspendedMessageLoadSessionId = ref("");
+  const briefing = ref<
+    Awaited<ReturnType<typeof fetchBriefingOpinionRequest>>["briefing"] | null
+  >(null);
 
   const showCreateCollection = ref(false);
+  const showBriefingModal = ref(false);
   const showImportModal = ref(false);
   const showSourceEditorModal = ref(false);
   const showCollectionSettingsModal = ref(false);
@@ -276,6 +289,21 @@
       .filter(Boolean);
 
     return tags.length > 0 ? [...new Set(tags)] : undefined;
+  }
+
+  function getBriefingExportSummary(
+    source: KnowledgeSource,
+    form: BriefingForm,
+  ) {
+    return (
+      form.briefingOpinion.trim() ||
+      briefing.value?.summary ||
+      `${source.title} 拟办意见`
+    );
+  }
+
+  function downloadBriefingRecord(item: BriefingExport) {
+    downloadBriefingExportFile(item);
   }
 
   async function replaceWorkspaceQuery(
@@ -898,6 +926,78 @@
     }
   }
 
+  async function loadBriefing(sourceId: string) {
+    loadingBriefing.value = true;
+    error.value = "";
+
+    try {
+      const data = await fetchBriefingOpinionRequest(sourceId);
+      briefing.value = data.briefing;
+      briefingHistory.value = data.history;
+    } catch (cause) {
+      briefing.value = null;
+      briefingHistory.value = [];
+      error.value = cause instanceof Error ? cause.message : "拟办意见生成失败";
+    } finally {
+      loadingBriefing.value = false;
+    }
+  }
+
+  async function openBriefing(source: KnowledgeSource) {
+    if (source.status !== "ready") {
+      error.value = "当前资料尚未处理完成，暂时无法生成拟办意见";
+      return;
+    }
+
+    await replaceWorkspaceQuery({
+      group: source.collectionId,
+      source: source.id,
+      panel: "library",
+    });
+    showBriefingModal.value = true;
+    await loadBriefing(source.id);
+  }
+
+  async function refreshBriefing() {
+    if (!selectedSource.value) {
+      return;
+    }
+
+    await loadBriefing(selectedSource.value.id);
+  }
+
+  async function exportBriefing(payload: {
+    citations: BriefingExport["citations"];
+    form: BriefingForm;
+  }) {
+    if (!selectedSource.value) {
+      return;
+    }
+
+    savingBriefing.value = true;
+    error.value = "";
+
+    try {
+      const data = await createBriefingExportRequest({
+        sourceId: selectedSource.value.id,
+        body: {
+          summary: getBriefingExportSummary(selectedSource.value, payload.form),
+          form: payload.form,
+          citations: payload.citations,
+        },
+      });
+
+      briefingHistory.value = [data.export, ...briefingHistory.value];
+      downloadBriefingRecord(data.export);
+      showBriefingModal.value = false;
+      showToast("拟办意见已导出");
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : "导出拟办意见失败";
+    } finally {
+      savingBriefing.value = false;
+    }
+  }
+
   async function reprocessSource(source: KnowledgeSource) {
     sourceActionId.value = source.id;
     error.value = "";
@@ -932,6 +1032,12 @@
         await replaceWorkspaceQuery({
           source: undefined,
         });
+      }
+
+      if (selectedSource.value?.id === source.id) {
+        briefing.value = null;
+        briefingHistory.value = [];
+        showBriefingModal.value = false;
       }
 
       showSourceEditorModal.value = false;
@@ -1071,6 +1177,7 @@
       :source-action-id="sourceActionId"
       :source-filter="sourceFilter"
       :used-hits="usedHits"
+      @open-briefing="openBriefing"
       @delete-source="deleteSource"
       @download-source="downloadSource"
       @edit-source="openSource"
@@ -1094,6 +1201,18 @@
     :pending="importPending"
     @submit:file="submitFileImport"
     @submit:text="submitTextImport"
+  />
+
+  <BriefingOpinionModal
+    v-model:open="showBriefingModal"
+    :briefing="briefing"
+    :history="briefingHistory"
+    :loading="loadingBriefing"
+    :pending="savingBriefing"
+    :source="selectedSource"
+    @download-history="downloadBriefingRecord"
+    @refresh="refreshBriefing"
+    @submit="exportBriefing"
   />
 
   <SourceEditorModal

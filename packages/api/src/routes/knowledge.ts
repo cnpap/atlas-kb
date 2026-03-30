@@ -4,6 +4,8 @@ import {
   createKnowledgeSpace,
   deleteKnowledgeCollection,
   deleteKnowledgeSource,
+  generateBriefingOpinion,
+  getBriefingExportHistory,
   getKnowledgeCollectionData,
   getKnowledgeCollectionSourcesData,
   getKnowledgeDocumentDownload,
@@ -18,6 +20,7 @@ import {
   listKnowledgeSpaces,
   refreshKnowledgeSource,
   retryKnowledgeSource,
+  saveBriefingExport,
   searchKnowledge,
   updateKnowledgeCollection,
   updateKnowledgeSource,
@@ -27,6 +30,10 @@ import { BadRequestError } from "@atlas-kb/errors";
 import {
   AskKnowledgeRequestSchema,
   AskKnowledgeResponseSchema,
+  BriefingExportCreateRequestSchema,
+  BriefingExportResponseSchema,
+  BriefingExportsResponseSchema,
+  BriefingOpinionResponseSchema,
   KnowledgeBatchFileImportRequestSchema,
   KnowledgeBatchImportResponseSchema,
   KnowledgeCollectionCreateRequestSchema,
@@ -366,6 +373,56 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
     },
     {
       params: KnowledgeSourceIdParamsSchema,
+    },
+  )
+  .get(
+    "/sources/:sourceId/briefing",
+    async ({ params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success(
+        await generateBriefingOpinion({
+          userId: session.user.id,
+          sourceId: params.sourceId,
+        }),
+      );
+    },
+    {
+      params: KnowledgeSourceIdParamsSchema,
+      response: BriefingOpinionResponseSchema,
+    },
+  )
+  .get(
+    "/sources/:sourceId/exports",
+    async ({ params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success(
+        await getBriefingExportHistory({
+          userId: session.user.id,
+          sourceId: params.sourceId,
+        }),
+      );
+    },
+    {
+      params: KnowledgeSourceIdParamsSchema,
+      response: BriefingExportsResponseSchema,
+    },
+  )
+  .post(
+    "/sources/:sourceId/exports",
+    async ({ body, params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success(
+        await saveBriefingExport({
+          userId: session.user.id,
+          sourceId: params.sourceId,
+          input: body,
+        }),
+      );
+    },
+    {
+      body: BriefingExportCreateRequestSchema,
+      params: KnowledgeSourceIdParamsSchema,
+      response: BriefingExportResponseSchema,
     },
   )
   .post(

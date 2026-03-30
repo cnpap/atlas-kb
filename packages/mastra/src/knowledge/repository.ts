@@ -1,5 +1,6 @@
 import { NotFoundError } from "@atlas-kb/errors";
 import type {
+  BriefingExport,
   ChatMessage,
   ChatMessageFeedback,
   ChatMessageFeedbackRequest,
@@ -18,16 +19,16 @@ import type {
   KnowledgeSourcesData,
   SearchKnowledgeResult,
 } from "@atlas-kb/schema";
-import { getKnowledgeDatabasePath } from "./config";
-import { getKnowledgeDatabase, resetKnowledgeDatabase } from "./db";
 import {
   buildContentPreview,
-  buildLexicalIndexText,
+  buildKnowledgeSourceDownloadPath,
   buildSummary,
-  chunkKnowledgeContent,
   normalizeWhitespace,
   slugify,
 } from "./search-utils";
+import { ensureKnowledgeDatabase, resetKnowledgeDatabase } from "./db";
+import { getDatabaseUrl } from "./config";
+import { deleteManagedSourceFiles } from "./storage";
 
 type CollectionRow = {
   id: string;
@@ -36,10 +37,10 @@ type CollectionRow = {
   description: string;
   color: string;
   icon: string;
-  is_pinned: number;
-  created_at: string;
-  updated_at: string;
-  last_activity_at: string;
+  is_pinned: boolean;
+  created_at: string | Date;
+  updated_at: string | Date;
+  last_activity_at: string | Date;
   document_count: number;
   ready_document_count: number;
   processing_document_count: number;
@@ -50,26 +51,29 @@ type SourceRow = {
   id: string;
   owner_user_id: string;
   collection_id: string;
+  document_id: string;
   title: string;
   summary: string;
   excerpt: string;
   content_preview: string;
   content: string;
-  tags_json: string;
+  tags_json: unknown;
   source_type: KnowledgeSource["sourceType"];
   legacy_source: KnowledgeSource["source"];
   status: KnowledgeSource["status"];
   source_filename: string | null;
   source_url: string | null;
   mime_type: string | null;
-  byte_size: number | null;
+  byte_size: number | string | null;
   latest_version: number;
-  ready_at: string | null;
-  last_processed_at: string | null;
-  snapshot_updated_at: string | null;
+  ready_at: string | Date | null;
+  last_processed_at: string | Date | null;
+  snapshot_updated_at: string | Date | null;
   failure_message: string | null;
-  created_at: string;
-  updated_at: string;
+  original_path: string | null;
+  index_path: string;
+  created_at: string | Date;
+  updated_at: string | Date;
 };
 
 type ImportJobRow = {
@@ -82,8 +86,8 @@ type ImportJobRow = {
   status: KnowledgeImportJob["status"];
   attempt: number;
   error_message: string | null;
-  started_at: string;
-  finished_at: string | null;
+  started_at: string | Date;
+  finished_at: string | Date | null;
 };
 
 type ChatSessionRow = {
@@ -92,9 +96,9 @@ type ChatSessionRow = {
   title: string;
   collection_id: string | null;
   preview: string;
-  created_at: string;
-  updated_at: string;
-  last_message_at: string;
+  created_at: string | Date;
+  updated_at: string | Date;
+  last_message_at: string | Date;
 };
 
 type ChatMessageRow = {
@@ -103,14 +107,26 @@ type ChatMessageRow = {
   session_id: string;
   role: ChatMessage["role"];
   content: string;
-  citations_json: string;
-  retrieval_json: string | null;
-  trace_json: string | null;
-  created_at: string;
+  citations_json: unknown;
+  retrieval_json: unknown;
+  trace_json: unknown;
+  created_at: string | Date;
   feedback_id: string | null;
   feedback_rating: ChatMessageFeedback["rating"] | null;
   feedback_note: string | null;
-  feedback_created_at: string | null;
+  feedback_created_at: string | Date | null;
+};
+
+type BriefingExportRow = {
+  id: string;
+  owner_user_id: string;
+  source_id: string;
+  document_id: string;
+  title: string;
+  summary: string;
+  form_json: unknown;
+  citations_json: unknown;
+  created_at: string | Date;
 };
 
 const collectionQuery = `
@@ -125,10 +141,10 @@ const collectionQuery = `
     c.created_at,
     c.updated_at,
     c.last_activity_at,
-    COUNT(s.id) AS document_count,
-    COALESCE(SUM(CASE WHEN s.status = 'ready' THEN 1 ELSE 0 END), 0) AS ready_document_count,
-    COALESCE(SUM(CASE WHEN s.status = 'processing' THEN 1 ELSE 0 END), 0) AS processing_document_count,
-    COALESCE(SUM(CASE WHEN s.status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_document_count
+    COUNT(s.id)::int AS document_count,
+    COALESCE(SUM(CASE WHEN s.status = 'ready' THEN 1 ELSE 0 END), 0)::int AS ready_document_count,
+    COALESCE(SUM(CASE WHEN s.status = 'processing' THEN 1 ELSE 0 END), 0)::int AS processing_document_count,
+    COALESCE(SUM(CASE WHEN s.status = 'failed' THEN 1 ELSE 0 END), 0)::int AS failed_document_count
   FROM collections c
   LEFT JOIN sources s
     ON s.collection_id = c.id
@@ -139,29 +155,53 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function parseJsonArray(raw: string): string[] {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    return parsed.filter((item): item is string => typeof item === "string");
-  } catch {
-    return [];
-  }
+function toIsoTimestamp(value: string | Date): string {
+  return value instanceof Date ? value.toISOString() : value;
 }
 
-function parseOptionalJson<T>(raw: string | null): T | undefined {
+function toOptionalIsoTimestamp(
+  value: string | Date | null | undefined,
+): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  return toIsoTimestamp(value);
+}
+
+function parseJsonArray(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((value): value is string => typeof value === "string");
+  }
+
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      return Array.isArray(parsed)
+        ? parsed.filter((value): value is string => typeof value === "string")
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+}
+
+function parseOptionalJson<T>(raw: unknown): T | undefined {
   if (!raw) {
     return undefined;
   }
 
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return undefined;
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return undefined;
+    }
   }
+
+  return raw as T;
 }
 
 function toCollection(row: CollectionRow): KnowledgeCollection {
@@ -176,15 +216,16 @@ function toCollection(row: CollectionRow): KnowledgeCollection {
     readyDocumentCount: Number(row.ready_document_count ?? 0),
     processingDocumentCount: Number(row.processing_document_count ?? 0),
     failedDocumentCount: Number(row.failed_document_count ?? 0),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    lastActivityAt: row.last_activity_at,
+    createdAt: toIsoTimestamp(row.created_at),
+    updatedAt: toIsoTimestamp(row.updated_at),
+    lastActivityAt: toIsoTimestamp(row.last_activity_at),
   };
 }
 
 function toSource(row: SourceRow): KnowledgeSource {
   return {
     id: row.id,
+    documentId: row.document_id,
     collectionId: row.collection_id,
     spaceId: row.collection_id,
     title: row.title,
@@ -199,14 +240,17 @@ function toSource(row: SourceRow): KnowledgeSource {
     sourceFilename: row.source_filename ?? undefined,
     sourceUrl: row.source_url ?? undefined,
     mimeType: row.mime_type ?? undefined,
-    byteSize: row.byte_size ?? undefined,
+    byteSize:
+      row.byte_size === null || row.byte_size === undefined
+        ? undefined
+        : Number(row.byte_size),
     latestVersion: row.latest_version,
-    readyAt: row.ready_at ?? undefined,
-    lastProcessedAt: row.last_processed_at ?? undefined,
-    snapshotUpdatedAt: row.snapshot_updated_at ?? undefined,
+    readyAt: toOptionalIsoTimestamp(row.ready_at),
+    lastProcessedAt: toOptionalIsoTimestamp(row.last_processed_at),
+    snapshotUpdatedAt: toOptionalIsoTimestamp(row.snapshot_updated_at),
     failureMessage: row.failure_message ?? undefined,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    createdAt: toIsoTimestamp(row.created_at),
+    updatedAt: toIsoTimestamp(row.updated_at),
   };
 }
 
@@ -220,8 +264,8 @@ function toImportJob(row: ImportJobRow): KnowledgeImportJob {
     status: row.status,
     attempt: row.attempt,
     errorMessage: row.error_message ?? undefined,
-    startedAt: row.started_at,
-    finishedAt: row.finished_at ?? undefined,
+    startedAt: toIsoTimestamp(row.started_at),
+    finishedAt: toOptionalIsoTimestamp(row.finished_at),
   };
 }
 
@@ -231,9 +275,9 @@ function toChatSession(row: ChatSessionRow): ChatSession {
     title: row.title,
     collectionId: row.collection_id ?? undefined,
     preview: row.preview,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    lastMessageAt: row.last_message_at,
+    createdAt: toIsoTimestamp(row.created_at),
+    updatedAt: toIsoTimestamp(row.updated_at),
+    lastMessageAt: toIsoTimestamp(row.last_message_at),
   };
 }
 
@@ -245,7 +289,7 @@ function toChatMessage(row: ChatMessageRow): ChatMessage {
           messageId: row.id,
           rating: row.feedback_rating,
           note: row.feedback_note ?? undefined,
-          createdAt: row.feedback_created_at,
+          createdAt: toIsoTimestamp(row.feedback_created_at),
         }
       : undefined;
 
@@ -254,173 +298,245 @@ function toChatMessage(row: ChatMessageRow): ChatMessage {
     sessionId: row.session_id,
     role: row.role,
     content: row.content,
-    citations: JSON.parse(row.citations_json) as ChatMessage["citations"],
+    citations:
+      parseOptionalJson<ChatMessage["citations"]>(row.citations_json) ?? [],
     retrieval: parseOptionalJson<SearchKnowledgeResult>(row.retrieval_json),
     trace: parseOptionalJson<ChatTraceEvent[]>(row.trace_json),
-    createdAt: row.created_at,
+    createdAt: toIsoTimestamp(row.created_at),
     feedback,
   };
 }
 
-async function touchCollection(collectionId: string): Promise<void> {
-  const database = getKnowledgeDatabase();
-  const now = nowIso();
-
-  database
-    .query(
-      `
-        UPDATE collections
-        SET updated_at = ?, last_activity_at = ?
-        WHERE id = ?
-      `,
-    )
-    .run(now, now, collectionId);
+function toBriefingExport(row: BriefingExportRow): BriefingExport {
+  return {
+    id: row.id,
+    sourceId: row.source_id,
+    documentId: row.document_id,
+    title: row.title,
+    summary: row.summary,
+    form: parseOptionalJson<BriefingExport["form"]>(row.form_json) ?? {
+      sourceOrg: "",
+      documentCode: "",
+      documentTitle: "",
+      receivedAt: "",
+      briefingOpinion: "",
+      pendingQuestions: "",
+    },
+    citations:
+      parseOptionalJson<BriefingExport["citations"]>(row.citations_json) ?? [],
+    createdAt: toIsoTimestamp(row.created_at),
+  };
 }
 
-function getCollectionRow(
+async function touchCollection(collectionId: string) {
+  const sql = await ensureKnowledgeDatabase();
+  await sql`
+    UPDATE collections
+    SET last_activity_at = ${nowIso()}, updated_at = ${nowIso()}
+    WHERE id = ${collectionId}
+  `;
+}
+
+async function getCollectionRow(
   userId: string,
   collectionId: string,
-): CollectionRow | null {
-  const database = getKnowledgeDatabase();
-  return (
-    (database
-      .query(
-        `${collectionQuery}
-        WHERE c.owner_user_id = ? AND c.id = ?
-        GROUP BY c.id`,
-      )
-      .get(userId, collectionId) as CollectionRow | null) ?? null
-  );
+): Promise<CollectionRow | null> {
+  const sql = await ensureKnowledgeDatabase();
+  const [row] = await sql<CollectionRow[]>`
+    ${sql.unsafe(collectionQuery)}
+    WHERE c.owner_user_id = ${userId}
+      AND c.id = ${collectionId}
+    GROUP BY c.id
+    LIMIT 1
+  `;
+  return row ?? null;
 }
 
-function getSourceRow(userId: string, sourceId: string): SourceRow | null {
-  const database = getKnowledgeDatabase();
-  return (
-    (database
-      .query(
-        `
-          SELECT *
-          FROM sources
-          WHERE owner_user_id = ? AND id = ?
-        `,
-      )
-      .get(userId, sourceId) as SourceRow | null) ?? null
-  );
-}
-
-function getSourceRowUnchecked(sourceId: string): SourceRow | null {
-  const database = getKnowledgeDatabase();
-  return (
-    (database
-      .query(
-        `
-          SELECT *
-          FROM sources
-          WHERE id = ?
-        `,
-      )
-      .get(sourceId) as SourceRow | null) ?? null
-  );
-}
-
-function getChatSessionRow(
+async function getSourceRow(
   userId: string,
-  sessionId: string,
-): ChatSessionRow | null {
-  const database = getKnowledgeDatabase();
-  return (
-    (database
-      .query(
-        `
-          SELECT *
-          FROM chat_sessions
-          WHERE owner_user_id = ? AND id = ?
-        `,
-      )
-      .get(userId, sessionId) as ChatSessionRow | null) ?? null
-  );
+  sourceId: string,
+): Promise<SourceRow | null> {
+  const sql = await ensureKnowledgeDatabase();
+  const [row] = await sql<SourceRow[]>`
+    SELECT
+      id,
+      owner_user_id,
+      collection_id,
+      document_id,
+      title,
+      summary,
+      excerpt,
+      content_preview,
+      content,
+      tags_json,
+      source_type,
+      legacy_source,
+      status,
+      source_filename,
+      source_url,
+      mime_type,
+      byte_size,
+      latest_version,
+      ready_at,
+      last_processed_at,
+      snapshot_updated_at,
+      failure_message,
+      original_path,
+      index_path,
+      created_at,
+      updated_at
+    FROM sources
+    WHERE owner_user_id = ${userId}
+      AND id = ${sourceId}
+    LIMIT 1
+  `;
+
+  return row ?? null;
 }
 
-function createUniqueId(
-  table: "collections" | "sources",
-  base: string,
-): string {
-  const database = getKnowledgeDatabase();
-  const normalizedBase = slugify(base || table.slice(0, -1));
-  let id = normalizedBase;
-  let suffix = 1;
-
-  while (database.query(`SELECT id FROM ${table} WHERE id = ?`).get(id)) {
-    id = `${normalizedBase}-${suffix}`;
-    suffix += 1;
-  }
-
-  return id;
+export async function getStoredSourceRecord(
+  userId: string,
+  sourceId: string,
+): Promise<SourceRow | null> {
+  return getSourceRow(userId, sourceId);
 }
 
-export interface StoredKnowledgeSource extends KnowledgeSource {
-  filePath?: string;
-  parser?: string;
-  snapshotHtml?: string;
+async function getSourceRowByDocumentId(
+  userId: string,
+  documentId: string,
+): Promise<SourceRow | null> {
+  const sql = await ensureKnowledgeDatabase();
+  const [row] = await sql<SourceRow[]>`
+    SELECT
+      id,
+      owner_user_id,
+      collection_id,
+      document_id,
+      title,
+      summary,
+      excerpt,
+      content_preview,
+      content,
+      tags_json,
+      source_type,
+      legacy_source,
+      status,
+      source_filename,
+      source_url,
+      mime_type,
+      byte_size,
+      latest_version,
+      ready_at,
+      last_processed_at,
+      snapshot_updated_at,
+      failure_message,
+      original_path,
+      index_path,
+      created_at,
+      updated_at
+    FROM sources
+    WHERE owner_user_id = ${userId}
+      AND document_id = ${documentId}
+    LIMIT 1
+  `;
+
+  return row ?? null;
 }
 
-export interface StoredSourceVersion {
-  id: string;
-  sourceId: string;
-  version: number;
-  parser: string;
-  content: string;
-  contentPreview: string;
-  mimeType?: string;
-  byteSize?: number;
-  filePath?: string;
-  snapshotHtml?: string;
-  sourceUrl?: string;
-  createdAt: string;
+export async function getStoredSourceRecordByDocumentId(
+  userId: string,
+  documentId: string,
+): Promise<SourceRow | null> {
+  return getSourceRowByDocumentId(userId, documentId);
 }
 
 export function resolveDatabasePath(): string {
-  return getKnowledgeDatabasePath();
+  return getDatabaseUrl();
 }
 
 export function toStoredKnowledgeSource(
   source: KnowledgeSource,
-): StoredKnowledgeSource {
-  return { ...source };
+): KnowledgeSource {
+  return source;
 }
 
-export function resetKnowledgeRepository(): void {
-  resetKnowledgeDatabase();
+export async function resetKnowledgeRepository(): Promise<void> {
+  await resetKnowledgeDatabase();
 }
 
 export async function listKnowledgeCollections(
   userId: string,
 ): Promise<KnowledgeCollection[]> {
-  const database = getKnowledgeDatabase();
-  const rows = database
-    .query(
-      `${collectionQuery}
-      WHERE c.owner_user_id = ?
-      GROUP BY c.id
-      ORDER BY c.is_pinned DESC, c.last_activity_at DESC, c.name ASC`,
-    )
-    .all(userId) as CollectionRow[];
+  const sql = await ensureKnowledgeDatabase();
+  const rows = await sql<CollectionRow[]>`
+    ${sql.unsafe(collectionQuery)}
+    WHERE c.owner_user_id = ${userId}
+    GROUP BY c.id
+    ORDER BY c.is_pinned DESC, c.updated_at DESC
+  `;
 
-  return rows.map(toCollection);
+  return rows.map((row) => toCollection(row));
 }
 
-export async function listKnowledgeSpaces(
-  userId: string,
-): Promise<KnowledgeCollection[]> {
-  return listKnowledgeCollections(userId);
+export async function createKnowledgeCollection(params: {
+  userId: string;
+  input: KnowledgeCollectionCreateRequest;
+}): Promise<KnowledgeCollection> {
+  const sql = await ensureKnowledgeDatabase();
+  const now = nowIso();
+  const id =
+    params.input.id?.trim() ||
+    `${slugify(params.input.name).slice(0, 40)}-${crypto.randomUUID().slice(0, 8)}`;
+
+  await sql`
+    INSERT INTO collections (
+      id,
+      owner_user_id,
+      name,
+      description,
+      color,
+      icon,
+      is_pinned,
+      created_at,
+      updated_at,
+      last_activity_at
+    ) VALUES (
+      ${id},
+      ${params.userId},
+      ${params.input.name.trim()},
+      ${params.input.description.trim()},
+      ${params.input.color?.trim() || "#0f766e"},
+      ${params.input.icon?.trim() || "i-lucide-library"},
+      ${false},
+      ${now},
+      ${now},
+      ${now}
+    )
+    ON CONFLICT (id) DO NOTHING
+  `;
+
+  return requireKnowledgeCollection(params.userId, id);
 }
 
 export async function getKnowledgeCollection(
   userId: string,
   collectionId: string,
 ): Promise<KnowledgeCollection | undefined> {
-  const row = getCollectionRow(userId, collectionId);
+  const row = await getCollectionRow(userId, collectionId);
   return row ? toCollection(row) : undefined;
+}
+
+export async function requireKnowledgeCollection(
+  userId: string,
+  collectionId: string,
+): Promise<KnowledgeCollection> {
+  const collection = await getKnowledgeCollection(userId, collectionId);
+
+  if (!collection) {
+    throw new NotFoundError(`Collection "${collectionId}" not found`);
+  }
+
+  return collection;
 }
 
 export async function getKnowledgeCollectionData(
@@ -432,122 +548,27 @@ export async function getKnowledgeCollectionData(
   };
 }
 
-export async function getKnowledgeSpace(
-  userId: string,
-  spaceId: string,
-): Promise<KnowledgeCollection | undefined> {
-  return getKnowledgeCollection(userId, spaceId);
-}
-
-export async function requireKnowledgeCollection(
-  userId: string,
-  collectionId: string,
-): Promise<KnowledgeCollection> {
-  const collection = await getKnowledgeCollection(userId, collectionId);
-
-  if (!collection) {
-    throw new NotFoundError(`Knowledge collection "${collectionId}" not found`);
-  }
-
-  return collection;
-}
-
-export async function requireKnowledgeSpace(
-  userId: string,
-  spaceId: string,
-): Promise<KnowledgeCollection> {
-  return requireKnowledgeCollection(userId, spaceId);
-}
-
-export async function createKnowledgeCollection(params: {
-  userId: string;
-  input: KnowledgeCollectionCreateRequest;
-}): Promise<KnowledgeCollection> {
-  const database = getKnowledgeDatabase();
-  const id = createUniqueId(
-    "collections",
-    params.input.id ? params.input.id : params.input.name,
-  );
-  const now = nowIso();
-
-  database
-    .query(
-      `
-        INSERT INTO collections (
-          id,
-          owner_user_id,
-          name,
-          description,
-          color,
-          icon,
-          is_pinned,
-          created_at,
-          updated_at,
-          last_activity_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-    )
-    .run(
-      id,
-      params.userId,
-      params.input.name.trim(),
-      params.input.description.trim(),
-      params.input.color?.trim() || "#0f766e",
-      params.input.icon?.trim() || "i-lucide-library",
-      0,
-      now,
-      now,
-      now,
-    );
-
-  return requireKnowledgeCollection(params.userId, id);
-}
-
-export async function createKnowledgeSpace(params: {
-  userId: string;
-  input: KnowledgeCollectionCreateRequest;
-}): Promise<KnowledgeCollection> {
-  return createKnowledgeCollection(params);
-}
-
 export async function updateKnowledgeCollection(params: {
   userId: string;
   collectionId: string;
   input: KnowledgeCollectionUpdateRequest;
 }): Promise<KnowledgeCollection> {
-  const collection = await requireKnowledgeCollection(
-    params.userId,
-    params.collectionId,
-  );
-  const database = getKnowledgeDatabase();
+  await requireKnowledgeCollection(params.userId, params.collectionId);
+  const sql = await ensureKnowledgeDatabase();
   const now = nowIso();
 
-  database
-    .query(
-      `
-        UPDATE collections
-        SET
-          name = ?,
-          description = ?,
-          color = ?,
-          icon = ?,
-          is_pinned = ?,
-          updated_at = ?,
-          last_activity_at = ?
-        WHERE owner_user_id = ? AND id = ?
-      `,
-    )
-    .run(
-      params.input.name?.trim() || collection.name,
-      params.input.description?.trim() || collection.description,
-      params.input.color?.trim() || collection.color,
-      params.input.icon?.trim() || collection.icon,
-      Number(params.input.isPinned ?? collection.isPinned),
-      now,
-      now,
-      params.userId,
-      params.collectionId,
-    );
+  await sql`
+    UPDATE collections
+    SET
+      name = COALESCE(${params.input.name?.trim() || null}, name),
+      description = COALESCE(${params.input.description?.trim() || null}, description),
+      color = COALESCE(${params.input.color?.trim() || null}, color),
+      icon = COALESCE(${params.input.icon?.trim() || null}, icon),
+      is_pinned = COALESCE(${params.input.isPinned ?? null}, is_pinned),
+      updated_at = ${now}
+    WHERE owner_user_id = ${params.userId}
+      AND id = ${params.collectionId}
+  `;
 
   return requireKnowledgeCollection(params.userId, params.collectionId);
 }
@@ -556,46 +577,60 @@ export async function deleteKnowledgeCollection(
   userId: string,
   collectionId: string,
 ): Promise<void> {
-  await requireKnowledgeCollection(userId, collectionId);
-  const database = getKnowledgeDatabase();
-  database
-    .query("DELETE FROM collections WHERE owner_user_id = ? AND id = ?")
-    .run(userId, collectionId);
+  const sources = await listKnowledgeSources(userId, collectionId);
+  const sql = await ensureKnowledgeDatabase();
+
+  await sql`
+    DELETE FROM collections
+    WHERE owner_user_id = ${userId}
+      AND id = ${collectionId}
+  `;
+
+  await Promise.all(
+    sources.map((source) => deleteManagedSourceFiles(source.id)),
+  );
 }
 
 export async function listKnowledgeSources(
   userId: string,
   collectionId?: string,
 ): Promise<KnowledgeSource[]> {
-  const database = getKnowledgeDatabase();
+  const sql = await ensureKnowledgeDatabase();
+  const rows = await sql<SourceRow[]>`
+    SELECT
+      id,
+      owner_user_id,
+      collection_id,
+      document_id,
+      title,
+      summary,
+      excerpt,
+      content_preview,
+      content,
+      tags_json,
+      source_type,
+      legacy_source,
+      status,
+      source_filename,
+      source_url,
+      mime_type,
+      byte_size,
+      latest_version,
+      ready_at,
+      last_processed_at,
+      snapshot_updated_at,
+      failure_message,
+      original_path,
+      index_path,
+      created_at,
+      updated_at
+    FROM sources
+    WHERE owner_user_id = ${userId}
+      ${collectionId ? sql`AND collection_id = ${collectionId}` : sql``}
+    ORDER BY updated_at DESC
+  `;
 
-  if (collectionId) {
-    await requireKnowledgeCollection(userId, collectionId);
-  }
-
-  const rows = collectionId
-    ? (database
-        .query(
-          `
-            SELECT *
-            FROM sources
-            WHERE owner_user_id = ? AND collection_id = ?
-            ORDER BY updated_at DESC, title ASC
-          `,
-        )
-        .all(userId, collectionId) as SourceRow[])
-    : (database
-        .query(
-          `
-            SELECT *
-            FROM sources
-            WHERE owner_user_id = ?
-            ORDER BY updated_at DESC, title ASC
-          `,
-        )
-        .all(userId) as SourceRow[]);
-
-  return rows.map(toSource);
+  return rows.map((row) => toSource(row));
 }
 
 export async function listKnowledgeDocuments(
@@ -608,16 +643,9 @@ export async function listKnowledgeDocuments(
 export async function getKnowledgeCollectionSources(
   userId: string,
   collectionId: string,
-): Promise<KnowledgeDocumentsData> {
-  const [collection, sources] = await Promise.all([
-    requireKnowledgeCollection(userId, collectionId),
-    listKnowledgeSources(userId, collectionId),
-  ]);
-
-  return {
-    space: collection,
-    documents: sources,
-  };
+): Promise<KnowledgeSource[]> {
+  await requireKnowledgeCollection(userId, collectionId);
+  return listKnowledgeSources(userId, collectionId);
 }
 
 export async function getKnowledgeCollectionSourcesData(
@@ -626,7 +654,7 @@ export async function getKnowledgeCollectionSourcesData(
 ): Promise<KnowledgeSourcesData> {
   const [collection, sources] = await Promise.all([
     requireKnowledgeCollection(userId, collectionId),
-    listKnowledgeSources(userId, collectionId),
+    getKnowledgeCollectionSources(userId, collectionId),
   ]);
 
   return {
@@ -635,19 +663,33 @@ export async function getKnowledgeCollectionSourcesData(
   };
 }
 
-export async function getKnowledgeSpaceDocuments(
-  userId: string,
-  collectionId: string,
-): Promise<KnowledgeDocumentsData> {
-  return getKnowledgeCollectionSources(userId, collectionId);
-}
-
 export async function getKnowledgeSourceById(
   userId: string,
   sourceId: string,
 ): Promise<KnowledgeSource | undefined> {
-  const row = getSourceRow(userId, sourceId);
+  const row = await getSourceRow(userId, sourceId);
   return row ? toSource(row) : undefined;
+}
+
+export async function getDocumentById(
+  userId: string,
+  documentId: string,
+): Promise<KnowledgeSource | undefined> {
+  const row = await getSourceRowByDocumentId(userId, documentId);
+  return row ? toSource(row) : undefined;
+}
+
+export async function requireKnowledgeSource(
+  userId: string,
+  sourceId: string,
+): Promise<KnowledgeSource> {
+  const source = await getKnowledgeSourceById(userId, sourceId);
+
+  if (!source) {
+    throw new NotFoundError(`Source "${sourceId}" not found`);
+  }
+
+  return source;
 }
 
 export async function getKnowledgeSourceData(
@@ -659,173 +701,328 @@ export async function getKnowledgeSourceData(
   };
 }
 
-export async function getDocumentById(
+export async function createSourceDraft(params: {
+  sourceId?: string;
+  userId: string;
+  collectionId: string;
+  sourceType: KnowledgeSource["sourceType"];
+  title: string;
+  summary?: string;
+  tags?: string[];
+  sourceFilename?: string;
+  sourceUrl?: string;
+  mimeType?: string;
+  byteSize?: number;
+  source?: KnowledgeSource["source"];
+  originalPath?: string | null;
+  indexPath: string;
+}): Promise<KnowledgeSource> {
+  await requireKnowledgeCollection(params.userId, params.collectionId);
+  const sql = await ensureKnowledgeDatabase();
+  const now = nowIso();
+  const id = params.sourceId ?? crypto.randomUUID();
+
+  await sql`
+    INSERT INTO sources (
+      id,
+      owner_user_id,
+      collection_id,
+      document_id,
+      title,
+      summary,
+      excerpt,
+      content_preview,
+      content,
+      tags_json,
+      source_type,
+      legacy_source,
+      status,
+      source_filename,
+      source_url,
+      mime_type,
+      byte_size,
+      latest_version,
+      ready_at,
+      last_processed_at,
+      snapshot_updated_at,
+      failure_message,
+      original_path,
+      index_path,
+      created_at,
+      updated_at
+    ) VALUES (
+      ${id},
+      ${params.userId},
+      ${params.collectionId},
+      ${`draft:${id}`},
+      ${params.title.trim()},
+      ${params.summary?.trim() || "资料处理中"},
+      ${params.summary?.trim() || "资料处理中"},
+      ${params.summary?.trim() || "资料处理中"},
+      ${""},
+      ${JSON.stringify(params.tags ?? [])},
+      ${params.sourceType},
+      ${params.source || "upload"},
+      ${"processing"},
+      ${params.sourceFilename ?? null},
+      ${params.sourceUrl ?? null},
+      ${params.mimeType ?? null},
+      ${params.byteSize ?? null},
+      ${0},
+      ${null},
+      ${null},
+      ${null},
+      ${null},
+      ${params.originalPath ?? null},
+      ${params.indexPath},
+      ${now},
+      ${now}
+    )
+  `;
+
+  await touchCollection(params.collectionId);
+  return requireKnowledgeSource(params.userId, id);
+}
+
+export async function replaceSourceContent(params: {
+  userId: string;
+  sourceId: string;
+  documentId: string;
+  title: string;
+  summary?: string;
+  content: string;
+  tags: string[];
+  mimeType?: string;
+  byteSize?: number;
+  sourceFilename?: string;
+  sourceUrl?: string;
+  status: KnowledgeSource["status"];
+  failureMessage?: string;
+  originalPath?: string | null;
+  indexPath: string;
+}): Promise<KnowledgeSource> {
+  const current = await requireKnowledgeSource(params.userId, params.sourceId);
+  const sql = await ensureKnowledgeDatabase();
+  const content = normalizeWhitespace(params.content);
+  const summary = params.summary?.trim() || buildSummary(content);
+  const preview = buildContentPreview(content);
+  const excerpt = buildSummary(content, 160);
+  const nextVersion = current.latestVersion + 1;
+  const now = nowIso();
+
+  await sql`
+    UPDATE sources
+    SET
+      document_id = ${params.documentId},
+      title = ${params.title.trim()},
+      summary = ${summary},
+      excerpt = ${excerpt},
+      content_preview = ${preview},
+      content = ${content},
+      tags_json = ${JSON.stringify(params.tags)},
+      source_filename = ${params.sourceFilename ?? current.sourceFilename ?? null},
+      source_url = ${params.sourceUrl ?? current.sourceUrl ?? null},
+      mime_type = ${params.mimeType ?? current.mimeType ?? null},
+      byte_size = ${params.byteSize ?? current.byteSize ?? null},
+      latest_version = ${nextVersion},
+      status = ${params.status},
+      ready_at = ${params.status === "ready" ? now : null},
+      last_processed_at = ${now},
+      snapshot_updated_at = ${current.sourceType === "url" ? now : (current.snapshotUpdatedAt ?? null)},
+      failure_message = ${params.failureMessage ?? null},
+      original_path = ${params.originalPath ?? null},
+      index_path = ${params.indexPath},
+      updated_at = ${now}
+    WHERE owner_user_id = ${params.userId}
+      AND id = ${params.sourceId}
+  `;
+
+  await touchCollection(current.collectionId);
+  return requireKnowledgeSource(params.userId, params.sourceId);
+}
+
+export async function deleteKnowledgeSource(
   userId: string,
   sourceId: string,
-): Promise<StoredKnowledgeSource | undefined> {
-  const source = await getKnowledgeSourceById(userId, sourceId);
+): Promise<void> {
+  await requireKnowledgeSource(userId, sourceId);
+  const sql = await ensureKnowledgeDatabase();
 
-  if (!source) {
-    return undefined;
-  }
+  await sql`
+    DELETE FROM sources
+    WHERE owner_user_id = ${userId}
+      AND id = ${sourceId}
+  `;
 
-  const version = await getLatestSourceVersion(userId, sourceId);
-
-  return {
-    ...source,
-    filePath: version?.filePath,
-    parser: version?.parser,
-    snapshotHtml: version?.snapshotHtml,
-  };
+  await deleteManagedSourceFiles(sourceId);
 }
 
-export async function getDocumentByIdUnchecked(
-  sourceId: string,
-): Promise<StoredKnowledgeSource | undefined> {
-  const row = getSourceRowUnchecked(sourceId);
-
-  if (!row) {
-    return undefined;
-  }
-
-  const source = toSource(row);
-  const version = await getLatestSourceVersionUnchecked(sourceId);
-
-  return {
-    ...source,
-    filePath: version?.filePath,
-    parser: version?.parser,
-    snapshotHtml: version?.snapshotHtml,
-  };
-}
-
-export async function requireKnowledgeSource(
+export async function archiveKnowledgeSource(
   userId: string,
   sourceId: string,
 ): Promise<KnowledgeSource> {
-  const source = await getKnowledgeSourceById(userId, sourceId);
+  const source = await requireKnowledgeSource(userId, sourceId);
+  const sql = await ensureKnowledgeDatabase();
 
-  if (!source) {
-    throw new NotFoundError(`Knowledge source "${sourceId}" not found`);
-  }
+  await sql`
+    UPDATE sources
+    SET status = ${"archived"}, updated_at = ${nowIso()}
+    WHERE owner_user_id = ${userId}
+      AND id = ${sourceId}
+  `;
 
-  return source;
+  await touchCollection(source.collectionId);
+  return requireKnowledgeSource(userId, sourceId);
 }
 
-export async function getLatestSourceVersion(
-  userId: string,
-  sourceId: string,
-): Promise<StoredSourceVersion | undefined> {
-  await requireKnowledgeSource(userId, sourceId);
-  return getLatestSourceVersionUnchecked(sourceId);
-}
+export async function createImportJob(params: {
+  userId: string;
+  sourceId: string;
+  collectionId: string;
+  sourceType: KnowledgeImportJob["sourceType"];
+  stage: KnowledgeImportJob["stage"];
+  status: KnowledgeImportJob["status"];
+  attempt: number;
+}): Promise<KnowledgeImportJob> {
+  const sql = await ensureKnowledgeDatabase();
+  const job: KnowledgeImportJob = {
+    id: crypto.randomUUID(),
+    sourceId: params.sourceId,
+    collectionId: params.collectionId,
+    sourceType: params.sourceType,
+    stage: params.stage,
+    status: params.status,
+    attempt: params.attempt,
+    startedAt: nowIso(),
+  };
 
-export async function getLatestSourceVersionUnchecked(
-  sourceId: string,
-): Promise<StoredSourceVersion | undefined> {
-  const database = getKnowledgeDatabase();
-  const row = database
-    .query(
-      `
-        SELECT
-          id,
-          source_id,
-          version_number,
-          parser,
-          content,
-          content_preview,
-          mime_type,
-          byte_size,
-          file_path,
-          snapshot_html,
-          source_url,
-          created_at
-        FROM source_versions
-        WHERE source_id = ?
-        ORDER BY version_number DESC
-        LIMIT 1
-      `,
+  await sql`
+    INSERT INTO import_jobs (
+      id,
+      owner_user_id,
+      source_id,
+      collection_id,
+      source_type,
+      stage,
+      status,
+      attempt,
+      error_message,
+      started_at,
+      finished_at
+    ) VALUES (
+      ${job.id},
+      ${params.userId},
+      ${job.sourceId},
+      ${job.collectionId},
+      ${job.sourceType},
+      ${job.stage},
+      ${job.status},
+      ${job.attempt},
+      ${null},
+      ${job.startedAt},
+      ${null}
     )
-    .get(sourceId) as {
-    id: string;
-    source_id: string;
-    version_number: number;
-    parser: string;
-    content: string;
-    content_preview: string;
-    mime_type: string | null;
-    byte_size: number | null;
-    file_path: string | null;
-    snapshot_html: string | null;
-    source_url: string | null;
-    created_at: string;
-  } | null;
+  `;
+
+  return job;
+}
+
+export async function updateImportJob(params: {
+  userId: string;
+  jobId: string;
+  stage: KnowledgeImportJob["stage"];
+  status: KnowledgeImportJob["status"];
+  errorMessage?: string;
+}): Promise<KnowledgeImportJob> {
+  const sql = await ensureKnowledgeDatabase();
+  const finishedAt =
+    params.status === "ready" || params.status === "failed" ? nowIso() : null;
+
+  await sql`
+    UPDATE import_jobs
+    SET
+      stage = ${params.stage},
+      status = ${params.status},
+      error_message = ${params.errorMessage ?? null},
+      finished_at = ${finishedAt}
+    WHERE owner_user_id = ${params.userId}
+      AND id = ${params.jobId}
+  `;
+
+  const [row] = await sql<ImportJobRow[]>`
+    SELECT
+      id,
+      owner_user_id,
+      source_id,
+      collection_id,
+      source_type,
+      stage,
+      status,
+      attempt,
+      error_message,
+      started_at,
+      finished_at
+    FROM import_jobs
+    WHERE owner_user_id = ${params.userId}
+      AND id = ${params.jobId}
+    LIMIT 1
+  `;
 
   if (!row) {
-    return undefined;
+    throw new NotFoundError(`Import job "${params.jobId}" not found`);
   }
 
-  return {
-    id: row.id,
-    sourceId: row.source_id,
-    version: row.version_number,
-    parser: row.parser,
-    content: row.content,
-    contentPreview: row.content_preview,
-    mimeType: row.mime_type ?? undefined,
-    byteSize: row.byte_size ?? undefined,
-    filePath: row.file_path ?? undefined,
-    snapshotHtml: row.snapshot_html ?? undefined,
-    sourceUrl: row.source_url ?? undefined,
-    createdAt: row.created_at,
-  };
+  return toImportJob(row);
 }
 
 export async function listImportJobs(
   userId: string,
-  limit = 50,
 ): Promise<KnowledgeImportJob[]> {
-  const database = getKnowledgeDatabase();
-  const rows = database
-    .query(
-      `
-        SELECT *
-        FROM import_jobs
-        WHERE owner_user_id = ?
-        ORDER BY started_at DESC
-        LIMIT ?
-      `,
-    )
-    .all(userId, limit) as ImportJobRow[];
+  const sql = await ensureKnowledgeDatabase();
+  const rows = await sql<ImportJobRow[]>`
+    SELECT
+      id,
+      owner_user_id,
+      source_id,
+      collection_id,
+      source_type,
+      stage,
+      status,
+      attempt,
+      error_message,
+      started_at,
+      finished_at
+    FROM import_jobs
+    WHERE owner_user_id = ${userId}
+    ORDER BY started_at DESC
+  `;
 
-  return rows.map(toImportJob);
+  return rows.map((row) => toImportJob(row));
 }
 
 export async function getDashboardSummary(
   userId: string,
 ): Promise<DashboardSummary> {
-  const database = getKnowledgeDatabase();
-  const counts = database
-    .query(
-      `
-        SELECT
-          (SELECT COUNT(*) FROM collections WHERE owner_user_id = ?) AS collections_count,
-          (SELECT COUNT(*) FROM sources WHERE owner_user_id = ? AND status = 'ready') AS ready_sources_count,
-          (SELECT COUNT(*) FROM sources WHERE owner_user_id = ? AND status = 'processing') AS processing_sources_count,
-          (SELECT COUNT(*) FROM sources WHERE owner_user_id = ? AND status = 'failed') AS failed_sources_count,
-          (SELECT COUNT(*) FROM chat_sessions WHERE owner_user_id = ?) AS chat_sessions_count
-      `,
-    )
-    .get(userId, userId, userId, userId, userId) as {
-    collections_count: number;
-    ready_sources_count: number;
-    processing_sources_count: number;
-    failed_sources_count: number;
-    chat_sessions_count: number;
-  } | null;
+  const sql = await ensureKnowledgeDatabase();
+  const [counts] = await sql<
+    Array<{
+      collections_count: number;
+      ready_sources_count: number;
+      processing_sources_count: number;
+      failed_sources_count: number;
+      chat_sessions_count: number;
+    }>
+  >`
+    SELECT
+      (SELECT COUNT(*)::int FROM collections WHERE owner_user_id = ${userId}) AS collections_count,
+      (SELECT COUNT(*)::int FROM sources WHERE owner_user_id = ${userId} AND status = 'ready') AS ready_sources_count,
+      (SELECT COUNT(*)::int FROM sources WHERE owner_user_id = ${userId} AND status = 'processing') AS processing_sources_count,
+      (SELECT COUNT(*)::int FROM sources WHERE owner_user_id = ${userId} AND status = 'failed') AS failed_sources_count,
+      (SELECT COUNT(*)::int FROM chat_sessions WHERE owner_user_id = ${userId}) AS chat_sessions_count
+  `;
 
   const [recentCollections, recentSources, recentSessions] = await Promise.all([
-    listKnowledgeCollections(userId).then((items) => items.slice(0, 4)),
+    listKnowledgeCollections(userId).then((items) => items.slice(0, 6)),
     listKnowledgeSources(userId).then((items) => items.slice(0, 6)),
     listChatSessions(userId).then((items) => items.slice(0, 6)),
   ]);
@@ -840,437 +1037,10 @@ export async function getDashboardSummary(
     recentSources,
     recentSessions,
     hasAnyData:
-      Number(counts?.collections_count ?? 0) > 0 ||
-      Number(counts?.chat_sessions_count ?? 0) > 0,
+      recentCollections.length > 0 ||
+      recentSources.length > 0 ||
+      recentSessions.length > 0,
   };
-}
-
-export async function createImportJob(params: {
-  userId: string;
-  collectionId: string;
-  sourceId: string;
-  sourceType: KnowledgeImportJob["sourceType"];
-  attempt: number;
-}): Promise<KnowledgeImportJob> {
-  await Promise.all([
-    requireKnowledgeCollection(params.userId, params.collectionId),
-    requireKnowledgeSource(params.userId, params.sourceId),
-  ]);
-
-  const database = getKnowledgeDatabase();
-  const id = crypto.randomUUID();
-  const startedAt = nowIso();
-
-  database
-    .query(
-      `
-        INSERT INTO import_jobs (
-          id,
-          owner_user_id,
-          source_id,
-          collection_id,
-          source_type,
-          stage,
-          status,
-          attempt,
-          error_message,
-          started_at,
-          finished_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-    )
-    .run(
-      id,
-      params.userId,
-      params.sourceId,
-      params.collectionId,
-      params.sourceType,
-      "queued",
-      "processing",
-      params.attempt,
-      null,
-      startedAt,
-      null,
-    );
-
-  return {
-    id,
-    sourceId: params.sourceId,
-    collectionId: params.collectionId,
-    sourceType: params.sourceType,
-    stage: "queued",
-    status: "processing",
-    attempt: params.attempt,
-    startedAt,
-  };
-}
-
-export async function updateImportJob(params: {
-  userId: string;
-  jobId: string;
-  stage: KnowledgeImportJob["stage"];
-  status: KnowledgeImportJob["status"];
-  errorMessage?: string;
-}): Promise<void> {
-  const database = getKnowledgeDatabase();
-  const finishedAt = params.status === "processing" ? null : nowIso();
-
-  database
-    .query(
-      `
-        UPDATE import_jobs
-        SET
-          stage = ?,
-          status = ?,
-          error_message = ?,
-          finished_at = COALESCE(?, finished_at)
-        WHERE owner_user_id = ? AND id = ?
-      `,
-    )
-    .run(
-      params.stage,
-      params.status,
-      params.errorMessage ?? null,
-      finishedAt,
-      params.userId,
-      params.jobId,
-    );
-}
-
-export async function createSourceDraft(params: {
-  userId: string;
-  collectionId: string;
-  sourceType: KnowledgeSource["sourceType"];
-  title: string;
-  summary?: string;
-  tags?: string[];
-  sourceFilename?: string;
-  sourceUrl?: string;
-  mimeType?: string;
-  byteSize?: number;
-}): Promise<KnowledgeSource> {
-  await requireKnowledgeCollection(params.userId, params.collectionId);
-  const database = getKnowledgeDatabase();
-  const now = nowIso();
-  const id = createUniqueId(
-    "sources",
-    params.title || params.sourceFilename || params.sourceUrl || "source",
-  );
-  const summary = params.summary?.trim() || "正在处理内容...";
-
-  database
-    .query(
-      `
-        INSERT INTO sources (
-          id,
-          owner_user_id,
-          collection_id,
-          title,
-          summary,
-          excerpt,
-          content_preview,
-          content,
-          tags_json,
-          source_type,
-          legacy_source,
-          status,
-          source_filename,
-          source_url,
-          mime_type,
-          byte_size,
-          latest_version,
-          ready_at,
-          last_processed_at,
-          snapshot_updated_at,
-          failure_message,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-    )
-    .run(
-      id,
-      params.userId,
-      params.collectionId,
-      params.title.trim(),
-      summary,
-      summary,
-      summary,
-      summary,
-      JSON.stringify(params.tags ?? []),
-      params.sourceType,
-      params.sourceType === "seed" ? "seed" : "upload",
-      "processing",
-      params.sourceFilename ?? null,
-      params.sourceUrl ?? null,
-      params.mimeType ?? null,
-      params.byteSize ?? null,
-      0,
-      null,
-      null,
-      null,
-      null,
-      now,
-      now,
-    );
-
-  await touchCollection(params.collectionId);
-
-  return requireKnowledgeSource(params.userId, id);
-}
-
-export async function replaceSourceContent(params: {
-  userId: string;
-  sourceId: string;
-  title: string;
-  summary?: string;
-  content: string;
-  tags: string[];
-  parser: string;
-  mimeType?: string;
-  byteSize?: number;
-  filePath?: string;
-  snapshotHtml?: string;
-  sourceFilename?: string;
-  sourceUrl?: string;
-  status: KnowledgeSource["status"];
-  failureMessage?: string;
-}): Promise<KnowledgeSource> {
-  const database = getKnowledgeDatabase();
-  const source = await requireKnowledgeSource(params.userId, params.sourceId);
-  const row = getSourceRow(params.userId, params.sourceId);
-
-  if (!row) {
-    throw new NotFoundError(`Knowledge source "${params.sourceId}" not found`);
-  }
-
-  const now = nowIso();
-  const nextVersion = source.latestVersion + 1;
-  const normalizedContent = normalizeWhitespace(params.content);
-  const preview = buildContentPreview(normalizedContent);
-  const summary = params.summary?.trim() || buildSummary(normalizedContent);
-
-  database.transaction(() => {
-    database
-      .query(
-        "DELETE FROM source_chunks_fts WHERE rowid IN (SELECT id FROM source_chunks WHERE source_id = ?)",
-      )
-      .run(params.sourceId);
-    database
-      .query("DELETE FROM source_chunks WHERE source_id = ?")
-      .run(params.sourceId);
-
-    database
-      .query(
-        `
-          INSERT INTO source_versions (
-            id,
-            source_id,
-            version_number,
-            parser,
-            content,
-            content_preview,
-            mime_type,
-            byte_size,
-            file_path,
-            snapshot_html,
-            source_url,
-            created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      )
-      .run(
-        `${params.sourceId}:v${nextVersion}`,
-        params.sourceId,
-        nextVersion,
-        params.parser,
-        normalizedContent || params.failureMessage || source.content,
-        preview || source.contentPreview,
-        params.mimeType ?? null,
-        params.byteSize ?? null,
-        params.filePath ?? null,
-        params.snapshotHtml ?? null,
-        params.sourceUrl ?? null,
-        now,
-      );
-
-    database
-      .query(
-        `
-          UPDATE sources
-          SET
-            title = ?,
-            summary = ?,
-            excerpt = ?,
-            content_preview = ?,
-            content = ?,
-            tags_json = ?,
-            source_filename = ?,
-            source_url = ?,
-            mime_type = ?,
-            byte_size = ?,
-            latest_version = ?,
-            status = ?,
-            ready_at = ?,
-            last_processed_at = ?,
-            snapshot_updated_at = ?,
-            failure_message = ?,
-            updated_at = ?
-          WHERE owner_user_id = ? AND id = ?
-        `,
-      )
-      .run(
-        params.title.trim(),
-        summary,
-        preview || source.excerpt,
-        preview || source.contentPreview,
-        normalizedContent || source.content,
-        JSON.stringify(params.tags),
-        params.sourceFilename ?? source.sourceFilename ?? null,
-        params.sourceUrl ?? source.sourceUrl ?? null,
-        params.mimeType ?? source.mimeType ?? null,
-        params.byteSize ?? source.byteSize ?? null,
-        nextVersion,
-        params.status,
-        params.status === "ready" ? now : null,
-        now,
-        source.sourceType === "url" ? now : (source.snapshotUpdatedAt ?? null),
-        params.failureMessage ?? null,
-        now,
-        params.userId,
-        params.sourceId,
-      );
-
-    if (params.status === "ready") {
-      const chunks = chunkKnowledgeContent({
-        content: normalizedContent,
-        sourceId: params.sourceId,
-        title: params.title,
-      });
-      const insertChunk = database.query(
-        `
-            INSERT INTO source_chunks (
-              chunk_id,
-              owner_user_id,
-              source_id,
-              collection_id,
-              chunk_index,
-              section_path,
-              title,
-              text,
-              lexical_text,
-              tags_json,
-              updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `,
-      );
-      const insertFts = database.query(
-        `
-            INSERT INTO source_chunks_fts (
-              rowid,
-              chunk_id,
-              title,
-              lexical_text
-            ) VALUES (?, ?, ?, ?)
-          `,
-      );
-
-      for (const chunk of chunks) {
-        insertChunk.run(
-          chunk.chunkId,
-          row.owner_user_id,
-          params.sourceId,
-          source.collectionId,
-          chunk.chunkIndex,
-          chunk.sectionPath ?? null,
-          chunk.title,
-          chunk.text,
-          buildLexicalIndexText([
-            params.title,
-            summary,
-            chunk.sectionPath ?? "",
-            chunk.text,
-            params.tags.join(" "),
-          ]),
-          JSON.stringify(params.tags),
-          now,
-        );
-
-        const chunkRow = database
-          .query("SELECT id FROM source_chunks WHERE chunk_id = ?")
-          .get(chunk.chunkId) as { id: number } | null;
-
-        if (chunkRow) {
-          insertFts.run(
-            chunkRow.id,
-            chunk.chunkId,
-            chunk.title,
-            buildLexicalIndexText([
-              chunk.title,
-              chunk.sectionPath ?? "",
-              chunk.text,
-              params.tags.join(" "),
-            ]),
-          );
-        }
-      }
-    }
-  })();
-
-  await touchCollection(source.collectionId);
-
-  return requireKnowledgeSource(params.userId, params.sourceId);
-}
-
-export async function deleteKnowledgeSource(
-  userId: string,
-  sourceId: string,
-): Promise<void> {
-  const source = await requireKnowledgeSource(userId, sourceId);
-  const database = getKnowledgeDatabase();
-  database
-    .query("DELETE FROM sources WHERE owner_user_id = ? AND id = ?")
-    .run(userId, sourceId);
-  await touchCollection(source.collectionId);
-}
-
-export async function archiveKnowledgeSource(
-  userId: string,
-  sourceId: string,
-): Promise<KnowledgeSource> {
-  const source = await requireKnowledgeSource(userId, sourceId);
-  const database = getKnowledgeDatabase();
-  const now = nowIso();
-
-  database
-    .query(
-      `
-        UPDATE sources
-        SET status = ?, updated_at = ?
-        WHERE owner_user_id = ? AND id = ?
-      `,
-    )
-    .run("archived", now, userId, sourceId);
-
-  await touchCollection(source.collectionId);
-
-  return requireKnowledgeSource(userId, sourceId);
-}
-
-export async function listChatSessions(userId: string): Promise<ChatSession[]> {
-  const database = getKnowledgeDatabase();
-  const rows = database
-    .query(
-      `
-        SELECT *
-        FROM chat_sessions
-        WHERE owner_user_id = ?
-        ORDER BY last_message_at DESC, updated_at DESC
-      `,
-    )
-    .all(userId) as ChatSessionRow[];
-
-  return rows.map(toChatSession);
 }
 
 export async function createChatSession(params: {
@@ -1278,56 +1048,82 @@ export async function createChatSession(params: {
   title?: string;
   collectionId?: string;
 }): Promise<ChatSession> {
-  if (params.collectionId) {
-    await requireKnowledgeCollection(params.userId, params.collectionId);
-  }
-
-  const database = getKnowledgeDatabase();
+  const sql = await ensureKnowledgeDatabase();
   const now = nowIso();
-  const session: ChatSession = {
-    id: crypto.randomUUID(),
-    title: params.title?.trim() || "新对话",
-    collectionId: params.collectionId,
-    preview: "开始提问吧",
-    createdAt: now,
-    updatedAt: now,
-    lastMessageAt: now,
-  };
+  const id = crypto.randomUUID();
+  const title =
+    params.title?.trim() ||
+    (params.collectionId
+      ? `${(await requireKnowledgeCollection(params.userId, params.collectionId)).name} 对话`
+      : "新对话");
+  const preview = "开始提问吧";
 
-  database
-    .query(
-      `
-        INSERT INTO chat_sessions (
-          id,
-          owner_user_id,
-          title,
-          collection_id,
-          preview,
-          created_at,
-          updated_at,
-          last_message_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `,
+  await sql`
+    INSERT INTO chat_sessions (
+      id,
+      owner_user_id,
+      title,
+      collection_id,
+      preview,
+      created_at,
+      updated_at,
+      last_message_at
+    ) VALUES (
+      ${id},
+      ${params.userId},
+      ${title},
+      ${params.collectionId ?? null},
+      ${preview},
+      ${now},
+      ${now},
+      ${now}
     )
-    .run(
-      session.id,
-      params.userId,
-      session.title,
-      session.collectionId ?? null,
-      session.preview,
-      session.createdAt,
-      session.updatedAt,
-      session.lastMessageAt,
-    );
+  `;
 
-  return session;
+  return requireChatSession(params.userId, id);
+}
+
+export async function listChatSessions(userId: string): Promise<ChatSession[]> {
+  const sql = await ensureKnowledgeDatabase();
+  const rows = await sql<ChatSessionRow[]>`
+    SELECT
+      id,
+      owner_user_id,
+      title,
+      collection_id,
+      preview,
+      created_at,
+      updated_at,
+      last_message_at
+    FROM chat_sessions
+    WHERE owner_user_id = ${userId}
+    ORDER BY last_message_at DESC
+  `;
+
+  return rows.map((row) => toChatSession(row));
 }
 
 export async function getChatSessionById(
   userId: string,
   sessionId: string,
 ): Promise<ChatSession | undefined> {
-  const row = getChatSessionRow(userId, sessionId);
+  const sql = await ensureKnowledgeDatabase();
+  const [row] = await sql<ChatSessionRow[]>`
+    SELECT
+      id,
+      owner_user_id,
+      title,
+      collection_id,
+      preview,
+      created_at,
+      updated_at,
+      last_message_at
+    FROM chat_sessions
+    WHERE owner_user_id = ${userId}
+      AND id = ${sessionId}
+    LIMIT 1
+  `;
+
   return row ? toChatSession(row) : undefined;
 }
 
@@ -1350,16 +1146,14 @@ export async function updateChatSession(params: {
   title: string;
 }): Promise<ChatSession> {
   await requireChatSession(params.userId, params.sessionId);
-  const database = getKnowledgeDatabase();
-  database
-    .query(
-      `
-        UPDATE chat_sessions
-        SET title = ?, updated_at = ?
-        WHERE owner_user_id = ? AND id = ?
-      `,
-    )
-    .run(params.title.trim(), nowIso(), params.userId, params.sessionId);
+  const sql = await ensureKnowledgeDatabase();
+
+  await sql`
+    UPDATE chat_sessions
+    SET title = ${params.title.trim()}, updated_at = ${nowIso()}
+    WHERE owner_user_id = ${params.userId}
+      AND id = ${params.sessionId}
+  `;
 
   return requireChatSession(params.userId, params.sessionId);
 }
@@ -1369,10 +1163,13 @@ export async function deleteChatSession(
   sessionId: string,
 ): Promise<void> {
   await requireChatSession(userId, sessionId);
-  const database = getKnowledgeDatabase();
-  database
-    .query("DELETE FROM chat_sessions WHERE owner_user_id = ? AND id = ?")
-    .run(userId, sessionId);
+  const sql = await ensureKnowledgeDatabase();
+
+  await sql`
+    DELETE FROM chat_sessions
+    WHERE owner_user_id = ${userId}
+      AND id = ${sessionId}
+  `;
 }
 
 export async function listChatMessages(
@@ -1380,33 +1177,84 @@ export async function listChatMessages(
   sessionId: string,
 ): Promise<ChatMessage[]> {
   await requireChatSession(userId, sessionId);
-  const database = getKnowledgeDatabase();
-  const rows = database
-    .query(
-      `
-        SELECT
-          m.id,
-          m.owner_user_id,
-          m.session_id,
-          m.role,
-          m.content,
-          m.citations_json,
-          m.retrieval_json,
-          m.trace_json,
-          m.created_at,
-          f.id AS feedback_id,
-          f.rating AS feedback_rating,
-          f.note AS feedback_note,
-          f.created_at AS feedback_created_at
-        FROM chat_messages m
-        LEFT JOIN chat_feedback f ON f.message_id = m.id
-        WHERE m.owner_user_id = ? AND m.session_id = ?
-        ORDER BY m.created_at ASC
-      `,
-    )
-    .all(userId, sessionId) as ChatMessageRow[];
+  const sql = await ensureKnowledgeDatabase();
+  const rows = await sql<ChatMessageRow[]>`
+    SELECT
+      m.id,
+      m.owner_user_id,
+      m.session_id,
+      m.role,
+      m.content,
+      m.citations_json,
+      m.retrieval_json,
+      m.trace_json,
+      m.created_at,
+      f.id AS feedback_id,
+      f.rating AS feedback_rating,
+      f.note AS feedback_note,
+      f.created_at AS feedback_created_at
+    FROM chat_messages m
+    LEFT JOIN chat_feedback f ON f.message_id = m.id
+    WHERE m.owner_user_id = ${userId}
+      AND m.session_id = ${sessionId}
+    ORDER BY m.created_at ASC
+  `;
 
-  return rows.map(toChatMessage);
+  return rows.map((row) => toChatMessage(row));
+}
+
+export async function appendChatMessage(params: {
+  userId: string;
+  sessionId: string;
+  role: ChatMessage["role"];
+  content: string;
+  citations?: ChatMessage["citations"];
+  retrieval?: SearchKnowledgeResult;
+  trace?: ChatTraceEvent[];
+}): Promise<ChatMessage> {
+  const session = await requireChatSession(params.userId, params.sessionId);
+  const sql = await ensureKnowledgeDatabase();
+  const id = crypto.randomUUID();
+  const now = nowIso();
+  const preview = params.content.trim().slice(0, 160);
+
+  await sql`
+    INSERT INTO chat_messages (
+      id,
+      owner_user_id,
+      session_id,
+      role,
+      content,
+      citations_json,
+      retrieval_json,
+      trace_json,
+      created_at
+    ) VALUES (
+      ${id},
+      ${params.userId},
+      ${params.sessionId},
+      ${params.role},
+      ${params.content.trim()},
+      ${JSON.stringify(params.citations ?? [])},
+      ${params.retrieval ? JSON.stringify(params.retrieval) : null},
+      ${params.trace ? JSON.stringify(params.trace) : null},
+      ${now}
+    )
+  `;
+
+  await sql`
+    UPDATE chat_sessions
+    SET
+      preview = ${params.role === "user" ? preview : session.preview},
+      updated_at = ${now},
+      last_message_at = ${now},
+      collection_id = COALESCE(collection_id, ${session.collectionId ?? null})
+    WHERE owner_user_id = ${params.userId}
+      AND id = ${params.sessionId}
+  `;
+
+  const messages = await listChatMessages(params.userId, params.sessionId);
+  return messages.find((message) => message.id === id)!;
 }
 
 export async function getChatMessagesData(
@@ -1424,183 +1272,167 @@ export async function getChatMessagesData(
   };
 }
 
-export async function appendChatMessage(params: {
-  userId: string;
-  sessionId: string;
-  role: ChatMessage["role"];
-  content: string;
-  citations?: ChatMessage["citations"];
-  retrieval?: ChatMessage["retrieval"];
-  trace?: ChatMessage["trace"];
-}): Promise<ChatMessage> {
-  const session = await requireChatSession(params.userId, params.sessionId);
-  const database = getKnowledgeDatabase();
-  const id = crypto.randomUUID();
-  const now = nowIso();
-  const preview = params.content.trim().slice(0, 140);
-
-  database
-    .query(
-      `
-        INSERT INTO chat_messages (
-          id,
-          owner_user_id,
-          session_id,
-          role,
-          content,
-          citations_json,
-          retrieval_json,
-          trace_json,
-          created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-    )
-    .run(
-      id,
-      params.userId,
-      params.sessionId,
-      params.role,
-      params.content.trim(),
-      JSON.stringify(params.citations ?? []),
-      params.retrieval ? JSON.stringify(params.retrieval) : null,
-      params.trace ? JSON.stringify(params.trace) : null,
-      now,
-    );
-
-  database
-    .query(
-      `
-        UPDATE chat_sessions
-        SET
-          preview = ?,
-          updated_at = ?,
-          last_message_at = ?,
-          collection_id = COALESCE(collection_id, ?),
-          title = CASE
-            WHEN title = '新对话' AND ? <> '' THEN ?
-            ELSE title
-          END
-        WHERE owner_user_id = ? AND id = ?
-      `,
-    )
-    .run(
-      preview || session.preview,
-      now,
-      now,
-      session.collectionId ?? null,
-      params.role === "user" ? "1" : "",
-      params.role === "user" ? preview.slice(0, 24) : session.title,
-      params.userId,
-      params.sessionId,
-    );
-
-  const row = database
-    .query(
-      `
-        SELECT
-          m.id,
-          m.owner_user_id,
-          m.session_id,
-          m.role,
-          m.content,
-          m.citations_json,
-          m.retrieval_json,
-          m.trace_json,
-          m.created_at,
-          NULL AS feedback_id,
-          NULL AS feedback_rating,
-          NULL AS feedback_note,
-          NULL AS feedback_created_at
-        FROM chat_messages m
-        WHERE m.owner_user_id = ? AND m.id = ?
-      `,
-    )
-    .get(params.userId, id) as ChatMessageRow | null;
-
-  if (!row) {
-    throw new NotFoundError(`Chat message "${id}" not found after insert`);
-  }
-
-  return toChatMessage(row);
-}
-
 export async function saveMessageFeedback(params: {
   userId: string;
   messageId: string;
   input: ChatMessageFeedbackRequest;
 }): Promise<ChatMessageFeedback> {
-  const database = getKnowledgeDatabase();
-  const message = database
-    .query(
-      `
-        SELECT id
-        FROM chat_messages
-        WHERE owner_user_id = ? AND id = ?
-      `,
-    )
-    .get(params.userId, params.messageId) as { id: string } | null;
-
-  if (!message) {
-    throw new NotFoundError(`Chat message "${params.messageId}" not found`);
-  }
-
-  const existing = database
-    .query(
-      `
-        SELECT id
-        FROM chat_feedback
-        WHERE owner_user_id = ? AND message_id = ?
-      `,
-    )
-    .get(params.userId, params.messageId) as { id: string } | null;
+  const sql = await ensureKnowledgeDatabase();
   const now = nowIso();
-  const id = existing?.id ?? crypto.randomUUID();
+  const id = crypto.randomUUID();
 
-  if (existing) {
-    database
-      .query(
-        `
-          UPDATE chat_feedback
-          SET rating = ?, note = ?, created_at = ?
-          WHERE owner_user_id = ? AND id = ?
-        `,
-      )
-      .run(
-        params.input.rating,
-        params.input.note ?? null,
-        now,
-        params.userId,
-        existing.id,
-      );
-  } else {
-    database
-      .query(
-        `
-          INSERT INTO chat_feedback (
-            id,
-            owner_user_id,
-            message_id,
-            rating,
-            note,
-            created_at
-          ) VALUES (?, ?, ?, ?, ?, ?)
-        `,
-      )
-      .run(
-        id,
-        params.userId,
-        params.messageId,
-        params.input.rating,
-        params.input.note ?? null,
-        now,
-      );
-  }
+  await sql`
+    DELETE FROM chat_feedback
+    WHERE owner_user_id = ${params.userId}
+      AND message_id = ${params.messageId}
+  `;
+
+  await sql`
+    INSERT INTO chat_feedback (
+      id,
+      owner_user_id,
+      message_id,
+      rating,
+      note,
+      created_at
+    ) VALUES (
+      ${id},
+      ${params.userId},
+      ${params.messageId},
+      ${params.input.rating},
+      ${params.input.note?.trim() || null},
+      ${now}
+    )
+  `;
 
   return {
     id,
     messageId: params.messageId,
     rating: params.input.rating,
-    note: params.input.note,
+    note: params.input.note?.trim() || undefined,
     createdAt: now,
+  };
+}
+
+export async function listBriefingExports(
+  userId: string,
+  sourceId: string,
+): Promise<BriefingExport[]> {
+  const sql = await ensureKnowledgeDatabase();
+  const rows = await sql<BriefingExportRow[]>`
+    SELECT
+      id,
+      owner_user_id,
+      source_id,
+      document_id,
+      title,
+      summary,
+      form_json,
+      citations_json,
+      created_at
+    FROM briefing_exports
+    WHERE owner_user_id = ${userId}
+      AND source_id = ${sourceId}
+    ORDER BY created_at DESC
+  `;
+
+  return rows.map((row) => toBriefingExport(row));
+}
+
+export async function createBriefingExport(params: {
+  userId: string;
+  sourceId: string;
+  documentId: string;
+  title: string;
+  summary: string;
+  form: BriefingExport["form"];
+  citations: BriefingExport["citations"];
+}): Promise<BriefingExport> {
+  const sql = await ensureKnowledgeDatabase();
+  const exportRecord: BriefingExport = {
+    id: crypto.randomUUID(),
+    sourceId: params.sourceId,
+    documentId: params.documentId,
+    title: params.title,
+    summary: params.summary,
+    form: params.form,
+    citations: params.citations,
+    createdAt: nowIso(),
+  };
+
+  await sql`
+    INSERT INTO briefing_exports (
+      id,
+      owner_user_id,
+      source_id,
+      document_id,
+      title,
+      summary,
+      form_json,
+      citations_json,
+      created_at
+    ) VALUES (
+      ${exportRecord.id},
+      ${params.userId},
+      ${params.sourceId},
+      ${params.documentId},
+      ${params.title},
+      ${params.summary},
+      ${JSON.stringify(params.form)},
+      ${JSON.stringify(params.citations)},
+      ${exportRecord.createdAt}
+    )
+  `;
+
+  return exportRecord;
+}
+
+export async function listKnowledgeSpaces(
+  userId: string,
+): Promise<KnowledgeCollection[]> {
+  return listKnowledgeCollections(userId);
+}
+
+export async function createKnowledgeSpace(params: {
+  userId: string;
+  input: KnowledgeCollectionCreateRequest;
+}): Promise<KnowledgeCollection> {
+  return createKnowledgeCollection(params);
+}
+
+export async function requireKnowledgeSpace(
+  userId: string,
+  spaceId: string,
+): Promise<KnowledgeCollection> {
+  return requireKnowledgeCollection(userId, spaceId);
+}
+
+export async function getKnowledgeSpace(
+  userId: string,
+  spaceId: string,
+): Promise<KnowledgeCollection | undefined> {
+  return getKnowledgeCollection(userId, spaceId);
+}
+
+export async function getKnowledgeSpaceDocuments(
+  userId: string,
+  spaceId: string,
+): Promise<KnowledgeDocumentsData> {
+  const data = await getKnowledgeCollectionSourcesData(userId, spaceId);
+
+  return {
+    space: data.collection,
+    documents: data.sources,
+  };
+}
+
+export function getKnowledgeSourceDownloadMetadata(source: KnowledgeSource) {
+  return {
+    downloadUrl:
+      source.sourceType === "file" || source.sourceType === "seed"
+        ? buildKnowledgeSourceDownloadPath(source.id)
+        : undefined,
+    sourceFilename: source.sourceFilename,
+    sourceUrl: source.sourceUrl,
   };
 }

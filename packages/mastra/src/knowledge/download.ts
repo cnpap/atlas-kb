@@ -1,14 +1,17 @@
 import { NotFoundError } from "@atlas-kb/errors";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
-import { getLatestSourceVersion, getDocumentById } from "./repository";
+import {
+  getDocumentById,
+  getStoredSourceRecord,
+  requireKnowledgeSource,
+} from "./repository";
 
 function buildDownloadFilename(params: {
-  sourceId: string;
   sourceFilename?: string;
   title: string;
   sourceType: string;
-}): string {
+}) {
   if (params.sourceFilename?.trim()) {
     return basename(params.sourceFilename);
   }
@@ -28,45 +31,28 @@ export async function getKnowledgeSourceDownload(params: {
   filename: string;
   mimeType: string;
 }> {
-  const source = await getDocumentById(params.userId, params.sourceId);
+  const source = await requireKnowledgeSource(params.userId, params.sourceId);
+  const stored = await getStoredSourceRecord(params.userId, params.sourceId);
 
-  if (!source) {
+  if (!stored) {
     throw new NotFoundError(`Knowledge source "${params.sourceId}" not found`);
   }
 
-  const version = await getLatestSourceVersion(params.userId, params.sourceId);
-
-  if (version?.filePath) {
+  if (stored.original_path) {
     return {
-      body: new Uint8Array(await readFile(version.filePath)),
+      body: new Uint8Array(await readFile(stored.original_path)),
       filename: buildDownloadFilename({
-        sourceId: source.id,
         sourceFilename: source.sourceFilename,
         title: source.title,
         sourceType: source.sourceType,
       }),
-      mimeType:
-        version.mimeType || source.mimeType || "application/octet-stream",
-    };
-  }
-
-  if (version?.snapshotHtml) {
-    return {
-      body: new TextEncoder().encode(version.snapshotHtml),
-      filename: buildDownloadFilename({
-        sourceId: source.id,
-        sourceFilename: source.sourceFilename,
-        title: source.title,
-        sourceType: source.sourceType,
-      }),
-      mimeType: version.mimeType || "text/html",
+      mimeType: source.mimeType || "application/octet-stream",
     };
   }
 
   return {
     body: new TextEncoder().encode(source.content),
     filename: buildDownloadFilename({
-      sourceId: source.id,
       sourceFilename: source.sourceFilename,
       title: source.title,
       sourceType: source.sourceType,
@@ -94,6 +80,6 @@ export async function getKnowledgeDocumentDownload(params: {
 
   return getKnowledgeSourceDownload({
     userId: params.userId,
-    sourceId: params.documentId,
+    sourceId: source.id,
   });
 }

@@ -4,7 +4,7 @@ import {
   NotFoundError,
 } from "@atlas-kb/errors";
 import type { AuthUser } from "@atlas-kb/schema";
-import { getKnowledgeDatabase } from "./db";
+import { ensureKnowledgeDatabase } from "./db";
 
 const DEFAULT_USERNAME = "admin";
 const DEFAULT_PASSWORD = "atlas-kb-dev";
@@ -18,13 +18,7 @@ type UserRow = {
   updated_at: string;
 };
 
-export interface StoredAuthUser extends AuthUser {
-  passwordHash: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-function nowIso(): string {
+function nowIso() {
   return new Date().toISOString();
 }
 
@@ -40,41 +34,35 @@ function normalizeUsername(input: string): string {
   return normalized;
 }
 
-function toAuthUser(row: UserRow): AuthUser {
+function toAuthUser(row: Pick<UserRow, "id" | "username">): AuthUser {
   return {
     id: row.id,
     username: row.username,
   };
 }
 
-function getUserRowById(userId: string): UserRow | null {
-  const database = getKnowledgeDatabase();
-  return (
-    (database
-      .query(
-        `
-          SELECT id, username, password_hash, created_at, updated_at
-          FROM users
-          WHERE id = ?
-        `,
-      )
-      .get(userId) as UserRow | null) ?? null
-  );
+async function getUserRowById(userId: string): Promise<UserRow | null> {
+  const sql = await ensureKnowledgeDatabase();
+  const [row] = await sql<UserRow[]>`
+    SELECT id, username, password_hash, created_at, updated_at
+    FROM users
+    WHERE id = ${userId}
+    LIMIT 1
+  `;
+
+  return row ?? null;
 }
 
-function getUserRowByUsername(username: string): UserRow | null {
-  const database = getKnowledgeDatabase();
-  return (
-    (database
-      .query(
-        `
-          SELECT id, username, password_hash, created_at, updated_at
-          FROM users
-          WHERE username = ?
-        `,
-      )
-      .get(normalizeUsername(username)) as UserRow | null) ?? null
-  );
+async function getUserRowByUsername(username: string): Promise<UserRow | null> {
+  const sql = await ensureKnowledgeDatabase();
+  const [row] = await sql<UserRow[]>`
+    SELECT id, username, password_hash, created_at, updated_at
+    FROM users
+    WHERE username = ${normalizeUsername(username)}
+    LIMIT 1
+  `;
+
+  return row ?? null;
 }
 
 export function getDefaultUsername(): string {
@@ -88,7 +76,7 @@ export function getDefaultPassword(): string {
 }
 
 export async function ensureDefaultUser(): Promise<AuthUser> {
-  const existing = getUserRowByUsername(getDefaultUsername());
+  const existing = await getUserRowByUsername(getDefaultUsername());
 
   if (existing) {
     return toAuthUser(existing);
@@ -104,36 +92,42 @@ export async function createUser(params: {
   username: string;
   password: string;
 }): Promise<AuthUser> {
-  const database = getKnowledgeDatabase();
+  const sql = await ensureKnowledgeDatabase();
   const username = normalizeUsername(params.username);
-  const password = params.password;
+  const password = params.password.trim();
 
-  if (!password.trim()) {
+  if (!password) {
     throw new BadRequestError("密码不能为空");
   }
 
-  const existing = getUserRowByUsername(username);
+  const existing = await getUserRowByUsername(username);
 
   if (existing) {
     throw new ConflictError(`用户名 "${username}" 已存在`);
   }
 
-  const now = nowIso();
-  const id = crypto.randomUUID();
-  const passwordHash = await Bun.password.hash(password);
+  const user = {
+    id: crypto.randomUUID(),
+    username,
+    passwordHash: await Bun.password.hash(password),
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  };
 
-  database
-    .query(
-      `
-        INSERT INTO users (id, username, password_hash, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?)
-      `,
+  await sql`
+    INSERT INTO users (id, username, password_hash, created_at, updated_at)
+    VALUES (
+      ${user.id},
+      ${user.username},
+      ${user.passwordHash},
+      ${user.createdAt},
+      ${user.updatedAt}
     )
-    .run(id, username, passwordHash, now, now);
+  `;
 
   return {
-    id,
-    username,
+    id: user.id,
+    username: user.username,
   };
 }
 
@@ -141,7 +135,7 @@ export async function authenticateUser(params: {
   username: string;
   password: string;
 }): Promise<AuthUser | undefined> {
-  const user = getUserRowByUsername(params.username);
+  const user = await getUserRowByUsername(params.username);
 
   if (!user) {
     return undefined;
@@ -152,17 +146,13 @@ export async function authenticateUser(params: {
     user.password_hash,
   );
 
-  if (!verified) {
-    return undefined;
-  }
-
-  return toAuthUser(user);
+  return verified ? toAuthUser(user) : undefined;
 }
 
 export async function getAuthUserById(
   userId: string,
 ): Promise<AuthUser | undefined> {
-  const row = getUserRowById(userId);
+  const row = await getUserRowById(userId);
   return row ? toAuthUser(row) : undefined;
 }
 

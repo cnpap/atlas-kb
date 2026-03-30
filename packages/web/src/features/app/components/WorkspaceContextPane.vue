@@ -40,6 +40,7 @@
     downloadSource: [source: KnowledgeSource];
     editSource: [source: KnowledgeSource];
     focusHit: [hit: SearchKnowledgeHit];
+    openBriefing: [source: KnowledgeSource];
     openImport: [];
     openPanel: [panel: "citations" | "library"];
     openSettings: [];
@@ -239,31 +240,43 @@
             :key="source.id"
             class="rounded-[10px] border border-[rgba(93,72,34,0.08)] bg-[rgba(255,251,244,0.68)] px-3 py-3"
           >
-            <div class="flex items-start gap-3">
-              <div class="min-w-0 flex-1">
-                <p
-                  class="line-clamp-2 text-sm font-bold leading-5 text-[var(--text-strong)] break-words"
-                >
-                  {{ source.title }}
-                </p>
-                <p
-                  class="mt-1 line-clamp-2 text-[11px] leading-relaxed text-[var(--text-muted)]"
-                >
-                  {{ source.summary || "暂无摘要。" }}
-                </p>
-                <div class="mt-2 flex flex-wrap items-center gap-2">
-                  <span
-                    class="status-pill scale-90 origin-left"
-                    :class="getSourceStatusTone(source.status)"
+            <button
+              class="w-full text-left"
+              type="button"
+              :disabled="source.status !== 'ready' || sourceActionId === source.id"
+              @click="$emit('openBriefing', source)"
+            >
+              <div class="flex items-start gap-3">
+                <div class="min-w-0 flex-1">
+                  <p
+                    class="line-clamp-2 text-sm font-bold leading-5 text-[var(--text-strong)] break-words"
                   >
-                    {{ getSourceStatusLabel(source.status) }}
-                  </span>
-                  <p class="text-[10px] text-[var(--text-dim)]">
-                    {{ formatRelativeTime(source.updatedAt) }}
+                    {{ source.title }}
                   </p>
+                  <p
+                    class="mt-1 line-clamp-2 text-[11px] leading-relaxed text-[var(--text-muted)]"
+                  >
+                    {{ source.summary || "暂无摘要。" }}
+                  </p>
+                  <div class="mt-2 flex flex-wrap items-center gap-2">
+                    <span
+                      class="status-pill scale-90 origin-left"
+                      :class="getSourceStatusTone(source.status)"
+                    >
+                      {{ getSourceStatusLabel(source.status) }}
+                    </span>
+                    <p class="text-[10px] text-[var(--text-dim)]">
+                      {{ formatRelativeTime(source.updatedAt) }}
+                    </p>
+                    <p class="text-[10px] text-[var(--accent)]">
+                      {{ source.status === "ready"
+                          ? "点击生成拟办意见"
+                          : "处理完成后可生成拟办意见" }}
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
+            </button>
 
             <div
               class="mt-3 flex items-center gap-2 border-t border-[rgba(93,72,34,0.06)] pt-3"
@@ -272,7 +285,7 @@
                 class="soft-button !p-1.5"
                 title="编辑"
                 type="button"
-                @click="$emit('editSource', source)"
+                @click.stop="$emit('editSource', source)"
               >
                 <PencilLine class="size-3.5" />
               </button>
@@ -280,7 +293,7 @@
                 class="soft-button !p-1.5"
                 title="下载"
                 type="button"
-                @click="$emit('downloadSource', source)"
+                @click.stop="$emit('downloadSource', source)"
               >
                 <Download class="size-3.5" />
               </button>
@@ -289,7 +302,7 @@
                 title="重处理"
                 type="button"
                 :disabled="sourceActionId === source.id"
-                @click="$emit('reprocessSource', source)"
+                @click.stop="$emit('reprocessSource', source)"
               >
                 <RefreshCw
                   class="size-3.5"
@@ -302,7 +315,7 @@
                 title="删除"
                 type="button"
                 :disabled="sourceActionId === source.id"
-                @click="$emit('deleteSource', source)"
+                @click.stop="$emit('deleteSource', source)"
               >
                 <Trash2 class="size-3.5" />
               </button>

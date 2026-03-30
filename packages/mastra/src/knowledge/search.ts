@@ -2,7 +2,6 @@ import type {
   AskKnowledgeCitation,
   AskKnowledgeRequest,
   AskKnowledgeResult,
-  KnowledgeRetrievalEngine,
   SearchKnowledgeHit,
   SearchKnowledgeRequest,
   SearchKnowledgeResult,
@@ -12,24 +11,13 @@ import {
   SearchKnowledgeRequestSchema,
 } from "@atlas-kb/schema";
 import {
-  getJinaApiKey,
-  getJinaUrl,
-  getOpenAIApiKey,
-  getOpenAIModel,
-  getOpenAIUrl,
-} from "./config";
-import { getKnowledgeDatabase } from "./db";
-import {
   ModelInvocationTimeoutError,
   throwMappedModelProviderError,
 } from "./model-provider";
-import { searchKnowledgeVectors } from "./qdrant";
-import { requireKnowledgeCollection } from "./repository";
-import {
-  buildLexicalSearchQuery,
-  buildSearchSnippet,
-  normalizeSearchTokens,
-} from "./search-utils";
+import { getOpenAIApiKey, getOpenAIModel, getOpenAIUrl } from "./config";
+import { listKnowledgeSources, requireKnowledgeCollection } from "./repository";
+import { buildSearchSnippet } from "./search-utils";
+import { getKnowledgeServiceForUser } from "./runtime";
 
 const DEFAULT_SEARCH_LIMIT = 8;
 const DEFAULT_ASK_LIMIT = 5;
@@ -61,13 +49,6 @@ interface OpenAIChatCompletionChunk {
           }>;
     };
     finish_reason?: string | null;
-  }>;
-}
-
-interface JinaRerankResponse {
-  results?: Array<{
-    index?: number;
-    relevance_score?: number;
   }>;
 }
 
@@ -168,365 +149,161 @@ function coerceCollectionId(input: SearchKnowledgeRequest): string | undefined {
   return input.collectionId?.trim() || input.spaceId?.trim() || undefined;
 }
 
-function buildFilterClause(params: {
-  input: SearchKnowledgeRequest;
-  userId: string;
-}): {
-  clause: string;
-  values: unknown[];
-} {
-  const clauses = ["s.owner_user_id = ?", "s.status = 'ready'"];
-  const values: unknown[] = [params.userId];
-  const collectionId = coerceCollectionId(params.input);
-
-  if (collectionId) {
-    clauses.push("s.collection_id = ?");
-    values.push(collectionId);
-  }
-
-  if (params.input.sourceTypes?.length) {
-    clauses.push(
-      `s.source_type IN (${params.input.sourceTypes.map(() => "?").join(", ")})`,
-    );
-    values.push(...params.input.sourceTypes);
-  }
-
-  if (!params.input.includeArchived) {
-    clauses.push("s.status <> 'archived'");
-  }
-
-  if (params.input.tags?.length) {
-    for (const tag of params.input.tags) {
-      clauses.push("s.tags_json LIKE ?");
-      values.push(`%${tag}%`);
+function filterSources(
+  sources: Awaited<ReturnType<typeof listKnowledgeSources>>,
+  input: SearchKnowledgeRequest,
+) {
+  return sources.filter((source) => {
+    if (source.status !== "ready") {
+      return Boolean(input.includeArchived && source.status === "archived");
     }
-  }
 
+    if (
+      input.sourceTypes?.length &&
+      !input.sourceTypes.includes(source.sourceType)
+    ) {
+      return false;
+    }
+
+    if (
+      input.tags?.length &&
+      !input.tags.every((tag) => source.tags.includes(tag))
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function toSearchHit(args: {
+  query: string;
+  source: Awaited<ReturnType<typeof listKnowledgeSources>>[number];
+  segment: Awaited<
+    ReturnType<
+      Awaited<
+        ReturnType<typeof getKnowledgeServiceForUser>
+      >["searchKnowledgeSegments"]
+    >
+  >["segments"][number];
+}): SearchKnowledgeHit {
   return {
-    clause: clauses.join(" AND "),
-    values,
+    sourceId: args.source.id,
+    documentId: args.source.documentId || args.segment.documentId,
+    collectionId: args.source.collectionId,
+    spaceId: args.source.collectionId,
+    chunkId: args.segment.segmentId,
+    title: args.source.title,
+    summary: args.source.summary,
+    snippet: buildSearchSnippet(
+      args.segment.text,
+      args.query,
+      args.segment.excerpt,
+    ),
+    sectionPath:
+      args.segment.sectionPath.length > 0
+        ? args.segment.sectionPath.join(" / ")
+        : undefined,
+    sourceFilename: args.source.sourceFilename,
+    sourceUrl: args.source.sourceUrl,
+    downloadUrl:
+      args.source.sourceType === "file" || args.source.sourceType === "seed"
+        ? `/api/kb/sources/${encodeURIComponent(args.source.id)}/download`
+        : undefined,
+    sourceType: args.source.sourceType,
+    tags: [...args.source.tags],
+    score: args.segment.score,
+    strategy: "rerank",
+    usedInAnswer: false,
+    recallPaths: ["关键词召回", "语义召回", "重排"],
   };
 }
 
-function lexicalSearchSingle(
-  query: string,
-  input: SearchKnowledgeRequest,
-  userId: string,
-): SearchKnowledgeHit[] {
-  const searchQuery = buildLexicalSearchQuery(query);
-
-  if (!searchQuery) {
-    return [];
-  }
-
-  const database = getKnowledgeDatabase();
-  const filter = buildFilterClause({
-    input,
-    userId,
-  });
-  const limit = Math.max(input.limit ?? DEFAULT_SEARCH_LIMIT, 12);
-  const rows = database
-    .query(
-      `
-        SELECT
-          c.chunk_id,
-          c.section_path,
-          c.title AS chunk_title,
-          c.text,
-          s.id AS source_id,
-          s.collection_id,
-          s.title AS source_title,
-          s.summary,
-          s.source_filename,
-          s.source_url,
-          s.source_type,
-          s.tags_json,
-          bm25(source_chunks_fts, 3.5, 1.5) AS rank
-        FROM source_chunks_fts
-        JOIN source_chunks c ON c.id = source_chunks_fts.rowid
-        JOIN sources s ON s.id = c.source_id
-        WHERE source_chunks_fts MATCH ?
-          AND ${filter.clause}
-        ORDER BY rank ASC
-        LIMIT ?
-      `,
-    )
-    .all(searchQuery, ...filter.values, limit) as Array<{
-    chunk_id: string;
-    section_path: string | null;
-    chunk_title: string;
-    text: string;
-    source_id: string;
-    collection_id: string;
-    source_title: string;
-    summary: string;
-    source_filename: string | null;
-    source_url: string | null;
-    source_type: SearchKnowledgeHit["sourceType"];
-    tags_json: string;
-    rank: number;
-  }>;
-
-  return rows.map((row) => {
-    const score = row.rank <= 0 ? 1 : 1 / row.rank;
-    return {
-      sourceId: row.source_id,
-      documentId: row.source_id,
-      collectionId: row.collection_id,
-      spaceId: row.collection_id,
-      chunkId: row.chunk_id,
-      title: row.source_title,
-      summary: row.summary,
-      snippet: buildSearchSnippet(
-        row.text,
-        input.query,
-        row.text.slice(0, 220),
-      ),
-      sectionPath: row.section_path ?? undefined,
-      sourceFilename: row.source_filename ?? undefined,
-      sourceUrl: row.source_url ?? undefined,
-      downloadUrl:
-        row.source_type === "file" || row.source_type === "seed"
-          ? `/api/kb/sources/${encodeURIComponent(row.source_id)}/download`
-          : undefined,
-      sourceType: row.source_type,
-      tags: JSON.parse(row.tags_json) as string[],
-      score,
-      strategy: "lexical",
-      usedInAnswer: false,
-      recallPaths: ["关键词召回"],
-    };
-  });
-}
-
-function mergeRecallPaths(
-  left: SearchKnowledgeHit["recallPaths"],
-  right: SearchKnowledgeHit["recallPaths"],
-): SearchKnowledgeHit["recallPaths"] {
-  return Array.from(
-    new Set([...left, ...right]),
-  ) as SearchKnowledgeHit["recallPaths"];
-}
-
-function annotateRecallPaths(
-  hits: SearchKnowledgeHit[],
-  path: SearchKnowledgeHit["recallPaths"][number],
-): SearchKnowledgeHit[] {
-  return hits.map((hit) => ({
-    ...hit,
-    recallPaths: hit.recallPaths.includes(path)
-      ? hit.recallPaths
-      : ([...hit.recallPaths, path] as SearchKnowledgeHit["recallPaths"]),
-  }));
-}
-
-function reciprocalRankFusion(
-  groups: Array<{
-    hits: SearchKnowledgeHit[];
-    weight: number;
-  }>,
-  limit: number,
-): SearchKnowledgeHit[] {
-  const scores = new Map<string, SearchKnowledgeHit & { fusedScore: number }>();
-
-  for (const group of groups) {
-    group.hits.forEach((hit, index) => {
-      const existing = scores.get(hit.chunkId);
-      const contribution = group.weight * (1 / (index + 1 + 60));
-
-      if (existing) {
-        existing.fusedScore += contribution;
-        existing.score = Math.max(existing.score, hit.score);
-        existing.recallPaths = mergeRecallPaths(
-          existing.recallPaths,
-          hit.recallPaths,
-        );
-        if (existing.strategy !== "rerank") {
-          existing.strategy = "fusion";
-        }
-        return;
-      }
-
-      scores.set(hit.chunkId, {
-        ...hit,
-        fusedScore: contribution,
-        strategy: hit.strategy === "lexical" ? "fusion" : hit.strategy,
-      });
-    });
-  }
-
-  return [...scores.values()]
-    .sort((left, right) => right.fusedScore - left.fusedScore)
-    .slice(0, limit);
-}
-
-function localRerank(
-  query: string,
+function dedupeHits(
   hits: SearchKnowledgeHit[],
   limit: number,
 ): SearchKnowledgeHit[] {
-  const tokens = normalizeSearchTokens(query);
+  const bestByChunk = new Map<string, SearchKnowledgeHit>();
 
-  return hits
-    .map((hit) => {
-      const haystack =
-        `${hit.title}\n${hit.summary}\n${hit.snippet}`.toLowerCase();
-      const overlap = tokens.reduce(
-        (total, token) => total + (haystack.includes(token) ? 1 : 0),
-        0,
-      );
+  for (const hit of hits) {
+    const existing = bestByChunk.get(hit.chunkId);
 
-      return {
-        ...hit,
-        score: hit.score + overlap * 0.35,
-        strategy: "rerank" as const,
-        recallPaths: hit.recallPaths.includes("重排")
-          ? hit.recallPaths
-          : ([...hit.recallPaths, "重排"] as SearchKnowledgeHit["recallPaths"]),
-      };
-    })
+    if (!existing || existing.score < hit.score) {
+      bestByChunk.set(hit.chunkId, hit);
+    }
+  }
+
+  return [...bestByChunk.values()]
     .sort((left, right) => right.score - left.score)
     .slice(0, limit);
 }
 
-async function rerankCandidates(
-  query: string,
-  hits: SearchKnowledgeHit[],
-  limit: number,
-): Promise<SearchKnowledgeHit[]> {
-  const apiKey = getJinaApiKey();
-
-  if (!apiKey || hits.length === 0) {
-    return localRerank(query, hits, limit);
-  }
-
-  try {
-    const response = await fetch(getJinaUrl("rerank"), {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "jina-reranker-m0",
-        query,
-        documents: hits.map((hit) => ({
-          text: `${hit.title}\n${hit.sectionPath ? `${hit.sectionPath}\n` : ""}${hit.snippet}`,
-        })),
-        top_n: limit,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-
-    if (!response.ok) {
-      return localRerank(query, hits, limit);
-    }
-
-    const payload = (await response.json()) as JinaRerankResponse;
-    const byIndex = new Map<number, number>();
-
-    for (const item of payload.results ?? []) {
-      if (
-        typeof item.index === "number" &&
-        typeof item.relevance_score === "number"
-      ) {
-        byIndex.set(item.index, item.relevance_score);
-      }
-    }
-
-    return hits
-      .map((hit, index) => ({
-        ...hit,
-        score: byIndex.get(index) ?? hit.score,
-        strategy: "rerank" as const,
-        recallPaths: hit.recallPaths.includes("重排")
-          ? hit.recallPaths
-          : ([...hit.recallPaths, "重排"] as SearchKnowledgeHit["recallPaths"]),
-      }))
-      .sort((left, right) => right.score - left.score)
-      .slice(0, limit);
-  } catch {
-    return localRerank(query, hits, limit);
-  }
+function buildNoEvidenceAnswer(question: string) {
+  return `没有在知识库中找到能直接回答“${question}”的证据。你可以换个问法，或者先导入更相关的资料。`;
 }
 
-async function rewriteSearchQueries(
-  query: string,
+export async function searchKnowledge(
+  input: SearchKnowledgeRequest,
   options: {
+    userId: string;
     apiKey?: string;
     baseUrl?: string;
-    fetchImpl?: typeof fetch;
     model?: string;
-  } = {},
-): Promise<string[]> {
-  const normalized = query.trim();
+    fetchImpl?: typeof fetch;
+  },
+): Promise<SearchKnowledgeResult> {
+  const parsedInput = SearchKnowledgeRequestSchema.parse(input);
+  const collectionId = coerceCollectionId(parsedInput);
 
-  if (!normalized) {
-    return [];
+  if (collectionId) {
+    await requireKnowledgeCollection(options.userId, collectionId);
   }
 
-  const heuristic = Array.from(
-    new Set([normalized, normalizeSearchTokens(normalized).join(" ")]),
-  ).filter(Boolean);
+  const sources = filterSources(
+    await listKnowledgeSources(options.userId, collectionId),
+    parsedInput,
+  );
+  const limit = parsedInput.limit ?? DEFAULT_SEARCH_LIMIT;
+  const knowledgeService = await getKnowledgeServiceForUser(options.userId);
+  const perDocumentTopK = Math.min(Math.max(limit, 3), 5);
 
-  const apiKey = options.apiKey ?? getOpenAIApiKey();
+  const groups = await Promise.all(
+    sources.map(async (source) => {
+      if (!source.documentId) {
+        return [] as SearchKnowledgeHit[];
+      }
 
-  if (!apiKey) {
-    return heuristic;
-  }
+      try {
+        const result = await knowledgeService.searchKnowledgeSegments({
+          documentId: source.documentId,
+          query: parsedInput.query,
+          topK: perDocumentTopK,
+        });
 
-  const fetchImpl = options.fetchImpl ?? fetch;
+        return result.segments.map((segment) =>
+          toSearchHit({
+            query: parsedInput.query,
+            source,
+            segment,
+          }),
+        );
+      } catch {
+        return [] as SearchKnowledgeHit[];
+      }
+    }),
+  );
 
-  try {
-    const response = await fetchImpl(
-      getOpenAIUrl("chat/completions", options.baseUrl),
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: options.model ?? getOpenAIModel(),
-          temperature: 0,
-          messages: [
-            {
-              role: "system",
-              content:
-                'Rewrite the search query into at most 3 complementary retrieval queries. Return strict JSON: {"queries":["..."]}. Keep the original intent and expand synonyms where useful.',
-            },
-            {
-              role: "user",
-              content: normalized,
-            },
-          ],
-        }),
-        signal: AbortSignal.timeout(12_000),
-      },
-    );
+  const hits = dedupeHits(groups.flat(), limit);
 
-    if (!response.ok) {
-      return heuristic;
-    }
-
-    const payload = (await response.json()) as OpenAIChatCompletionResponse;
-    const message = getMessageText(payload);
-    if (!message) {
-      return heuristic;
-    }
-
-    const parsed = JSON.parse(message) as { queries?: unknown };
-    const queries = Array.isArray(parsed.queries)
-      ? parsed.queries
-          .filter((value): value is string => typeof value === "string")
-          .map((value) => value.trim())
-          .filter(Boolean)
-      : [];
-
-    return Array.from(new Set([normalized, ...queries])).slice(0, 3);
-  } catch {
-    return heuristic;
-  }
+  return {
+    query: parsedInput.query,
+    rewrittenQueries: [parsedInput.query],
+    queryVariants: [parsedInput.query],
+    engine: "hybrid",
+    total: hits.length,
+    usedHitIds: [],
+    hits,
+  };
 }
 
 export function toCitation(hit: SearchKnowledgeHit): AskKnowledgeCitation {
@@ -563,25 +340,6 @@ export function annotateAnswerUsage(
   };
 }
 
-function buildMockAnswer(
-  question: string,
-  citations: AskKnowledgeCitation[],
-): string {
-  if (citations.length === 0) {
-    return `没有在知识库中找到能直接回答“${question}”的证据。你可以换个问法，或者先导入更相关的资料。`;
-  }
-
-  const lead = citations
-    .slice(0, 3)
-    .map(
-      (citation) =>
-        `${citation.title}${citation.sectionPath ? ` / ${citation.sectionPath}` : ""}：${citation.snippet}`,
-    )
-    .join(" ");
-
-  return `我找到了 ${citations.length} 条相关证据。${lead}`;
-}
-
 export async function generateModelAnswerFromCitations(params: {
   question: string;
   citations: AskKnowledgeCitation[];
@@ -589,8 +347,7 @@ export async function generateModelAnswerFromCitations(params: {
   baseUrl?: string;
   model?: string;
   fetchImpl?: typeof fetch;
-  timeoutMs?: number;
-}): Promise<string | undefined> {
+}) {
   const apiKey = params.apiKey ?? getOpenAIApiKey();
 
   if (!apiKey || params.citations.length === 0) {
@@ -598,12 +355,10 @@ export async function generateModelAnswerFromCitations(params: {
   }
 
   const fetchImpl = params.fetchImpl ?? fetch;
-  const controller = new AbortController();
 
   try {
     const response = await withOperationTimeout({
       error: new ModelInvocationTimeoutError("request"),
-      onTimeout: () => controller.abort(),
       promise: fetchImpl(getOpenAIUrl("chat/completions", params.baseUrl), {
         method: "POST",
         headers: {
@@ -612,28 +367,22 @@ export async function generateModelAnswerFromCitations(params: {
         },
         body: JSON.stringify({
           model: params.model ?? getOpenAIModel(),
-          temperature: 0.2,
-          messages: buildAnswerMessages(params),
+          temperature: 0,
+          messages: buildAnswerMessages({
+            question: params.question,
+            citations: params.citations,
+          }),
         }),
-        signal: controller.signal,
       }),
-      timeoutMs: params.timeoutMs ?? MODEL_REQUEST_TIMEOUT_MS,
+      timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
     });
 
     if (!response.ok) {
-      throw {
-        status: response.status,
-      };
+      throw new Error(`Model answer request failed with ${response.status}`);
     }
 
     const payload = (await response.json()) as OpenAIChatCompletionResponse;
-    const answer = getMessageText(payload);
-
-    if (!answer) {
-      throw new Error("模型服务返回了空回答");
-    }
-
-    return answer;
+    return getMessageText(payload);
   } catch (error) {
     throwMappedModelProviderError(error, "知识库回答生成");
   }
@@ -647,8 +396,6 @@ export async function streamModelAnswerFromCitations(params: {
   model?: string;
   fetchImpl?: typeof fetch;
   onTextDelta?: (delta: string) => Promise<void> | void;
-  responseTimeoutMs?: number;
-  streamIdleTimeoutMs?: number;
 }): Promise<{
   answer: string;
   finishReason: string;
@@ -663,12 +410,10 @@ export async function streamModelAnswerFromCitations(params: {
   }
 
   const fetchImpl = params.fetchImpl ?? fetch;
-  const controller = new AbortController();
 
   try {
     const response = await withOperationTimeout({
       error: new ModelInvocationTimeoutError("request"),
-      onTimeout: () => controller.abort(),
       promise: fetchImpl(getOpenAIUrl("chat/completions", params.baseUrl), {
         method: "POST",
         headers: {
@@ -677,194 +422,106 @@ export async function streamModelAnswerFromCitations(params: {
         },
         body: JSON.stringify({
           model: params.model ?? getOpenAIModel(),
-          temperature: 0.2,
+          temperature: 0,
           stream: true,
-          messages: buildAnswerMessages(params),
+          messages: buildAnswerMessages({
+            question: params.question,
+            citations: params.citations,
+          }),
         }),
-        signal: controller.signal,
       }),
-      timeoutMs: params.responseTimeoutMs ?? MODEL_REQUEST_TIMEOUT_MS,
+      timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
     });
 
-    if (!response.ok) {
-      throw {
-        status: response.status,
-      };
+    if (!response.ok || !response.body) {
+      throw new Error(`Model stream request failed with ${response.status}`);
     }
 
-    if (!response.body) {
-      throw new Error("模型服务未返回流式响应");
-    }
-
-    const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = "";
+    const reader = response.body.getReader();
     let answer = "";
     let finishReason = "stop";
+    let firstTokenSeen = false;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    let firstTokenTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const clearTimers = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      if (firstTokenTimer) clearTimeout(firstTokenTimer);
+    };
+
+    firstTokenTimer = setTimeout(() => {
+      void reader.cancel(new ModelInvocationTimeoutError("first-token"));
+    }, MODEL_FIRST_TOKEN_TIMEOUT_MS);
+
+    const resetIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        void reader.cancel(new ModelInvocationTimeoutError("stream-idle"));
+      }, MODEL_STREAM_IDLE_TIMEOUT_MS);
+    };
+
+    resetIdleTimer();
+
+    let buffer = "";
 
     while (true) {
-      const { done, value } = await withOperationTimeout({
-        error: new ModelInvocationTimeoutError(
-          answer ? "stream-idle" : "first-token",
-        ),
-        onTimeout: () => controller.abort(),
-        promise: reader.read(),
-        timeoutMs: answer
-          ? (params.streamIdleTimeoutMs ?? MODEL_STREAM_IDLE_TIMEOUT_MS)
-          : (params.responseTimeoutMs ?? MODEL_FIRST_TOKEN_TIMEOUT_MS),
-      });
+      const { done, value } = await reader.read();
 
       if (done) {
         break;
       }
 
+      resetIdleTimer();
       buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
 
-      while (true) {
-        const boundaryIndex = buffer.indexOf("\n\n");
+      for (const line of lines) {
+        const trimmed = line.trim();
 
-        if (boundaryIndex < 0) {
-          break;
+        if (!trimmed.startsWith("data:")) {
+          continue;
         }
 
-        const rawEvent = buffer.slice(0, boundaryIndex);
-        buffer = buffer.slice(boundaryIndex + 2);
+        const payloadText = trimmed.slice(5).trim();
 
-        for (const rawLine of rawEvent.split(/\r?\n/)) {
-          const line = rawLine.trim();
+        if (!payloadText || payloadText === "[DONE]") {
+          continue;
+        }
 
-          if (!line.startsWith("data:")) {
-            continue;
+        const payload = JSON.parse(payloadText) as OpenAIChatCompletionChunk;
+        const deltaText = getDeltaText(payload);
+
+        if (deltaText) {
+          firstTokenSeen = true;
+
+          if (firstTokenTimer) {
+            clearTimeout(firstTokenTimer);
+            firstTokenTimer = undefined;
           }
 
-          const data = line.slice(5).trim();
+          answer += deltaText;
+          await params.onTextDelta?.(deltaText);
+        }
 
-          if (!data) {
-            continue;
-          }
+        const nextFinishReason = payload.choices?.[0]?.finish_reason;
 
-          if (data === "[DONE]") {
-            const finalAnswer = answer.trim();
-
-            if (!finalAnswer) {
-              throw new Error("模型服务返回了空回答");
-            }
-
-            return {
-              answer: finalAnswer,
-              finishReason,
-            };
-          }
-
-          const payload = JSON.parse(data) as OpenAIChatCompletionChunk;
-          const deltaText = getDeltaText(payload);
-
-          if (deltaText) {
-            answer += deltaText;
-            await params.onTextDelta?.(deltaText);
-          }
-
-          const nextFinishReason = payload.choices?.[0]?.finish_reason;
-
-          if (typeof nextFinishReason === "string" && nextFinishReason) {
-            finishReason = nextFinishReason;
-          }
+        if (typeof nextFinishReason === "string" && nextFinishReason) {
+          finishReason = nextFinishReason;
         }
       }
     }
 
-    const finalAnswer = answer.trim();
-
-    if (!finalAnswer) {
-      throw new Error("模型服务返回了空回答");
-    }
+    clearTimers();
 
     return {
-      answer: finalAnswer,
+      answer: firstTokenSeen ? answer.trim() : "",
       finishReason,
     };
   } catch (error) {
     throwMappedModelProviderError(error, "知识库回答生成");
   }
-}
-
-export async function searchKnowledge(
-  input: SearchKnowledgeRequest,
-  options: {
-    userId: string;
-    apiKey?: string;
-    baseUrl?: string;
-    model?: string;
-    fetchImpl?: typeof fetch;
-  },
-): Promise<SearchKnowledgeResult> {
-  const parsedInput = SearchKnowledgeRequestSchema.parse(input);
-  const collectionId = coerceCollectionId(parsedInput);
-  const effectiveInput = {
-    ...parsedInput,
-    collectionId,
-  };
-
-  if (collectionId) {
-    await requireKnowledgeCollection(options.userId, collectionId);
-  }
-
-  const limit = effectiveInput.limit ?? DEFAULT_SEARCH_LIMIT;
-  const rewrittenQueries = await rewriteSearchQueries(
-    parsedInput.query,
-    options,
-  );
-
-  const lexicalGroups = rewrittenQueries.map((query) => ({
-    hits:
-      query === parsedInput.query
-        ? lexicalSearchSingle(query, effectiveInput, options.userId)
-        : annotateRecallPaths(
-            lexicalSearchSingle(query, effectiveInput, options.userId),
-            "查询改写",
-          ),
-    weight: query === parsedInput.query ? 1.15 : 1,
-  }));
-  const vectorGroups = await Promise.all(
-    rewrittenQueries.map(async (query) => {
-      const result = await searchKnowledgeVectors({
-        ...effectiveInput,
-        userId: options.userId,
-        query,
-      });
-
-      return {
-        hits:
-          query === parsedInput.query
-            ? (result?.hits ?? [])
-            : annotateRecallPaths(result?.hits ?? [], "查询改写"),
-        weight: query === parsedInput.query ? 1.2 : 1.05,
-      };
-    }),
-  );
-  const fused = reciprocalRankFusion(
-    [...lexicalGroups, ...vectorGroups],
-    Math.max(limit * 3, 18),
-  );
-  const hits = await rerankCandidates(parsedInput.query, fused, limit);
-  const hasVectorHits = vectorGroups.some((group) => group.hits.length > 0);
-  const hasLexicalHits = lexicalGroups.some((group) => group.hits.length > 0);
-  const engine: KnowledgeRetrievalEngine =
-    hasVectorHits && hasLexicalHits
-      ? "hybrid"
-      : hasVectorHits
-        ? "vector"
-        : "lexical";
-
-  return {
-    query: parsedInput.query,
-    rewrittenQueries,
-    queryVariants: rewrittenQueries,
-    engine,
-    total: hits.length,
-    usedHitIds: [],
-    hits,
-  };
 }
 
 export async function answerKnowledgeQuestion(
@@ -879,14 +536,17 @@ export async function answerKnowledgeQuestion(
 ): Promise<AskKnowledgeResult> {
   const parsedInput = AskKnowledgeRequestSchema.parse(input);
   const limit = parsedInput.limit ?? DEFAULT_ASK_LIMIT;
-  const search = await searchKnowledge(
-    {
-      query: parsedInput.question,
-      collectionId: parsedInput.collectionId,
-      spaceId: parsedInput.spaceId,
-      limit,
-    },
-    options,
+  const search = annotateAnswerUsage(
+    await searchKnowledge(
+      {
+        query: parsedInput.question,
+        collectionId: parsedInput.collectionId,
+        spaceId: parsedInput.spaceId,
+        limit,
+      },
+      options,
+    ),
+    limit,
   );
   const citations = search.hits.slice(0, limit).map(toCitation);
   const modelAnswer = await generateModelAnswerFromCitations({
@@ -900,7 +560,7 @@ export async function answerKnowledgeQuestion(
 
   return {
     question: parsedInput.question,
-    answer: modelAnswer ?? buildMockAnswer(parsedInput.question, citations),
+    answer: modelAnswer ?? buildNoEvidenceAnswer(parsedInput.question),
     mode: modelAnswer ? "model" : "mock",
     engine: search.engine,
     citations,
@@ -919,34 +579,33 @@ export async function generateGroundedAnswer(params: {
   mode: AskKnowledgeResult["mode"];
   search: SearchKnowledgeResult;
 }> {
-  const search = await searchKnowledge(
-    {
-      query: params.query,
-      collectionId: params.collectionId,
-      limit: params.limit,
-    },
-    {
-      userId: params.userId,
+  const limit = params.limit ?? DEFAULT_ASK_LIMIT;
+  const search = annotateAnswerUsage(
+    await searchKnowledge(
+      {
+        query: params.query,
+        collectionId: params.collectionId,
+        limit,
+      },
+      {
+        userId: params.userId,
+        fetchImpl: params.fetchImpl,
+      },
+    ),
+    limit,
+  );
+  const citations = search.hits.slice(0, limit).map(toCitation);
+  const answer =
+    (await generateModelAnswerFromCitations({
+      question: params.query,
+      citations,
       fetchImpl: params.fetchImpl,
-    },
-  );
-  const citations = search.hits
-    .slice(0, params.limit ?? DEFAULT_ASK_LIMIT)
-    .map(toCitation);
-  const retrieval = annotateAnswerUsage(
-    search,
-    params.limit ?? DEFAULT_ASK_LIMIT,
-  );
-  const answer = await generateModelAnswerFromCitations({
-    question: params.query,
-    citations,
-    fetchImpl: params.fetchImpl,
-  });
+    })) ?? buildNoEvidenceAnswer(params.query);
 
   return {
-    answer: answer ?? buildMockAnswer(params.query, citations),
+    answer,
     citations,
-    mode: answer ? "model" : "mock",
-    search: retrieval,
+    mode: citations.length > 0 ? "model" : "mock",
+    search,
   };
 }

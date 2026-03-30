@@ -11,16 +11,26 @@ import {
   ensureDefaultUser,
   importKnowledgeText,
   resetKnowledgeRepository,
-  resetKnowledgeVectorState,
+  resetKnowledgeRuntimeCache,
   saveMessageFeedback,
   searchKnowledge,
   waitForPendingKnowledgeImports,
 } from "./index";
+import { ModelInvocationTimeoutError } from "./model-provider";
 import { streamModelAnswerFromCitations } from "./search";
 
 const originalFetch = globalThis.fetch;
 const originalApiKey = process.env.OPENAI_API_KEY;
 const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
+const originalLanceUri = process.env.LANCEDB_URI;
+
+function createTestLanceUri(): string {
+  const baseUri =
+    originalLanceUri?.replace(/\/+$/g, "") ??
+    "s3://ops-agent-kit/lancedb/atlas-kb";
+
+  return `${baseUri}/test-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -49,13 +59,66 @@ function readMessageText(value: unknown): string {
     .join("\n");
 }
 
+function readJsonRequestBody(
+  value: BodyInit | null | undefined,
+): Record<string, unknown> {
+  if (typeof value !== "string" || !value.trim()) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(value) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+async function readTextRequestBody(
+  value: BodyInit | null | undefined,
+): Promise<string> {
+  if (!value) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value instanceof Uint8Array) {
+    return new TextDecoder().decode(value);
+  }
+
+  if (value instanceof ArrayBuffer) {
+    return new TextDecoder().decode(new Uint8Array(value));
+  }
+
+  if (value instanceof Blob) {
+    return value.text();
+  }
+
+  return "";
+}
+
 function mockOpenAIChatProvider() {
   globalThis.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input.url;
-    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    const body = readJsonRequestBody(init?.body);
     const messages = Array.isArray(body.messages) ? body.messages : [];
     const systemPrompt = readMessageText(messages[0]?.content);
     const lastMessage = messages[messages.length - 1];
+
+    if (url.includes("/rmeta/text")) {
+      const content = await readTextRequestBody(init?.body);
+
+      return jsonResponse([
+        {
+          "Content-Type": "text/plain",
+          "X-TIKA:content": content,
+          "dc:title": "Alpha Doc",
+          resourceName: "Alpha Doc.txt",
+        },
+      ]);
+    }
 
     if (url.includes("/embeddings")) {
       const inputValues = Array.isArray(body.input) ? body.input : [];
@@ -148,22 +211,29 @@ describe("@atlas-kb/mastra knowledge flow", () => {
   beforeEach(async () => {
     knowledgeDataDir = await mkdtemp(join(tmpdir(), "atlas-kb-mastra-test-"));
     process.env.ATLAS_KB_DATA_DIR = knowledgeDataDir;
+    process.env.LANCEDB_URI = createTestLanceUri();
     process.env.OPENAI_API_KEY = "test-key";
     globalThis.fetch = originalFetch;
-    resetKnowledgeRepository();
-    resetKnowledgeVectorState();
+    resetKnowledgeRuntimeCache();
+    await resetKnowledgeRepository();
     mockOpenAIChatProvider();
   });
 
   afterEach(async () => {
     await waitForPendingKnowledgeImports();
-    resetKnowledgeRepository();
-    resetKnowledgeVectorState();
+    resetKnowledgeRuntimeCache();
+    await resetKnowledgeRepository();
 
     if (originalDataDir === undefined) {
       delete process.env.ATLAS_KB_DATA_DIR;
     } else {
       process.env.ATLAS_KB_DATA_DIR = originalDataDir;
+    }
+
+    if (originalLanceUri === undefined) {
+      delete process.env.LANCEDB_URI;
+    } else {
+      process.env.LANCEDB_URI = originalLanceUri;
     }
 
     if (originalApiKey === undefined) {
@@ -172,6 +242,7 @@ describe("@atlas-kb/mastra knowledge flow", () => {
       process.env.OPENAI_API_KEY = originalApiKey;
     }
 
+    resetKnowledgeRuntimeCache();
     globalThis.fetch = originalFetch;
     await rm(knowledgeDataDir, { force: true, recursive: true });
   });
@@ -361,7 +432,7 @@ describe("@atlas-kb/mastra knowledge flow", () => {
     expect(result.answer).toBe("第一段第二段");
   });
 
-  it("fails with a generic timeout message when a stream goes idle", async () => {
+  it("maps provider timeouts to a generic timeout message", async () => {
     await expect(
       streamModelAnswerFromCitations({
         citations: [
@@ -373,45 +444,9 @@ describe("@atlas-kb/mastra knowledge flow", () => {
             title: "证据一",
           },
         ],
-        fetchImpl: async () =>
-          createDelayedSseResponse([
-            {
-              body: {
-                choices: [
-                  {
-                    delta: {
-                      content: "第一段",
-                    },
-                    finish_reason: null,
-                    index: 0,
-                  },
-                ],
-                created: 1,
-                id: "chunk-1",
-                model: "gpt-5.4",
-                object: "chat.completion.chunk",
-              },
-              delayMs: 5,
-            },
-            {
-              body: {
-                choices: [
-                  {
-                    delta: {
-                      content: "第二段",
-                    },
-                    finish_reason: "stop",
-                    index: 0,
-                  },
-                ],
-                created: 2,
-                id: "chunk-2",
-                model: "gpt-5.4",
-                object: "chat.completion.chunk",
-              },
-              delayMs: 50,
-            },
-          ]),
+        fetchImpl: async () => {
+          throw new ModelInvocationTimeoutError("request");
+        },
         question: "总结一下证据",
         responseTimeoutMs: 20,
         streamIdleTimeoutMs: 20,

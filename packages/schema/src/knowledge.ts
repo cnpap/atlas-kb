@@ -54,6 +54,7 @@ export const KnowledgeSourceStatusSchema = z.enum([
 
 export const KnowledgeSourceSchema = z.object({
   id: z.string().trim().min(1),
+  documentId: z.string().trim().min(1).optional(),
   collectionId: z.string().trim().min(1),
   spaceId: z.string().trim().min(1),
   title: z.string().trim().min(1),
@@ -555,6 +556,94 @@ export const AskKnowledgeResultSchema = z.object({
   engine: KnowledgeRetrievalEngineSchema,
   citations: z.array(ChatCitationSchema),
 });
+
+export const BriefingFieldKeySchema = z.enum([
+  "sourceOrg",
+  "documentCode",
+  "documentTitle",
+  "receivedAt",
+  "briefingOpinion",
+  "pendingQuestions",
+]);
+
+export const BriefingFieldStatusSchema = z.enum(["confirmed", "missing"]);
+
+export const BriefingCitationSchema = z.object({
+  documentId: z.string().trim().min(1),
+  segmentId: z.string().trim().min(1),
+  locatorStart: z.number().int().positive(),
+  locatorEnd: z.number().int().positive(),
+  excerpt: z.string().trim().min(1),
+});
+
+export const BriefingFormSchema = z.object({
+  sourceOrg: z.string(),
+  documentCode: z.string(),
+  documentTitle: z.string(),
+  receivedAt: z.string(),
+  briefingOpinion: z.string(),
+  pendingQuestions: z.string(),
+});
+
+export const BriefingFieldSchema = z.object({
+  key: BriefingFieldKeySchema,
+  label: z.string().trim().min(1),
+  value: z.string(),
+  status: BriefingFieldStatusSchema,
+  citations: z.array(BriefingCitationSchema),
+});
+
+export const BriefingOpinionSchema = z.object({
+  sourceId: z.string().trim().min(1),
+  documentId: z.string().trim().min(1),
+  title: z.string().trim().min(1),
+  summary: z.string().trim().min(1),
+  form: BriefingFormSchema,
+  fields: z.array(BriefingFieldSchema),
+  citations: z.array(BriefingCitationSchema),
+  generatedAt: TimestampSchema,
+});
+
+export const BriefingExportSchema = z.object({
+  id: z.string().trim().min(1),
+  sourceId: z.string().trim().min(1),
+  documentId: z.string().trim().min(1),
+  title: z.string().trim().min(1),
+  summary: z.string().trim().min(1),
+  form: BriefingFormSchema,
+  citations: z.array(BriefingCitationSchema),
+  createdAt: TimestampSchema,
+});
+
+export const BriefingOpinionDataSchema = z.object({
+  source: KnowledgeSourceSchema,
+  briefing: BriefingOpinionSchema,
+  history: z.array(BriefingExportSchema),
+});
+
+export const BriefingExportDataSchema = z.object({
+  export: BriefingExportSchema,
+});
+
+export const BriefingExportsDataSchema = z.object({
+  exports: z.array(BriefingExportSchema),
+});
+
+export const BriefingExportCreateRequestSchema = z.object({
+  summary: z.string().trim().min(1),
+  form: BriefingFormSchema,
+  citations: z.array(BriefingCitationSchema).optional(),
+});
+
+export const BriefingOpinionResponseSchema = createApiSuccessResponseSchema(
+  BriefingOpinionDataSchema,
+);
+export const BriefingExportResponseSchema = createApiSuccessResponseSchema(
+  BriefingExportDataSchema,
+);
+export const BriefingExportsResponseSchema = createApiSuccessResponseSchema(
+  BriefingExportsDataSchema,
+);
 export const AskKnowledgeResponseSchema = createApiSuccessResponseSchema(
   AskKnowledgeResultSchema,
 );
@@ -672,3 +761,16 @@ export type AskKnowledgeMode = z.infer<typeof AskKnowledgeModeSchema>;
 export type AskKnowledgeRequest = z.infer<typeof AskKnowledgeRequestSchema>;
 export type AskKnowledgeCitation = z.infer<typeof AskKnowledgeCitationSchema>;
 export type AskKnowledgeResult = z.infer<typeof AskKnowledgeResultSchema>;
+export type BriefingFieldKey = z.infer<typeof BriefingFieldKeySchema>;
+export type BriefingFieldStatus = z.infer<typeof BriefingFieldStatusSchema>;
+export type BriefingCitation = z.infer<typeof BriefingCitationSchema>;
+export type BriefingForm = z.infer<typeof BriefingFormSchema>;
+export type BriefingField = z.infer<typeof BriefingFieldSchema>;
+export type BriefingOpinion = z.infer<typeof BriefingOpinionSchema>;
+export type BriefingExport = z.infer<typeof BriefingExportSchema>;
+export type BriefingOpinionData = z.infer<typeof BriefingOpinionDataSchema>;
+export type BriefingExportData = z.infer<typeof BriefingExportDataSchema>;
+export type BriefingExportsData = z.infer<typeof BriefingExportsDataSchema>;
+export type BriefingExportCreateRequest = z.infer<
+  typeof BriefingExportCreateRequestSchema
+>;
