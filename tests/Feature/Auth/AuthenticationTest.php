@@ -6,7 +6,7 @@ use Laravel\Fortify\Features;
 test('login screen can be rendered', function () {
     $response = $this->get(route('login'));
 
-    $response->assertOk();
+    $response->assertRedirect(route('filament.admin.auth.login'));
 });
 
 test('users can authenticate using the login screen', function () {
@@ -19,7 +19,7 @@ test('users can authenticate using the login screen', function () {
 
     $response
         ->assertSessionHasNoErrors()
-        ->assertRedirect(route('dashboard', absolute: false));
+        ->assertRedirect(route('filament.admin.pages.dashboard', absolute: false));
 
     $this->assertAuthenticated();
 });
@@ -54,6 +54,12 @@ test('users with two factor enabled are redirected to two factor challenge', fun
 
     $response->assertRedirect(route('two-factor.login'));
     $this->assertGuest();
+});
+
+test('forgot password route redirects to the admin panel', function () {
+    $response = $this->get(route('password.request'));
+
+    $response->assertRedirect('/admin');
 });
 
 test('users can logout', function () {

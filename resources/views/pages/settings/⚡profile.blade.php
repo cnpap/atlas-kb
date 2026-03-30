@@ -8,7 +8,7 @@ use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 
-new #[Title('Profile settings')] class extends Component {
+new #[Title('个人资料设置')] class extends Component {
     use ProfileValidationRules;
 
     public string $name = '';

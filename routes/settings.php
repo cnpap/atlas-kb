@@ -1,25 +1,9 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use Laravel\Fortify\Features;
 
-Route::middleware(['auth'])->group(function () {
-    Route::redirect('settings', 'settings/profile');
-
-    Route::livewire('settings/profile', 'pages::settings.profile')->name('profile.edit');
-});
-
-Route::middleware(['auth', 'verified'])->group(function () {
-    Route::livewire('settings/appearance', 'pages::settings.appearance')->name('appearance.edit');
-
-    Route::livewire('settings/security', 'pages::settings.security')
-        ->middleware(
-            when(
-                Features::canManageTwoFactorAuthentication()
-                    && Features::optionEnabled(Features::twoFactorAuthentication(), 'confirmPassword'),
-                ['password.confirm'],
-                [],
-            ),
-        )
-        ->name('security.edit');
-});
+Route::get('settings', fn () => redirect('/admin'));
+Route::get('settings/profile', fn () => redirect('/admin'))->name('profile.edit');
+Route::get('settings/appearance', fn () => redirect('/admin'))->name('appearance.edit');
+Route::get('settings/security', fn () => redirect('/admin'))->name('security.edit');
+Route::get('settings/{any}', fn (string $any) => redirect('/admin'))->where('any', '.*');

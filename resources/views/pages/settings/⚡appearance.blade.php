@@ -3,7 +3,7 @@
 use Livewire\Component;
 use Livewire\Attributes\Title;
 
-new #[Title('Appearance settings')] class extends Component {
+new #[Title('外观设置')] class extends Component {
     //
 }; ?>
 
