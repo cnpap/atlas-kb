@@ -31,6 +31,7 @@ pipeline {
     BUILD_DOCKER_HOST = "tcp://docker-dind:2375"
     DEPLOY_DOCKER_HOST = "unix:///var/run/docker-host.sock"
     BUILD_REGISTRY = "zot:5000"
+    DOCKER_BUILDKIT = "1"
     DEPLOY_REGISTRY = "127.0.0.1:5000"
   }
 
