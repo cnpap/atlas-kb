@@ -57,23 +57,24 @@ pipeline {
           env.BUILD_IMAGE = "${env.BUILD_REGISTRY}/${env.APP_NAME}:${env.RESOLVED_IMAGE_TAG}"
           env.BUILD_IMAGE_LATEST = "${env.BUILD_REGISTRY}/${env.APP_NAME}:latest"
           env.DEPLOY_IMAGE = "${env.DEPLOY_REGISTRY}/${env.APP_NAME}:${env.RESOLVED_IMAGE_TAG}"
+          env.TEST_RUNNER_IMAGE = "${env.APP_NAME}:ci-${env.BUILD_NUMBER}"
+          env.WEB_BUILD_IMAGE = "${env.APP_NAME}:web-build-${env.BUILD_NUMBER}"
           env.SELECTED_BUILD_DOCKER_HOST = params.USE_DIND
             ? env.BUILD_DOCKER_HOST
             : env.DEPLOY_DOCKER_HOST
-        }
-      }
-    }
 
-    stage("Install Dependencies") {
-      steps {
-        sh '''
-          set -eu
-          set +x
-          test -n "${JENKINS_GITHUB_TOKEN:-}"
-          export GITHUB_TOKEN_CLASSIC="${JENKINS_GITHUB_TOKEN}"
-          set -x
-          bun install --frozen-lockfile
-        '''
+          env.RESOLVED_TEST_NETWORK = sh(
+            script: """
+              set -eu
+              DOCKER_HOST="${env.DEPLOY_DOCKER_HOST}" docker network ls --format '{{.Name}}' | awk '/_app-network\$/ { print; exit }'
+            """,
+            returnStdout: true,
+          ).trim()
+
+          if (!env.RESOLVED_TEST_NETWORK) {
+            error("Could not resolve the Atlas KB application Docker network.")
+          }
+        }
       }
     }
 
@@ -84,6 +85,8 @@ pipeline {
           DOCKER_HOST="${SELECTED_BUILD_DOCKER_HOST}" docker version
           DOCKER_HOST="${DEPLOY_DOCKER_HOST}" docker version
           DOCKER_HOST="${DEPLOY_DOCKER_HOST}" docker compose -f "${RESOLVED_COMPOSE_DIR}/compose.yml" config -q
+          test -n "${RESOLVED_TEST_NETWORK}"
+          DOCKER_HOST="${DEPLOY_DOCKER_HOST}" docker network inspect "${RESOLVED_TEST_NETWORK}" >/dev/null
         '''
       }
     }
@@ -95,13 +98,17 @@ pipeline {
       steps {
         sh '''
           set -eu
-          set +x
-          set -a
-          . "${RESOLVED_COMPOSE_DIR}/atlas-kb.env"
-          set +a
-          set -x
-          bun run lint
-          bun run test
+          DOCKER_HOST="${DEPLOY_DOCKER_HOST}" docker build \
+            --target ci-runner \
+            --secret id=github_token_classic,env=JENKINS_GITHUB_TOKEN \
+            -t "${TEST_RUNNER_IMAGE}" \
+            .
+
+          DOCKER_HOST="${DEPLOY_DOCKER_HOST}" docker run --rm \
+            --network "${RESOLVED_TEST_NETWORK}" \
+            --env-file "${RESOLVED_COMPOSE_DIR}/atlas-kb.env" \
+            "${TEST_RUNNER_IMAGE}" \
+            sh -lc 'bun run lint && bun run test'
         '''
       }
     }
@@ -114,8 +121,18 @@ pipeline {
           rm -rf .artifacts/web-dist
           mkdir -p .artifacts/web-dist
 
-          bun run web:build
-          cp -R packages/web/dist/. .artifacts/web-dist
+          DOCKER_HOST="${SELECTED_BUILD_DOCKER_HOST}" docker build \
+            --target web-build \
+            --secret id=github_token_classic,env=JENKINS_GITHUB_TOKEN \
+            --build-arg VITE_API_BASE_URL="${RESOLVED_API_BASE_URL}" \
+            -t "${WEB_BUILD_IMAGE}" \
+            .
+
+          WEB_CONTAINER_ID="$(DOCKER_HOST="${SELECTED_BUILD_DOCKER_HOST}" docker create "${WEB_BUILD_IMAGE}")"
+          trap 'DOCKER_HOST="${SELECTED_BUILD_DOCKER_HOST}" docker rm -f "${WEB_CONTAINER_ID}" >/dev/null 2>&1 || true' EXIT
+          DOCKER_HOST="${SELECTED_BUILD_DOCKER_HOST}" docker cp "${WEB_CONTAINER_ID}:/app/packages/web/dist/." ".artifacts/web-dist"
+          DOCKER_HOST="${SELECTED_BUILD_DOCKER_HOST}" docker rm -f "${WEB_CONTAINER_ID}" >/dev/null
+          trap - EXIT
 
           test -f .artifacts/web-dist/index.html
         '''
@@ -127,7 +144,7 @@ pipeline {
         sh '''
           set -eu
           DOCKER_HOST="${SELECTED_BUILD_DOCKER_HOST}" docker build \
-            --target runtime \
+            --target api-runtime \
             --secret id=github_token_classic,env=JENKINS_GITHUB_TOKEN \
             -t "${BUILD_IMAGE}" \
             -t "${BUILD_IMAGE_LATEST}" \
@@ -213,6 +230,14 @@ pipeline {
     always {
       sh '''
         rm -rf .artifacts /tmp/atlas-kb-api-health.json /tmp/atlas-kb-web-home.html
+
+        if [ -n "${TEST_RUNNER_IMAGE:-}" ]; then
+          DOCKER_HOST="${DEPLOY_DOCKER_HOST}" docker image rm -f "${TEST_RUNNER_IMAGE}" >/dev/null 2>&1 || true
+        fi
+
+        if [ -n "${WEB_BUILD_IMAGE:-}" ]; then
+          DOCKER_HOST="${SELECTED_BUILD_DOCKER_HOST}" docker image rm -f "${WEB_BUILD_IMAGE}" >/dev/null 2>&1 || true
+        fi
       '''
     }
   }
