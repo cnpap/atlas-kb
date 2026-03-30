@@ -1,6 +1,11 @@
 const DEFAULT_API_PORT = 6112;
 const DEFAULT_API_HOST = "0.0.0.0";
-const DEFAULT_WEB_ALLOWED_HOSTS = ["localhost", "127.0.0.1", "own209.test"];
+const DEFAULT_WEB_ALLOWED_HOSTS = [
+  "localhost",
+  "127.0.0.1",
+  "own209.test",
+  "atlas-kb.apitype.com",
+];
 
 function readCommaSeparatedValues(value: string | undefined): string[] {
   return (value ?? "")

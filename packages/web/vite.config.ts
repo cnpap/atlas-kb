@@ -6,7 +6,12 @@ import ui from "@nuxt/ui/vite";
 
 const DEFAULT_WEB_PORT = 6111;
 const DEFAULT_API_PORT = 6112;
-const DEFAULT_ALLOWED_HOSTS = ["own209.test"];
+const DEFAULT_ALLOWED_HOSTS = [
+  "localhost",
+  "127.0.0.1",
+  "own209.test",
+  "atlas-kb.apitype.com",
+];
 
 function readPort(value: string | undefined, fallback: number): number {
   const port = Number(value ?? fallback);

@@ -1,0 +1,12 @@
+.git
+.idea
+.vscode
+.DS_Store
+.env
+.artifacts
+node_modules
+packages/*/node_modules
+packages/*/dist
+packages/*/.turbo
+*.log
+.atlas-kb

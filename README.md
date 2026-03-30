@@ -39,12 +39,20 @@ bun run dev:local
 - Web: `http://localhost:6111`
 - Tika: `http://localhost:9998`
 - RustFS S3: `http://localhost:9000`
-- TimescaleDB: `postgresql://127.0.0.1:15432/ops_agent_kit`
+- TimescaleDB: `postgresql://127.0.0.1:5432/ops_agent_kit`
 
 If `own209.test` resolves to your machine locally, the dev web server also accepts
 `http://own209.test:6111`. By default, Vite proxies `/api/*` to the local API, so
 the browser stays on one origin during development. Set `VITE_API_BASE_URL` only
 when you intentionally want the web app to call a different API origin directly.
+
+## Deployment
+
+- `Jenkinsfile` lives in the repository root and is the single source of truth for CI/CD.
+- The runtime image contains the backend only; the web build is published separately to RustFS.
+- Caddy serves `atlas-kb.apitype.com` as a single-domain entrypoint:
+  `/api/*` is proxied to the `atlas-kb` container and all other paths are served from the public `atlas-kb-web` bucket in RustFS.
+- `atlas-kb-api.apitype.com` is no longer required for normal traffic.
 
 ## Default Login
 
