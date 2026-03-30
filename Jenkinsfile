@@ -68,8 +68,10 @@ pipeline {
       steps {
         sh '''
           set -eu
+          set +x
           test -n "${JENKINS_GITHUB_TOKEN:-}"
           export GITHUB_TOKEN_CLASSIC="${JENKINS_GITHUB_TOKEN}"
+          set -x
           bun install --frozen-lockfile
         '''
       }
@@ -93,9 +95,11 @@ pipeline {
       steps {
         sh '''
           set -eu
+          set +x
           set -a
           . "${RESOLVED_COMPOSE_DIR}/atlas-kb.env"
           set +a
+          set -x
           bun run lint
           bun run test
         '''
@@ -146,10 +150,12 @@ pipeline {
       steps {
         sh '''
           set -eu
+          set +x
           set -a
           . "${RESOLVED_COMPOSE_DIR}/.env"
           . "${RESOLVED_COMPOSE_DIR}/atlas-kb.env"
           set +a
+          set -x
 
           ./deploy/scripts/publish-web-to-rustfs.sh ".artifacts/web-dist"
         '''
