@@ -95,6 +95,17 @@ function resolveApiUrl(path: string): string {
   return new URL(path, getApiBaseUrl()).toString();
 }
 
+function resolveRequestUrl(path: string, token: string, method?: string): string {
+  const url = new URL(path, getApiBaseUrl());
+  const normalizedMethod = method?.toUpperCase() || "GET";
+
+  if (token && normalizedMethod === "GET") {
+    url.searchParams.set("_", String(Date.now()));
+  }
+
+  return url.toString();
+}
+
 function parseDownloadFilename(headerValue: string | null): string | undefined {
   if (!headerValue) return undefined;
   const utf8Match = headerValue.match(/filename\*=UTF-8''([^;]+)/i);
@@ -146,7 +157,7 @@ async function readPayload<T>(response: Response): Promise<T> {
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getAuthToken();
-  const response = await fetch(resolveApiUrl(path), {
+  const response = await fetch(resolveRequestUrl(path, token, init?.method), {
     ...init,
     headers: {
       Accept: "application/json",

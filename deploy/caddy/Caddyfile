@@ -16,6 +16,12 @@
     @api path /api /api/*
 
     handle @api {
+      header {
+        Cache-Control "private, no-store, no-cache, max-age=0, must-revalidate"
+        Pragma "no-cache"
+        Expires "0"
+        Vary "Authorization, Origin"
+      }
       reverse_proxy {$ATLAS_KB_UPSTREAM}
     }
 
@@ -26,6 +32,11 @@
     }
 
     handle {
+      header {
+        Cache-Control "no-store, no-cache, max-age=0, must-revalidate"
+        Pragma "no-cache"
+        Expires "0"
+      }
       rewrite * /{$ATLAS_KB_WEB_BUCKET}/index.html
       reverse_proxy {$ATLAS_KB_WEB_UPSTREAM}
     }

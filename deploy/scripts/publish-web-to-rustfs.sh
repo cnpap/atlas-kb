@@ -35,7 +35,7 @@ aws --endpoint-url "${ATLAS_KB_WEB_S3_ENDPOINT}" \
 aws --endpoint-url "${ATLAS_KB_WEB_S3_ENDPOINT}" \
   s3 cp "${DIST_DIR}/index.html" "s3://${ATLAS_KB_WEB_BUCKET}/index.html" \
   --content-type "text/html; charset=utf-8" \
-  --cache-control "no-cache" \
+  --cache-control "no-store, no-cache, max-age=0, must-revalidate" \
   --no-progress >/dev/null
 
 printf 'Published frontend to s3://%s\n' "${ATLAS_KB_WEB_BUCKET}"
