@@ -16,8 +16,8 @@ pipeline {
     )
     booleanParam(
       name: "USE_DIND",
-      defaultValue: true,
-      description: "Build and push the image through the isolated docker-dind daemon."
+      defaultValue: false,
+      description: "Build and push through docker-dind instead of the host docker daemon."
     )
     string(
       name: "IMAGE_TAG",

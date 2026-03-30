@@ -3,6 +3,8 @@
 FROM oven/bun:1 AS deps
 WORKDIR /app
 
+ENV BUN_INSTALL_CACHE_DIR=/root/.bun/install/cache
+
 COPY .npmrc biome.json bun.lock bunfig.toml package.json tsconfig.json ./
 COPY packages/api/package.json ./packages/api/package.json
 COPY packages/errors/package.json ./packages/errors/package.json
@@ -10,7 +12,8 @@ COPY packages/mastra/package.json ./packages/mastra/package.json
 COPY packages/schema/package.json ./packages/schema/package.json
 COPY packages/web/package.json ./packages/web/package.json
 
-RUN --mount=type=secret,id=github_token_classic \
+RUN --mount=type=cache,id=atlas-kb-bun-cache,target=/root/.bun/install/cache \
+  --mount=type=secret,id=github_token_classic \
   export GITHUB_TOKEN_CLASSIC="$(cat /run/secrets/github_token_classic)" \
   && bun install --frozen-lockfile
 
