@@ -55,14 +55,17 @@ pipeline {
           env.RESOLVED_IMAGE_TAG = params.IMAGE_TAG?.trim()
             ? params.IMAGE_TAG.trim()
             : "build-${env.BUILD_NUMBER}"
-          env.BUILD_IMAGE = "${env.BUILD_REGISTRY}/${env.APP_NAME}:${env.RESOLVED_IMAGE_TAG}"
-          env.BUILD_IMAGE_LATEST = "${env.BUILD_REGISTRY}/${env.APP_NAME}:latest"
-          env.DEPLOY_IMAGE = "${env.DEPLOY_REGISTRY}/${env.APP_NAME}:${env.RESOLVED_IMAGE_TAG}"
-          env.TEST_RUNNER_IMAGE = "${env.APP_NAME}:ci-${env.BUILD_NUMBER}"
-          env.WEB_BUILD_IMAGE = "${env.APP_NAME}:web-build-${env.BUILD_NUMBER}"
           env.SELECTED_BUILD_DOCKER_HOST = params.USE_DIND
             ? env.BUILD_DOCKER_HOST
             : env.DEPLOY_DOCKER_HOST
+          env.SELECTED_BUILD_REGISTRY = params.USE_DIND
+            ? env.BUILD_REGISTRY
+            : env.DEPLOY_REGISTRY
+          env.BUILD_IMAGE = "${env.SELECTED_BUILD_REGISTRY}/${env.APP_NAME}:${env.RESOLVED_IMAGE_TAG}"
+          env.BUILD_IMAGE_LATEST = "${env.SELECTED_BUILD_REGISTRY}/${env.APP_NAME}:latest"
+          env.DEPLOY_IMAGE = "${env.DEPLOY_REGISTRY}/${env.APP_NAME}:${env.RESOLVED_IMAGE_TAG}"
+          env.TEST_RUNNER_IMAGE = "${env.APP_NAME}:ci-${env.BUILD_NUMBER}"
+          env.WEB_BUILD_IMAGE = "${env.APP_NAME}:web-build-${env.BUILD_NUMBER}"
 
           env.RESOLVED_TEST_NETWORK = sh(
             script: """
