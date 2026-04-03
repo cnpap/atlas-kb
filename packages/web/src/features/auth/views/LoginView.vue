@@ -5,9 +5,9 @@
     ArrowRight,
     CircleAlert,
     LoaderCircle,
-    LockKeyhole,
     ShieldCheck,
     UserRound,
+    LockKeyhole,
   } from "lucide-vue-next";
   import { loginWithPassword, useAuthSession } from "@/lib/auth-session";
   import { getErrorMessage } from "@/lib/api-client";
@@ -20,6 +20,8 @@
   const password = ref("");
   const error = ref("");
 
+  const systemName = import.meta.env.VITE_APP_TITLE || "数据局知识管理系统";
+
   const nextPath = computed(() => {
     const next = route.query.next;
     return typeof next === "string" && next.trim() ? next : "/app";
@@ -27,7 +29,7 @@
 
   async function submitLogin() {
     if (!username.value.trim() || !password.value.trim()) {
-      error.value = "请输入用户名和密码";
+      error.value = "请输入账号和密码";
       return;
     }
 
@@ -46,149 +48,190 @@
 </script>
 
 <template>
-  <section
-    class="min-h-screen bg-[linear-gradient(180deg,#f5efe4_0%,#f1eadf_100%)]"
-  >
+  <div class="app-shell flex selection:bg-[var(--accent)] selection:text-white">
+    <!-- 左侧：品牌与愿景区 -->
     <div
-      class="mx-auto grid min-h-screen max-w-6xl lg:grid-cols-[minmax(0,1fr)_440px]"
+      class="hidden lg:flex lg:w-[55%] flex-col justify-between bg-[linear-gradient(135deg,#f6f1e9_0%,#efe8dc_100%)] p-10 lg:p-14 xl:p-16 relative overflow-hidden"
     >
+      <!-- 极简背景纹理 -->
       <div
-        class="hidden min-h-screen flex-col justify-between border-r border-[rgba(93,72,34,0.08)] px-8 py-10 lg:flex"
-      >
-        <div>
-          <div class="flex items-center gap-2 text-[var(--accent-strong)]">
-            <ShieldCheck class="size-4" />
-            <span class="section-label">ATLAS KB</span>
-          </div>
+        class="absolute inset-0 opacity-[0.03]"
+        style="background-image: linear-gradient(rgba(93, 72, 34, 1) 1px, transparent 1px), linear-gradient(90deg, rgba(93, 72, 34, 1) 1px, transparent 1px); background-size: 64px 64px;"
+      ></div>
 
-          <h1
-            class="mt-8 max-w-[560px] text-[52px] leading-[0.98] font-semibold tracking-[-0.06em] text-[var(--text-strong)]"
+      <!-- Header -->
+      <div class="relative z-10">
+        <div class="flex items-center gap-3 text-[var(--text-strong)]">
+          <ShieldCheck class="size-6" stroke-width="1.5" />
+          <span class="text-[15px] font-semibold tracking-widest"
+            >{{ systemName }}</span
           >
-            知识工作区入口
-          </h1>
-          <p class="mt-5 max-w-md text-base leading-7 text-[var(--text-muted)]">
-            统一进入资料、检索与会话工作台。
-          </p>
-        </div>
-
-        <div class="grid grid-cols-3 gap-6">
-          <div class="space-y-2">
-            <p class="section-label text-[10px]">资料</p>
-            <p class="text-sm font-semibold text-[var(--text-strong)]">
-              整理当前资料库
-            </p>
-            <p class="text-sm leading-6 text-[var(--text-muted)]">
-              文件、正文、摘要与标签统一维护。
-            </p>
-          </div>
-          <div class="space-y-2">
-            <p class="section-label text-[10px]">检索</p>
-            <p class="text-sm font-semibold text-[var(--text-strong)]">
-              查看引用命中
-            </p>
-            <p class="text-sm leading-6 text-[var(--text-muted)]">
-              搜索结果与问答引用在同一工作区内处理。
-            </p>
-          </div>
-          <div class="space-y-2">
-            <p class="section-label text-[10px]">会话</p>
-            <p class="text-sm font-semibold text-[var(--text-strong)]">
-              管理历史上下文
-            </p>
-            <p class="text-sm leading-6 text-[var(--text-muted)]">
-              按文件夹维度保留问答记录与追踪路径。
-            </p>
-          </div>
         </div>
       </div>
 
-      <div class="flex items-center px-4 py-6 sm:px-8">
-        <div
-          class="w-full rounded-[16px] border border-[rgba(93,72,34,0.12)] bg-[rgba(255,253,248,0.92)] p-6 shadow-[0_18px_42px_rgba(55,34,10,0.12)] sm:p-8"
+      <!-- Main Typography -->
+      <div class="relative z-10 max-w-2xl my-auto">
+        <h1
+          class="text-[2.5rem] xl:text-[3rem] font-medium leading-[1.2] tracking-tight text-[var(--text-strong)] mb-8"
         >
+          {{ systemName }}
+        </h1>
+        <p
+          class="text-lg xl:text-xl text-[var(--text-muted)] leading-relaxed max-w-lg"
+        >
+          集中管理单位内部的规章制度、学习材料与业务文档，为您提供安全、便捷的搜索与问答服务。
+        </p>
+      </div>
+
+      <!-- Features List -->
+      <div
+        class="relative z-10 grid grid-cols-3 gap-8 border-t border-[rgba(93,72,34,0.12)] pt-12"
+      >
+        <div class="group">
           <div
-            class="flex items-start justify-between gap-4 border-b border-[rgba(93,72,34,0.08)] pb-5"
+            class="text-[13px] font-medium tracking-wider text-[var(--accent-strong)] mb-4 opacity-70"
           >
-            <div>
-              <p class="section-label">ATLAS KB</p>
-              <h2
-                class="mt-3 text-[30px] leading-[1.02] font-semibold tracking-[-0.05em] text-[var(--text-strong)]"
-              >
-                工作区登录
-              </h2>
-              <p class="mt-3 text-sm leading-6 text-[var(--text-muted)]">
-                使用用户名和密码进入当前环境。
-              </p>
-            </div>
-            <ShieldCheck
-              class="mt-1 size-5 shrink-0 text-[var(--accent-strong)]"
-            />
+            01
           </div>
-
+          <h3 class="text-[16px] font-medium text-[var(--text-strong)] mb-2">
+            统一资料库
+          </h3>
+          <p class="text-[14px] text-[var(--text-muted)] leading-relaxed">
+            所有文件统一存放，分类清晰，不用担心找不到资料。
+          </p>
+        </div>
+        <div class="group">
           <div
-            v-if="error"
-            class="mt-6 flex items-start gap-3 rounded-[10px] border-l-2 border-[var(--rose)] bg-[rgba(255,247,240,0.72)] px-4 py-3 text-sm text-[var(--rose)]"
+            class="text-[13px] font-medium tracking-wider text-[var(--accent-strong)] mb-4 opacity-70"
           >
-            <CircleAlert class="mt-0.5 size-4 shrink-0" />
-            <span class="leading-6">{{ error }}</span>
+            02
           </div>
-
-          <form class="mt-7 space-y-4" @submit.prevent="submitLogin">
-            <label class="block space-y-2">
-              <span class="section-label">用户名</span>
-              <div
-                class="group field-shell flex items-center gap-3.5 !rounded-[14px] !border-[rgba(93,72,34,0.12)] !bg-[rgba(255,255,255,0.74)] !px-3.5 !py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.82)]"
-              >
-                <div
-                  class="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-[rgba(93,72,34,0.06)] text-[var(--text-muted)] transition group-focus-within:bg-[rgba(15,118,110,0.1)] group-focus-within:text-[var(--accent-strong)]"
-                >
-                  <UserRound class="size-4" />
-                </div>
-                <input
-                  v-model="username"
-                  class="input-reset text-[15px] leading-6"
-                  autocomplete="username"
-                  autocapitalize="none"
-                  placeholder="输入用户名"
-                  :disabled="pending"
-                  spellcheck="false"
-                >
-              </div>
-            </label>
-
-            <label class="block space-y-2">
-              <span class="section-label">密码</span>
-              <div
-                class="group field-shell flex items-center gap-3.5 !rounded-[14px] !border-[rgba(93,72,34,0.12)] !bg-[rgba(255,255,255,0.74)] !px-3.5 !py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.82)]"
-              >
-                <div
-                  class="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-[rgba(93,72,34,0.06)] text-[var(--text-muted)] transition group-focus-within:bg-[rgba(15,118,110,0.1)] group-focus-within:text-[var(--accent-strong)]"
-                >
-                  <LockKeyhole class="size-4" />
-                </div>
-                <input
-                  v-model="password"
-                  class="input-reset text-[15px] leading-6"
-                  type="password"
-                  autocomplete="current-password"
-                  placeholder="输入密码"
-                  :disabled="pending"
-                >
-              </div>
-            </label>
-
-            <button
-              class="inline-flex w-full items-center justify-center gap-2 rounded-[10px] bg-[linear-gradient(135deg,var(--accent)_0%,var(--accent-strong)_100%)] px-4 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:shadow-[0_12px_22px_rgba(15,118,110,0.22)] disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60"
-              type="submit"
-              :disabled="pending"
-            >
-              <LoaderCircle v-if="pending" class="size-4 animate-spin" />
-              <span>{{ pending ? "登录中..." : "进入工作区" }}</span>
-              <ArrowRight v-if="!pending" class="size-4" />
-            </button>
-          </form>
+          <h3 class="text-[16px] font-medium text-[var(--text-strong)] mb-2">
+            快捷搜索
+          </h3>
+          <p class="text-[14px] text-[var(--text-muted)] leading-relaxed">
+            输入关键词，系统直接帮您定位到具体的文件和段落。
+          </p>
+        </div>
+        <div class="group">
+          <div
+            class="text-[13px] font-medium tracking-wider text-[var(--accent-strong)] mb-4 opacity-70"
+          >
+            03
+          </div>
+          <h3 class="text-[16px] font-medium text-[var(--text-strong)] mb-2">
+            智能问答
+          </h3>
+          <p class="text-[14px] text-[var(--text-muted)] leading-relaxed">
+            向系统提问业务问题，系统会根据内部资料自动总结答案。
+          </p>
         </div>
       </div>
     </div>
-  </section>
+
+    <!-- 右侧：系统登录区 -->
+    <div
+      class="flex-1 flex flex-col justify-center bg-[var(--ui-bg)] px-6 sm:px-16 lg:px-24 xl:px-32 relative"
+    >
+      <div class="w-full max-w-[380px] mx-auto">
+        <!-- 移动端 Logo -->
+        <div class="lg:hidden flex items-center gap-2 mb-12">
+          <ShieldCheck
+            class="size-7 text-[var(--accent-strong)]"
+            stroke-width="1.5"
+          />
+          <span
+            class="text-[18px] font-semibold tracking-widest text-[var(--text-strong)]"
+            >{{ systemName }}</span
+          >
+        </div>
+
+        <div class="mb-10">
+          <h2
+            class="text-[26px] font-medium text-[var(--text-strong)] tracking-tight"
+          >
+            系统登录
+          </h2>
+          <p class="mt-2 text-[15px] text-[var(--text-muted)]">
+            请输入您的工作账号进入系统
+          </p>
+        </div>
+
+        <!-- 统一组件: notice-strip -->
+        <div v-if="error" class="notice-strip warn !mx-0 !mt-0 mb-6">
+          <CircleAlert class="size-4 shrink-0" />
+          <span>{{ error }}</span>
+        </div>
+
+        <form class="space-y-5" @submit.prevent="submitLogin">
+          <label class="block space-y-2">
+            <!-- 统一组件: section-label -->
+            <span class="section-label block">账号</span>
+            <!-- 统一组件: field-shell -->
+            <div class="field-shell flex items-center gap-3">
+              <UserRound
+                class="size-[18px] text-[var(--text-muted)] shrink-0"
+              />
+              <!-- 统一组件: input-reset -->
+              <input
+                id="username"
+                v-model="username"
+                type="text"
+                autocomplete="username"
+                class="input-reset"
+                placeholder="请输入账号"
+                :disabled="pending"
+                spellcheck="false"
+              >
+            </div>
+          </label>
+
+          <label class="block space-y-2">
+            <!-- 统一组件: section-label -->
+            <span class="section-label block">密码</span>
+            <!-- 统一组件: field-shell -->
+            <div class="field-shell flex items-center gap-3">
+              <LockKeyhole
+                class="size-[18px] text-[var(--text-muted)] shrink-0"
+              />
+              <!-- 统一组件: input-reset -->
+              <input
+                id="password"
+                v-model="password"
+                type="password"
+                autocomplete="current-password"
+                class="input-reset"
+                placeholder="请输入密码"
+                :disabled="pending"
+              >
+            </div>
+          </label>
+
+          <div class="pt-2">
+            <!-- 统一组件: soft-button primary -->
+            <button
+              type="submit"
+              :disabled="pending"
+              class="soft-button primary w-full !py-3"
+            >
+              <LoaderCircle v-if="pending" class="size-4 animate-spin" />
+              <span>{{ pending ? "正在登录..." : "登 录" }}</span>
+              <ArrowRight v-if="!pending" class="size-4" />
+            </button>
+          </div>
+        </form>
+
+        <div class="mt-16 text-left">
+          <p
+            class="text-[12px] text-[var(--text-muted)] tracking-wide opacity-80"
+          >
+            内部系统 · 请注意保密<br>
+            <span class="inline-block mt-1"
+              >&copy; {{ systemName }} 保留所有权利</span
+            >
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>

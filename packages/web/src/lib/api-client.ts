@@ -95,7 +95,11 @@ function resolveApiUrl(path: string): string {
   return new URL(path, getApiBaseUrl()).toString();
 }
 
-function resolveRequestUrl(path: string, token: string, method?: string): string {
+function resolveRequestUrl(
+  path: string,
+  token: string,
+  method?: string,
+): string {
   const url = new URL(path, getApiBaseUrl());
   const normalizedMethod = method?.toUpperCase() || "GET";
 
