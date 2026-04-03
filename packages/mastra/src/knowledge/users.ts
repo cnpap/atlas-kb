@@ -5,6 +5,7 @@ import {
 } from "@atlas-kb/errors";
 import type { AuthUser } from "@atlas-kb/schema";
 import { ensureKnowledgeDatabase } from "./db";
+import { KNOWLEDGE_TABLES } from "./tables";
 
 const DEFAULT_USERNAME = "admin";
 const DEFAULT_PASSWORD = "atlas-kb-dev";
@@ -45,7 +46,7 @@ async function getUserRowById(userId: string): Promise<UserRow | null> {
   const sql = await ensureKnowledgeDatabase();
   const [row] = await sql<UserRow[]>`
     SELECT id, username, password_hash, created_at, updated_at
-    FROM users
+    FROM ${sql.unsafe(KNOWLEDGE_TABLES.users)}
     WHERE id = ${userId}
     LIMIT 1
   `;
@@ -57,7 +58,7 @@ async function getUserRowByUsername(username: string): Promise<UserRow | null> {
   const sql = await ensureKnowledgeDatabase();
   const [row] = await sql<UserRow[]>`
     SELECT id, username, password_hash, created_at, updated_at
-    FROM users
+    FROM ${sql.unsafe(KNOWLEDGE_TABLES.users)}
     WHERE username = ${normalizeUsername(username)}
     LIMIT 1
   `;
@@ -88,6 +89,18 @@ export async function ensureDefaultUser(): Promise<AuthUser> {
   });
 }
 
+export async function requireDefaultUser(): Promise<AuthUser> {
+  const existing = await getUserRowByUsername(getDefaultUsername());
+
+  if (existing) {
+    return toAuthUser(existing);
+  }
+
+  throw new NotFoundError(
+    `Default knowledge user "${getDefaultUsername()}" not found`,
+  );
+}
+
 export async function createUser(params: {
   username: string;
   password: string;
@@ -115,7 +128,7 @@ export async function createUser(params: {
   };
 
   await sql`
-    INSERT INTO users (id, username, password_hash, created_at, updated_at)
+    INSERT INTO ${sql.unsafe(KNOWLEDGE_TABLES.users)} (id, username, password_hash, created_at, updated_at)
     VALUES (
       ${user.id},
       ${user.username},

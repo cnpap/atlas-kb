@@ -80,5 +80,6 @@ export {
   getDefaultPassword,
   getDefaultUsername,
   requireAuthUser,
+  requireDefaultUser,
 } from "./users";
 export { resetKnowledgeRuntimeCache } from "./runtime";

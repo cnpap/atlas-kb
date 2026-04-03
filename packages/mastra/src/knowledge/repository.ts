@@ -145,8 +145,8 @@ const collectionQuery = `
     COALESCE(SUM(CASE WHEN s.status = 'ready' THEN 1 ELSE 0 END), 0)::int AS ready_document_count,
     COALESCE(SUM(CASE WHEN s.status = 'processing' THEN 1 ELSE 0 END), 0)::int AS processing_document_count,
     COALESCE(SUM(CASE WHEN s.status = 'failed' THEN 1 ELSE 0 END), 0)::int AS failed_document_count
-  FROM collections c
-  LEFT JOIN sources s
+  FROM kb_collections c
+  LEFT JOIN kb_sources s
     ON s.collection_id = c.id
    AND s.owner_user_id = c.owner_user_id
 `;
@@ -331,7 +331,7 @@ function toBriefingExport(row: BriefingExportRow): BriefingExport {
 async function touchCollection(collectionId: string) {
   const sql = await ensureKnowledgeDatabase();
   await sql`
-    UPDATE collections
+    UPDATE kb_collections
     SET last_activity_at = ${nowIso()}, updated_at = ${nowIso()}
     WHERE id = ${collectionId}
   `;
@@ -385,7 +385,7 @@ async function getSourceRow(
       index_path,
       created_at,
       updated_at
-    FROM sources
+    FROM kb_sources
     WHERE owner_user_id = ${userId}
       AND id = ${sourceId}
     LIMIT 1
@@ -434,7 +434,7 @@ async function getSourceRowByDocumentId(
       index_path,
       created_at,
       updated_at
-    FROM sources
+    FROM kb_sources
     WHERE owner_user_id = ${userId}
       AND document_id = ${documentId}
     LIMIT 1
@@ -489,7 +489,7 @@ export async function createKnowledgeCollection(params: {
     `${slugify(params.input.name).slice(0, 40)}-${crypto.randomUUID().slice(0, 8)}`;
 
   await sql`
-    INSERT INTO collections (
+    INSERT INTO kb_collections (
       id,
       owner_user_id,
       name,
@@ -558,7 +558,7 @@ export async function updateKnowledgeCollection(params: {
   const now = nowIso();
 
   await sql`
-    UPDATE collections
+    UPDATE kb_collections
     SET
       name = COALESCE(${params.input.name?.trim() || null}, name),
       description = COALESCE(${params.input.description?.trim() || null}, description),
@@ -581,7 +581,7 @@ export async function deleteKnowledgeCollection(
   const sql = await ensureKnowledgeDatabase();
 
   await sql`
-    DELETE FROM collections
+    DELETE FROM kb_collections
     WHERE owner_user_id = ${userId}
       AND id = ${collectionId}
   `;
@@ -624,7 +624,7 @@ export async function listKnowledgeSources(
       index_path,
       created_at,
       updated_at
-    FROM sources
+    FROM kb_sources
     WHERE owner_user_id = ${userId}
       ${collectionId ? sql`AND collection_id = ${collectionId}` : sql``}
     ORDER BY updated_at DESC
@@ -723,7 +723,7 @@ export async function createSourceDraft(params: {
   const id = params.sourceId ?? crypto.randomUUID();
 
   await sql`
-    INSERT INTO sources (
+    INSERT INTO kb_sources (
       id,
       owner_user_id,
       collection_id,
@@ -811,7 +811,7 @@ export async function replaceSourceContent(params: {
   const now = nowIso();
 
   await sql`
-    UPDATE sources
+    UPDATE kb_sources
     SET
       document_id = ${params.documentId},
       title = ${params.title.trim()},
@@ -849,7 +849,7 @@ export async function deleteKnowledgeSource(
   const sql = await ensureKnowledgeDatabase();
 
   await sql`
-    DELETE FROM sources
+    DELETE FROM kb_sources
     WHERE owner_user_id = ${userId}
       AND id = ${sourceId}
   `;
@@ -865,7 +865,7 @@ export async function archiveKnowledgeSource(
   const sql = await ensureKnowledgeDatabase();
 
   await sql`
-    UPDATE sources
+    UPDATE kb_sources
     SET status = ${"archived"}, updated_at = ${nowIso()}
     WHERE owner_user_id = ${userId}
       AND id = ${sourceId}
@@ -897,7 +897,7 @@ export async function createImportJob(params: {
   };
 
   await sql`
-    INSERT INTO import_jobs (
+    INSERT INTO kb_import_jobs (
       id,
       owner_user_id,
       source_id,
@@ -939,7 +939,7 @@ export async function updateImportJob(params: {
     params.status === "ready" || params.status === "failed" ? nowIso() : null;
 
   await sql`
-    UPDATE import_jobs
+    UPDATE kb_import_jobs
     SET
       stage = ${params.stage},
       status = ${params.status},
@@ -962,7 +962,7 @@ export async function updateImportJob(params: {
       error_message,
       started_at,
       finished_at
-    FROM import_jobs
+    FROM kb_import_jobs
     WHERE owner_user_id = ${params.userId}
       AND id = ${params.jobId}
     LIMIT 1
@@ -992,7 +992,7 @@ export async function listImportJobs(
       error_message,
       started_at,
       finished_at
-    FROM import_jobs
+    FROM kb_import_jobs
     WHERE owner_user_id = ${userId}
     ORDER BY started_at DESC
   `;
@@ -1014,11 +1014,11 @@ export async function getDashboardSummary(
     }>
   >`
     SELECT
-      (SELECT COUNT(*)::int FROM collections WHERE owner_user_id = ${userId}) AS collections_count,
-      (SELECT COUNT(*)::int FROM sources WHERE owner_user_id = ${userId} AND status = 'ready') AS ready_sources_count,
-      (SELECT COUNT(*)::int FROM sources WHERE owner_user_id = ${userId} AND status = 'processing') AS processing_sources_count,
-      (SELECT COUNT(*)::int FROM sources WHERE owner_user_id = ${userId} AND status = 'failed') AS failed_sources_count,
-      (SELECT COUNT(*)::int FROM chat_sessions WHERE owner_user_id = ${userId}) AS chat_sessions_count
+      (SELECT COUNT(*)::int FROM kb_collections WHERE owner_user_id = ${userId}) AS collections_count,
+      (SELECT COUNT(*)::int FROM kb_sources WHERE owner_user_id = ${userId} AND status = 'ready') AS ready_sources_count,
+      (SELECT COUNT(*)::int FROM kb_sources WHERE owner_user_id = ${userId} AND status = 'processing') AS processing_sources_count,
+      (SELECT COUNT(*)::int FROM kb_sources WHERE owner_user_id = ${userId} AND status = 'failed') AS failed_sources_count,
+      (SELECT COUNT(*)::int FROM kb_chat_sessions WHERE owner_user_id = ${userId}) AS chat_sessions_count
   `;
 
   const [recentCollections, recentSources, recentSessions] = await Promise.all([
@@ -1059,7 +1059,7 @@ export async function createChatSession(params: {
   const preview = "开始提问吧";
 
   await sql`
-    INSERT INTO chat_sessions (
+    INSERT INTO kb_chat_sessions (
       id,
       owner_user_id,
       title,
@@ -1095,7 +1095,7 @@ export async function listChatSessions(userId: string): Promise<ChatSession[]> {
       created_at,
       updated_at,
       last_message_at
-    FROM chat_sessions
+    FROM kb_chat_sessions
     WHERE owner_user_id = ${userId}
     ORDER BY last_message_at DESC
   `;
@@ -1118,7 +1118,7 @@ export async function getChatSessionById(
       created_at,
       updated_at,
       last_message_at
-    FROM chat_sessions
+    FROM kb_chat_sessions
     WHERE owner_user_id = ${userId}
       AND id = ${sessionId}
     LIMIT 1
@@ -1149,7 +1149,7 @@ export async function updateChatSession(params: {
   const sql = await ensureKnowledgeDatabase();
 
   await sql`
-    UPDATE chat_sessions
+    UPDATE kb_chat_sessions
     SET title = ${params.title.trim()}, updated_at = ${nowIso()}
     WHERE owner_user_id = ${params.userId}
       AND id = ${params.sessionId}
@@ -1166,7 +1166,7 @@ export async function deleteChatSession(
   const sql = await ensureKnowledgeDatabase();
 
   await sql`
-    DELETE FROM chat_sessions
+    DELETE FROM kb_chat_sessions
     WHERE owner_user_id = ${userId}
       AND id = ${sessionId}
   `;
@@ -1193,8 +1193,8 @@ export async function listChatMessages(
       f.rating AS feedback_rating,
       f.note AS feedback_note,
       f.created_at AS feedback_created_at
-    FROM chat_messages m
-    LEFT JOIN chat_feedback f ON f.message_id = m.id
+    FROM kb_chat_messages m
+    LEFT JOIN kb_chat_feedback f ON f.message_id = m.id
     WHERE m.owner_user_id = ${userId}
       AND m.session_id = ${sessionId}
     ORDER BY m.created_at ASC
@@ -1219,7 +1219,7 @@ export async function appendChatMessage(params: {
   const preview = params.content.trim().slice(0, 160);
 
   await sql`
-    INSERT INTO chat_messages (
+    INSERT INTO kb_chat_messages (
       id,
       owner_user_id,
       session_id,
@@ -1243,7 +1243,7 @@ export async function appendChatMessage(params: {
   `;
 
   await sql`
-    UPDATE chat_sessions
+    UPDATE kb_chat_sessions
     SET
       preview = ${params.role === "user" ? preview : session.preview},
       updated_at = ${now},
@@ -1282,13 +1282,13 @@ export async function saveMessageFeedback(params: {
   const id = crypto.randomUUID();
 
   await sql`
-    DELETE FROM chat_feedback
+    DELETE FROM kb_chat_feedback
     WHERE owner_user_id = ${params.userId}
       AND message_id = ${params.messageId}
   `;
 
   await sql`
-    INSERT INTO chat_feedback (
+    INSERT INTO kb_chat_feedback (
       id,
       owner_user_id,
       message_id,
@@ -1330,7 +1330,7 @@ export async function listBriefingExports(
       form_json,
       citations_json,
       created_at
-    FROM briefing_exports
+    FROM kb_briefing_exports
     WHERE owner_user_id = ${userId}
       AND source_id = ${sourceId}
     ORDER BY created_at DESC
@@ -1361,7 +1361,7 @@ export async function createBriefingExport(params: {
   };
 
   await sql`
-    INSERT INTO briefing_exports (
+    INSERT INTO kb_briefing_exports (
       id,
       owner_user_id,
       source_id,

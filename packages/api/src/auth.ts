@@ -1,9 +1,5 @@
 import { UnauthorizedError } from "@atlas-kb/errors";
-import {
-  authenticateUser,
-  ensureDefaultUser,
-  getAuthUserById,
-} from "@atlas-kb/mastra/knowledge";
+import { authenticateUser, getAuthUserById } from "@atlas-kb/mastra/knowledge";
 import {
   type LoginRequest,
   LoginRequestSchema,
@@ -47,8 +43,6 @@ function parseBearerToken(authorization?: string): string {
 
 export async function login(input: LoginRequest): Promise<LoginResult> {
   const parsedInput = LoginRequestSchema.parse(input);
-
-  await ensureDefaultUser();
 
   const user = await authenticateUser({
     username: parsedInput.username,

@@ -3,7 +3,7 @@ import {
   SearchKnowledgeResultSchema,
 } from "@atlas-kb/schema";
 import { createTool } from "@mastra/core/tools";
-import { ensureDefaultUser } from "../knowledge";
+import { requireDefaultUser } from "../knowledge";
 import { searchKnowledge } from "../knowledge/search";
 
 const SEARCH_KNOWLEDGE_TOOL_ID = "search_knowledge";
@@ -21,7 +21,7 @@ export function createSearchKnowledgeTool(
     inputSchema: SearchKnowledgeRequestSchema,
     outputSchema: SearchKnowledgeResultSchema,
     execute: async (input) => {
-      const user = await ensureDefaultUser();
+      const user = await requireDefaultUser();
       return searchKnowledge(
         {
           ...input,

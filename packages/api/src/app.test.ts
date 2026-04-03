@@ -266,6 +266,10 @@ describe("@atlas-kb/api authenticated workspace", () => {
     process.env.OPENAI_API_KEY = "test-key";
     resetKnowledgeRuntimeCache();
     await resetKnowledgeRepository();
+    await createUser({
+      username: getDefaultUsername(),
+      password: getDefaultPassword(),
+    });
     mockModelProviders();
   });
 
