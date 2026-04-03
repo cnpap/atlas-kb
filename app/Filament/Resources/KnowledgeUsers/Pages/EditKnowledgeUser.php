@@ -16,7 +16,7 @@ class EditKnowledgeUser extends EditRecord
         return [
             DeleteAction::make()
                 ->requiresConfirmation()
-                ->modalDescription('Deleting this knowledge user will cascade-delete all of their KB collections, sources, imports, chats, feedback, and exports.'),
+                ->modalDescription('删除该知识库用户后，将级联删除其名下的知识库合集、资料源、导入任务、会话消息、反馈和导出记录。'),
         ];
     }
 

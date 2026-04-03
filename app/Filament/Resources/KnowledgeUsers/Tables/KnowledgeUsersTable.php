@@ -13,6 +13,7 @@ class KnowledgeUsersTable
         return $table
             ->columns([
                 TextColumn::make('username')
+                    ->label('用户名')
                     ->searchable()
                     ->sortable()
                     ->copyable(),
@@ -22,9 +23,11 @@ class KnowledgeUsersTable
                     ->copyable()
                     ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('created_at')
+                    ->label('创建时间')
                     ->dateTime('Y-m-d H:i:s')
                     ->sortable(),
                 TextColumn::make('updated_at')
+                    ->label('更新时间')
                     ->dateTime('Y-m-d H:i:s')
                     ->sortable(),
             ])

@@ -21,13 +21,13 @@ class KnowledgeUserResource extends Resource
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
 
-    protected static ?string $navigationLabel = 'Knowledge Users';
+    protected static ?string $navigationLabel = '知识库用户';
 
-    protected static string|UnitEnum|null $navigationGroup = 'Knowledge Base';
+    protected static string|UnitEnum|null $navigationGroup = '知识库';
 
-    protected static ?string $modelLabel = 'Knowledge User';
+    protected static ?string $modelLabel = '知识库用户';
 
-    protected static ?string $pluralModelLabel = 'Knowledge Users';
+    protected static ?string $pluralModelLabel = '知识库用户';
 
     protected static ?string $recordTitleAttribute = 'username';
 

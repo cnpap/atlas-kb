@@ -18,26 +18,26 @@ class KnowledgeUserForm
                     ->columns(2)
                     ->components([
                         TextInput::make('username')
-                            ->label('Username')
+                            ->label('用户名')
                             ->required()
                             ->minLength(3)
                             ->maxLength(64)
                             ->regex(KnowledgeUser::USERNAME_PATTERN)
                             ->unique(ignoreRecord: true)
-                            ->helperText('3-64 chars. Lowercase letters, numbers, dots, underscores, and hyphens only.')
+                            ->helperText('长度 3 到 64 位，仅支持小写字母、数字、点、下划线和中划线。')
                             ->dehydrateStateUsing(
                                 fn (string $state): string => KnowledgeUser::normalizeUsername($state),
                             )
                             ->autocomplete(false)
                             ->columnSpanFull(),
                         TextInput::make('password')
-                            ->label('Password')
+                            ->label('密码')
                             ->password()
                             ->revealable()
                             ->required(fn (string $operation): bool => $operation === 'create')
                             ->rule(Password::default())
                             ->autocomplete(fn (string $operation): string => $operation === 'create' ? 'new-password' : 'off')
-                            ->helperText('Leave blank while editing to keep the current password.')
+                            ->helperText('编辑时留空表示保留当前密码。')
                             ->columnSpanFull(),
                     ]),
             ]);

@@ -17,6 +17,17 @@ test('admin users can access the knowledge user resource', function () {
     $response->assertOk();
 });
 
+test('knowledge user create page is rendered in simplified chinese', function () {
+    $admin = User::factory()->create();
+
+    $response = $this->actingAs($admin)->get(KnowledgeUserResource::getUrl('create'));
+
+    $response->assertOk();
+    $response->assertSee('知识库用户');
+    $response->assertSee('用户名');
+    $response->assertSee('密码');
+});
+
 test('admin users can create a knowledge user from filament', function () {
     $admin = User::factory()->create();
 
