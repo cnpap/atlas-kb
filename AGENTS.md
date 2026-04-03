@@ -50,6 +50,9 @@ This project has domain-specific skills available. You MUST activate the relevan
 
 - Stick to existing directory structure; don't create new base folders without approval.
 - Do not change the application's dependencies without approval.
+- Use `bun add` for JavaScript and frontend tooling dependencies.
+- Use `composer require` for PHP and Laravel dependencies.
+- Do not manually add or change package versions when the package manager can make the change safely.
 
 ## Frontend Bundling
 

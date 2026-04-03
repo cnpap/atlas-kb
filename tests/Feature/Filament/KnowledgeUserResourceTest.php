@@ -1,0 +1,209 @@
+<?php
+
+use App\Filament\Resources\KnowledgeUsers\KnowledgeUserResource;
+use App\Filament\Resources\KnowledgeUsers\Pages\CreateKnowledgeUser;
+use App\Filament\Resources\KnowledgeUsers\Pages\EditKnowledgeUser;
+use App\Models\KnowledgeUser;
+use App\Models\User;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Livewire\Livewire;
+
+test('admin users can access the knowledge user resource', function () {
+    $admin = User::factory()->create();
+
+    $response = $this->actingAs($admin)->get(KnowledgeUserResource::getUrl());
+
+    $response->assertOk();
+});
+
+test('admin users can create a knowledge user from filament', function () {
+    $admin = User::factory()->create();
+
+    $this->actingAs($admin);
+
+    Livewire::test(CreateKnowledgeUser::class)
+        ->assertOk()
+        ->fillForm([
+            'username' => 'atlas.admin',
+            'password' => 'secret-password',
+        ])
+        ->call('create')
+        ->assertHasNoFormErrors()
+        ->assertRedirect();
+
+    $knowledgeUser = KnowledgeUser::query()->sole();
+
+    expect($knowledgeUser->username)->toBe('atlas.admin')
+        ->and($knowledgeUser->id)->toMatch('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i')
+        ->and(Hash::driver('argon2id')->check('secret-password', $knowledgeUser->getRawOriginal('password_hash')))->toBeTrue();
+});
+
+test('editing a knowledge user keeps the password hash when password is blank', function () {
+    $admin = User::factory()->create();
+    $knowledgeUser = KnowledgeUser::factory()->create([
+        'username' => 'alpha.user',
+    ]);
+
+    $originalPasswordHash = $knowledgeUser->getRawOriginal('password_hash');
+
+    $this->actingAs($admin);
+
+    Livewire::test(EditKnowledgeUser::class, ['record' => $knowledgeUser->getKey()])
+        ->assertOk()
+        ->fillForm([
+            'username' => 'beta.user',
+            'password' => '',
+        ])
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    $knowledgeUser->refresh();
+
+    expect($knowledgeUser->username)->toBe('beta.user')
+        ->and($knowledgeUser->getRawOriginal('password_hash'))->toBe($originalPasswordHash);
+});
+
+test('editing a knowledge user can reset the password hash', function () {
+    $admin = User::factory()->create();
+    $knowledgeUser = KnowledgeUser::factory()->create();
+
+    $originalPasswordHash = $knowledgeUser->getRawOriginal('password_hash');
+
+    $this->actingAs($admin);
+
+    Livewire::test(EditKnowledgeUser::class, ['record' => $knowledgeUser->getKey()])
+        ->fillForm([
+            'username' => $knowledgeUser->username,
+            'password' => 'new-secret-password',
+        ])
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    $knowledgeUser->refresh();
+
+    expect($knowledgeUser->getRawOriginal('password_hash'))->not->toBe($originalPasswordHash)
+        ->and(Hash::driver('argon2id')->check('new-secret-password', $knowledgeUser->getRawOriginal('password_hash')))->toBeTrue();
+});
+
+test('deleting a knowledge user cascades through dependent kb tables', function () {
+    $knowledgeUser = KnowledgeUser::factory()->create();
+    $collectionId = (string) fake()->uuid();
+    $sourceId = (string) fake()->uuid();
+    $importJobId = (string) fake()->uuid();
+    $chatSessionId = (string) fake()->uuid();
+    $chatMessageId = (string) fake()->uuid();
+    $chatFeedbackId = (string) fake()->uuid();
+    $briefingExportId = (string) fake()->uuid();
+    $now = now();
+
+    DB::table('kb_collections')->insert([
+        'id' => $collectionId,
+        'owner_user_id' => $knowledgeUser->getKey(),
+        'name' => 'Operations',
+        'description' => 'Ops knowledge',
+        'color' => 'amber',
+        'icon' => 'book-open-text',
+        'is_pinned' => false,
+        'created_at' => $now,
+        'updated_at' => $now,
+        'last_activity_at' => $now,
+    ]);
+
+    DB::table('kb_sources')->insert([
+        'id' => $sourceId,
+        'owner_user_id' => $knowledgeUser->getKey(),
+        'collection_id' => $collectionId,
+        'document_id' => 'doc-1',
+        'title' => 'Runbook',
+        'summary' => 'Summary',
+        'excerpt' => 'Excerpt',
+        'content_preview' => 'Preview',
+        'content' => 'Content',
+        'tags_json' => json_encode(['ops'], JSON_THROW_ON_ERROR),
+        'source_type' => 'text',
+        'legacy_source' => 'text',
+        'status' => 'ready',
+        'source_filename' => null,
+        'source_url' => null,
+        'mime_type' => 'text/plain',
+        'byte_size' => 10,
+        'latest_version' => 1,
+        'ready_at' => $now,
+        'last_processed_at' => $now,
+        'snapshot_updated_at' => null,
+        'failure_message' => null,
+        'original_path' => null,
+        'index_path' => '/tmp/index',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    DB::table('kb_import_jobs')->insert([
+        'id' => $importJobId,
+        'owner_user_id' => $knowledgeUser->getKey(),
+        'source_id' => $sourceId,
+        'collection_id' => $collectionId,
+        'source_type' => 'text',
+        'stage' => 'indexing',
+        'status' => 'completed',
+        'attempt' => 1,
+        'error_message' => null,
+        'started_at' => $now,
+        'finished_at' => $now,
+    ]);
+
+    DB::table('kb_chat_sessions')->insert([
+        'id' => $chatSessionId,
+        'owner_user_id' => $knowledgeUser->getKey(),
+        'title' => 'Ops chat',
+        'collection_id' => $collectionId,
+        'preview' => 'Preview',
+        'created_at' => $now,
+        'updated_at' => $now,
+        'last_message_at' => $now,
+    ]);
+
+    DB::table('kb_chat_messages')->insert([
+        'id' => $chatMessageId,
+        'owner_user_id' => $knowledgeUser->getKey(),
+        'session_id' => $chatSessionId,
+        'role' => 'user',
+        'content' => 'Hello',
+        'citations_json' => json_encode([], JSON_THROW_ON_ERROR),
+        'retrieval_json' => null,
+        'trace_json' => null,
+        'created_at' => $now,
+    ]);
+
+    DB::table('kb_chat_feedback')->insert([
+        'id' => $chatFeedbackId,
+        'owner_user_id' => $knowledgeUser->getKey(),
+        'message_id' => $chatMessageId,
+        'rating' => 'up',
+        'note' => null,
+        'created_at' => $now,
+    ]);
+
+    DB::table('kb_briefing_exports')->insert([
+        'id' => $briefingExportId,
+        'owner_user_id' => $knowledgeUser->getKey(),
+        'source_id' => $sourceId,
+        'document_id' => 'doc-1',
+        'title' => 'Briefing',
+        'summary' => 'Summary',
+        'form_json' => json_encode(['tone' => 'neutral'], JSON_THROW_ON_ERROR),
+        'citations_json' => json_encode([], JSON_THROW_ON_ERROR),
+        'created_at' => $now,
+    ]);
+
+    $knowledgeUser->delete();
+
+    expect(DB::table('kb_collections')->where('id', $collectionId)->exists())->toBeFalse()
+        ->and(DB::table('kb_sources')->where('id', $sourceId)->exists())->toBeFalse()
+        ->and(DB::table('kb_import_jobs')->where('id', $importJobId)->exists())->toBeFalse()
+        ->and(DB::table('kb_chat_sessions')->where('id', $chatSessionId)->exists())->toBeFalse()
+        ->and(DB::table('kb_chat_messages')->where('id', $chatMessageId)->exists())->toBeFalse()
+        ->and(DB::table('kb_chat_feedback')->where('id', $chatFeedbackId)->exists())->toBeFalse()
+        ->and(DB::table('kb_briefing_exports')->where('id', $briefingExportId)->exists())->toBeFalse();
+});

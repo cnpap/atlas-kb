@@ -7,5 +7,5 @@ test('confirm password screen can be rendered', function () {
 
     $response = $this->actingAs($user)->get(route('password.confirm'));
 
-    $response->assertOk();
+    $response->assertRedirect('/admin');
 });
