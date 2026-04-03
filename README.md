@@ -56,6 +56,9 @@ when you intentionally want the web app to call a different API origin directly.
 
 ## Default Login
 
+The shared Laravel migration and seed flow in `atlas-kb-admin` is responsible for
+initializing the default knowledge login in the shared database.
+
 - Username: `admin`
 - Password: `atlas-kb-dev`
 
