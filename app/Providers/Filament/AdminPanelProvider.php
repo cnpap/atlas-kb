@@ -2,6 +2,7 @@
 
 namespace App\Providers\Filament;
 
+use BezhanSalleh\FilamentShield\FilamentShieldPlugin;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -40,6 +41,15 @@ class AdminPanelProvider extends PanelProvider
             ->widgets([
                 AccountWidget::class,
                 FilamentInfoWidget::class,
+            ])
+            ->plugins([
+                FilamentShieldPlugin::make()
+                    ->navigationGroup('系统管理')
+                    ->navigationLabel('角色与权限')
+                    ->modelLabel('角色')
+                    ->pluralModelLabel('角色')
+                    ->simpleResourcePermissionView()
+                    ->localizePermissionLabels(),
             ])
             ->middleware([
                 EncryptCookies::class,

@@ -36,7 +36,8 @@ class KnowledgeUsersTable
                 //
             ])
             ->recordActions([
-                EditAction::make(),
+                EditAction::make()
+                    ->label('编辑'),
             ])
             ->toolbarActions([]);
     }

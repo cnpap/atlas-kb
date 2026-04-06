@@ -4,7 +4,6 @@ namespace App\Filament\Resources\KnowledgeUsers\Pages;
 
 use App\Filament\Resources\KnowledgeUsers\KnowledgeUserResource;
 use Filament\Resources\Pages\CreateRecord;
-use Illuminate\Support\Facades\Hash;
 
 class CreateKnowledgeUser extends CreateRecord
 {
@@ -16,9 +15,9 @@ class CreateKnowledgeUser extends CreateRecord
      */
     protected function mutateFormDataBeforeCreate(array $data): array
     {
-        $data['password_hash'] = Hash::driver('argon2id')->make($data['password']);
-
-        unset($data['password']);
+        $username = (string) $data['username'];
+        $data['name'] = $username;
+        $data['email'] = null;
 
         return $data;
     }

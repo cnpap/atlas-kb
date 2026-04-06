@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('kb_sources', function (Blueprint $table) {
             $table->text('id');
-            $table->text('owner_user_id');
+            $table->foreignId('owner_user_id');
             $table->text('collection_id');
             $table->text('document_id');
             $table->text('title');
@@ -23,7 +23,6 @@ return new class extends Migration
             $table->text('content');
             $table->jsonb('tags_json');
             $table->text('source_type');
-            $table->text('legacy_source');
             $table->text('status');
             $table->text('source_filename')->nullable();
             $table->text('source_url')->nullable();
@@ -42,7 +41,7 @@ return new class extends Migration
             $table->primary('id', 'kb_sources_pkey');
             $table->foreign('owner_user_id')
                 ->references('id')
-                ->on('kb_users')
+                ->on('users')
                 ->cascadeOnDelete();
             $table->foreign('collection_id')
                 ->references('id')

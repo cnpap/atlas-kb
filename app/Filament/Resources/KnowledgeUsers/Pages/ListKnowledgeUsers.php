@@ -13,7 +13,8 @@ class ListKnowledgeUsers extends ListRecords
     protected function getHeaderActions(): array
     {
         return [
-            CreateAction::make(),
+            CreateAction::make()
+                ->label('新增知识库用户'),
         ];
     }
 }

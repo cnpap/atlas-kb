@@ -4,14 +4,14 @@ namespace Database\Factories;
 
 use App\Models\KnowledgeUser;
 use Illuminate\Database\Eloquent\Factories\Factory;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
 
 /**
  * @extends Factory<KnowledgeUser>
  */
 class KnowledgeUserFactory extends Factory
 {
+    protected $model = KnowledgeUser::class;
+
     /**
      * Define the model's default state.
      *
@@ -19,12 +19,13 @@ class KnowledgeUserFactory extends Factory
      */
     public function definition(): array
     {
+        $username = 'kb_'.fake()->unique()->regexify('[a-z0-9][a-z0-9._-]{5,15}');
+
         return [
-            'id' => (string) Str::uuid(),
-            'username' => 'kb_'.fake()->unique()->regexify('[a-z0-9][a-z0-9._-]{5,15}'),
-            'password_hash' => Hash::driver('argon2id')->make('atlas-kb-dev'),
-            'created_at' => now(),
-            'updated_at' => now(),
+            'name' => $username,
+            'username' => $username,
+            'email' => null,
+            'password' => 'atlas-kb-dev',
         ];
     }
 }

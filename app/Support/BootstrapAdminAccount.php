@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\Hash;
 
 class BootstrapAdminAccount
 {
+    public function __construct(private readonly AdminAuthorizationBootstrapper $adminAuthorizationBootstrapper) {}
+
     /**
      * @return array{created: bool, password_reset: bool, user: User}
      */
@@ -24,6 +26,8 @@ class BootstrapAdminAccount
             throw new \InvalidArgumentException('管理员姓名、邮箱和密码不能为空。');
         }
 
+        $this->adminAuthorizationBootstrapper->bootstrap();
+
         $admin = User::query()->where('email', $resolvedEmail)->first();
 
         if ($admin instanceof User) {
@@ -37,12 +41,16 @@ class BootstrapAdminAccount
                     'password' => Hash::make($resolvedPassword),
                 ])->save();
 
+                $admin->assignRole(AdminRoles::SUPER_ADMIN);
+
                 return [
                     'created' => false,
                     'password_reset' => true,
                     'user' => $admin->fresh(),
                 ];
             }
+
+            $admin->assignRole(AdminRoles::SUPER_ADMIN);
 
             return [
                 'created' => false,
@@ -58,6 +66,8 @@ class BootstrapAdminAccount
             'password' => $resolvedPassword,
             'email_verified_at' => now(),
         ]);
+
+        $createdAdmin->assignRole(AdminRoles::SUPER_ADMIN);
 
         return [
             'created' => true,

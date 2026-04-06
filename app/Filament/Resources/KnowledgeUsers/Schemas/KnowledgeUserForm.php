@@ -4,7 +4,7 @@ namespace App\Filament\Resources\KnowledgeUsers\Schemas;
 
 use App\Models\KnowledgeUser;
 use Filament\Forms\Components\TextInput;
-use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Schema;
 use Illuminate\Validation\Rules\Password;
 
@@ -14,9 +14,8 @@ class KnowledgeUserForm
     {
         return $schema
             ->components([
-                Section::make()
-                    ->columns(2)
-                    ->components([
+                Grid::make(2)
+                    ->schema([
                         TextInput::make('username')
                             ->label('用户名')
                             ->required()

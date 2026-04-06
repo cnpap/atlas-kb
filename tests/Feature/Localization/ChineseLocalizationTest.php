@@ -7,6 +7,7 @@ test('the application defaults to simplified chinese', function () {
     expect(__('filament-panels::auth/pages/login.multi_factor.heading'))->toBe('验证您的身份');
     expect(__('filament-forms::components.rich_editor.tools.h4'))->toBe('标题 4');
     expect(__('filament::components/pagination.actions.first.label'))->toBe('第一页');
+    expect(__('filament-shield::filament-shield.nav.group'))->toBe('系统管理');
 });
 
 test('the filament login page is rendered in simplified chinese', function () {

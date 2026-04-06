@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('kb_chat_sessions', function (Blueprint $table) {
             $table->text('id');
-            $table->text('owner_user_id');
+            $table->foreignId('owner_user_id');
             $table->text('title');
             $table->text('collection_id')->nullable();
             $table->text('preview');
@@ -24,7 +24,7 @@ return new class extends Migration
             $table->primary('id', 'kb_chat_sessions_pkey');
             $table->foreign('owner_user_id')
                 ->references('id')
-                ->on('kb_users')
+                ->on('users')
                 ->cascadeOnDelete();
             $table->foreign('collection_id')
                 ->references('id')

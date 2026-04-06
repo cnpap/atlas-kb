@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\KnowledgeTemplateDownloadController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', fn () => redirect('/admin'))->name('home');
@@ -13,6 +14,8 @@ Route::get('email/verify/{id}/{hash}', fn (string $id, string $hash) => redirect
 Route::get('two-factor-challenge', fn () => redirect('/admin'))->name('two-factor.login');
 Route::get('user/confirm-password', fn () => redirect('/admin'))->name('password.confirm');
 Route::get('user/confirmed-password-status', fn () => redirect('/admin'))->name('password.confirmation');
+Route::middleware(['auth', 'can:view,knowledgeTemplate'])->get('admin/knowledge-templates/{knowledgeTemplate}/download', KnowledgeTemplateDownloadController::class)
+    ->name('admin.knowledge-templates.download');
 Route::get('user/{any}', fn (string $any) => redirect('/admin'))->where('any', '.*');
 
 require __DIR__.'/settings.php';

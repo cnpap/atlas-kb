@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('kb_briefing_exports', function (Blueprint $table) {
             $table->text('id');
-            $table->text('owner_user_id');
+            $table->foreignId('owner_user_id');
             $table->text('source_id');
             $table->text('document_id');
             $table->text('title');
@@ -25,7 +25,7 @@ return new class extends Migration
             $table->primary('id', 'kb_briefing_exports_pkey');
             $table->foreign('owner_user_id')
                 ->references('id')
-                ->on('kb_users')
+                ->on('users')
                 ->cascadeOnDelete();
             $table->foreign('source_id')
                 ->references('id')

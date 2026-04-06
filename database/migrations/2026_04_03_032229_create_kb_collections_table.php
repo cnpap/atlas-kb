@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('kb_collections', function (Blueprint $table) {
             $table->text('id');
-            $table->text('owner_user_id');
+            $table->foreignId('owner_user_id');
             $table->text('name');
             $table->text('description');
             $table->text('color');
@@ -26,7 +26,7 @@ return new class extends Migration
             $table->primary('id', 'kb_collections_pkey');
             $table->foreign('owner_user_id')
                 ->references('id')
-                ->on('kb_users')
+                ->on('users')
                 ->cascadeOnDelete();
             $table->rawIndex('owner_user_id, updated_at DESC', 'idx_kb_collections_owner');
         });

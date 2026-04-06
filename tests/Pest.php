@@ -1,5 +1,8 @@
 <?php
 
+use App\Models\User;
+use App\Support\AdminAuthorizationBootstrapper;
+use App\Support\AdminRoles;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -44,7 +47,12 @@ expect()->extend('toBeOne', function () {
 |
 */
 
-function something()
+function createAdminUser(string $role = AdminRoles::SUPER_ADMIN, array $attributes = []): User
 {
-    // ..
+    app(AdminAuthorizationBootstrapper::class)->bootstrap();
+
+    $user = User::factory()->create($attributes);
+    $user->assignRole($role);
+
+    return $user->fresh();
 }

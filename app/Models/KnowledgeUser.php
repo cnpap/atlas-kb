@@ -6,30 +6,37 @@ use Database\Factories\KnowledgeUserFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Attributes\Table;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
-use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 
-#[Table(name: 'kb_users', keyType: 'string', incrementing: false)]
-#[Fillable(['username', 'password_hash'])]
-#[Hidden(['password_hash'])]
+#[Table(name: 'users')]
+#[Fillable(['name', 'username', 'email', 'password'])]
+#[Hidden(['password'])]
 class KnowledgeUser extends Model
 {
     public const USERNAME_PATTERN = '/^[a-z0-9][a-z0-9._-]{2,63}$/';
 
     /** @use HasFactory<KnowledgeUserFactory> */
-    use HasFactory, HasUuids;
+    use HasFactory;
 
     public static function normalizeUsername(string $value): string
     {
         return Str::lower(trim($value));
     }
 
-    public function newUniqueId(): string
+    protected static function booted(): void
     {
-        return (string) Str::uuid();
+        static::addGlobalScope('knowledge_users', fn (Builder $query): Builder => $query->whereNotNull('username'));
+    }
+
+    protected function casts(): array
+    {
+        return [
+            'password' => 'hashed',
+        ];
     }
 
     protected function username(): Attribute

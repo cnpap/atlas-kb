@@ -4,13 +4,12 @@ use App\Filament\Resources\KnowledgeUsers\KnowledgeUserResource;
 use App\Filament\Resources\KnowledgeUsers\Pages\CreateKnowledgeUser;
 use App\Filament\Resources\KnowledgeUsers\Pages\EditKnowledgeUser;
 use App\Models\KnowledgeUser;
-use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Livewire\Livewire;
 
 test('admin users can access the knowledge user resource', function () {
-    $admin = User::factory()->create();
+    $admin = createAdminUser();
 
     $response = $this->actingAs($admin)->get(KnowledgeUserResource::getUrl());
 
@@ -18,7 +17,7 @@ test('admin users can access the knowledge user resource', function () {
 });
 
 test('knowledge user create page is rendered in simplified chinese', function () {
-    $admin = User::factory()->create();
+    $admin = createAdminUser();
 
     $response = $this->actingAs($admin)->get(KnowledgeUserResource::getUrl('create'));
 
@@ -29,7 +28,7 @@ test('knowledge user create page is rendered in simplified chinese', function ()
 });
 
 test('admin users can create a knowledge user from filament', function () {
-    $admin = User::factory()->create();
+    $admin = createAdminUser();
 
     $this->actingAs($admin);
 
@@ -46,17 +45,17 @@ test('admin users can create a knowledge user from filament', function () {
     $knowledgeUser = KnowledgeUser::query()->sole();
 
     expect($knowledgeUser->username)->toBe('atlas.admin')
-        ->and($knowledgeUser->id)->toMatch('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i')
-        ->and(Hash::driver('argon2id')->check('secret-password', $knowledgeUser->getRawOriginal('password_hash')))->toBeTrue();
+        ->and($knowledgeUser->id)->toBeInt()
+        ->and(Hash::check('secret-password', $knowledgeUser->password))->toBeTrue();
 });
 
 test('editing a knowledge user keeps the password hash when password is blank', function () {
-    $admin = User::factory()->create();
+    $admin = createAdminUser();
     $knowledgeUser = KnowledgeUser::factory()->create([
         'username' => 'alpha.user',
     ]);
 
-    $originalPasswordHash = $knowledgeUser->getRawOriginal('password_hash');
+    $originalPasswordHash = $knowledgeUser->password;
 
     $this->actingAs($admin);
 
@@ -72,14 +71,14 @@ test('editing a knowledge user keeps the password hash when password is blank', 
     $knowledgeUser->refresh();
 
     expect($knowledgeUser->username)->toBe('beta.user')
-        ->and($knowledgeUser->getRawOriginal('password_hash'))->toBe($originalPasswordHash);
+        ->and($knowledgeUser->password)->toBe($originalPasswordHash);
 });
 
 test('editing a knowledge user can reset the password hash', function () {
-    $admin = User::factory()->create();
+    $admin = createAdminUser();
     $knowledgeUser = KnowledgeUser::factory()->create();
 
-    $originalPasswordHash = $knowledgeUser->getRawOriginal('password_hash');
+    $originalPasswordHash = $knowledgeUser->password;
 
     $this->actingAs($admin);
 
@@ -93,8 +92,8 @@ test('editing a knowledge user can reset the password hash', function () {
 
     $knowledgeUser->refresh();
 
-    expect($knowledgeUser->getRawOriginal('password_hash'))->not->toBe($originalPasswordHash)
-        ->and(Hash::driver('argon2id')->check('new-secret-password', $knowledgeUser->getRawOriginal('password_hash')))->toBeTrue();
+    expect($knowledgeUser->password)->not->toBe($originalPasswordHash)
+        ->and(Hash::check('new-secret-password', $knowledgeUser->password))->toBeTrue();
 });
 
 test('deleting a knowledge user cascades through dependent kb tables', function () {
@@ -133,7 +132,6 @@ test('deleting a knowledge user cascades through dependent kb tables', function 
         'content' => 'Content',
         'tags_json' => json_encode(['ops'], JSON_THROW_ON_ERROR),
         'source_type' => 'text',
-        'legacy_source' => 'text',
         'status' => 'ready',
         'source_filename' => null,
         'source_url' => null,

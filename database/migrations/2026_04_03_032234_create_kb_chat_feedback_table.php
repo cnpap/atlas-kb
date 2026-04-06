@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('kb_chat_feedback', function (Blueprint $table) {
             $table->text('id');
-            $table->text('owner_user_id');
+            $table->foreignId('owner_user_id');
             $table->text('message_id');
             $table->text('rating');
             $table->text('note')->nullable();
@@ -22,7 +22,7 @@ return new class extends Migration
             $table->primary('id', 'kb_chat_feedback_pkey');
             $table->foreign('owner_user_id')
                 ->references('id')
-                ->on('kb_users')
+                ->on('users')
                 ->cascadeOnDelete();
             $table->foreign('message_id')
                 ->references('id')

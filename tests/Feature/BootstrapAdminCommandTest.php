@@ -2,6 +2,7 @@
 
 use App\Models\KnowledgeUser;
 use App\Models\User;
+use App\Support\AdminRoles;
 use Illuminate\Support\Facades\Hash;
 
 test('bootstrap admin command creates a default admin account', function () {
@@ -14,7 +15,8 @@ test('bootstrap admin command creates a default admin account', function () {
     expect($admin->name)->toBe('管理员')
         ->and($admin->email)->toBe('admin@example.com')
         ->and($admin->email_verified_at)->not->toBeNull()
-        ->and(Hash::check('atlas-admin-dev', $admin->password))->toBeTrue();
+        ->and(Hash::check('atlas-admin-dev', $admin->password))->toBeTrue()
+        ->and($admin->hasRole(AdminRoles::SUPER_ADMIN))->toBeTrue();
 });
 
 test('bootstrap admin command can reset an existing admin password', function () {
@@ -31,7 +33,8 @@ test('bootstrap admin command can reset an existing admin password', function ()
     $admin->refresh();
 
     expect($admin->name)->toBe('系统管理员')
-        ->and(Hash::check('new-password', $admin->password))->toBeTrue();
+        ->and(Hash::check('new-password', $admin->password))->toBeTrue()
+        ->and($admin->hasRole(AdminRoles::SUPER_ADMIN))->toBeTrue();
 });
 
 test('database seeder bootstraps admin and knowledge users together', function () {
@@ -41,5 +44,6 @@ test('database seeder bootstraps admin and knowledge users together', function (
     $knowledgeUser = KnowledgeUser::query()->where('username', 'admin')->sole();
 
     expect(Hash::check('atlas-admin-dev', $admin->password))->toBeTrue()
-        ->and(Hash::driver('argon2id')->check('atlas-kb-dev', $knowledgeUser->getRawOriginal('password_hash')))->toBeTrue();
+        ->and($admin->hasRole(AdminRoles::SUPER_ADMIN))->toBeTrue()
+        ->and(Hash::check('atlas-kb-dev', $knowledgeUser->password))->toBeTrue();
 });
