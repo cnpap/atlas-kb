@@ -43,8 +43,6 @@ export const KnowledgeRecallPathSchema = z.enum([
   "重排",
 ]);
 
-export const KnowledgeLegacySourceSchema = z.enum(["seed", "upload"]);
-
 export const KnowledgeSourceStatusSchema = z.enum([
   "processing",
   "ready",
@@ -64,7 +62,6 @@ export const KnowledgeSourceSchema = z.object({
   content: z.string().trim().min(1),
   tags: z.array(z.string().trim().min(1)),
   sourceType: KnowledgeSourceTypeSchema,
-  source: KnowledgeLegacySourceSchema,
   status: KnowledgeSourceStatusSchema,
   sourceFilename: z.string().trim().min(1).optional(),
   sourceUrl: z.url().optional(),

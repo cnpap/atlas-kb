@@ -1,5 +1,5 @@
 export const KNOWLEDGE_TABLES = {
-  users: "kb_users",
+  users: "users",
   collections: "kb_collections",
   sources: "kb_sources",
   importJobs: "kb_import_jobs",

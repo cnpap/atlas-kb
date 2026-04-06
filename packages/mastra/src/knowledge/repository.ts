@@ -32,7 +32,7 @@ import { deleteManagedSourceFiles } from "./storage";
 
 type CollectionRow = {
   id: string;
-  owner_user_id: string;
+  owner_user_id: number | string;
   name: string;
   description: string;
   color: string;
@@ -49,7 +49,7 @@ type CollectionRow = {
 
 type SourceRow = {
   id: string;
-  owner_user_id: string;
+  owner_user_id: number | string;
   collection_id: string;
   document_id: string;
   title: string;
@@ -59,7 +59,6 @@ type SourceRow = {
   content: string;
   tags_json: unknown;
   source_type: KnowledgeSource["sourceType"];
-  legacy_source: KnowledgeSource["source"];
   status: KnowledgeSource["status"];
   source_filename: string | null;
   source_url: string | null;
@@ -78,7 +77,7 @@ type SourceRow = {
 
 type ImportJobRow = {
   id: string;
-  owner_user_id: string;
+  owner_user_id: number | string;
   source_id: string;
   collection_id: string;
   source_type: KnowledgeImportJob["sourceType"];
@@ -92,7 +91,7 @@ type ImportJobRow = {
 
 type ChatSessionRow = {
   id: string;
-  owner_user_id: string;
+  owner_user_id: number | string;
   title: string;
   collection_id: string | null;
   preview: string;
@@ -103,7 +102,7 @@ type ChatSessionRow = {
 
 type ChatMessageRow = {
   id: string;
-  owner_user_id: string;
+  owner_user_id: number | string;
   session_id: string;
   role: ChatMessage["role"];
   content: string;
@@ -119,7 +118,7 @@ type ChatMessageRow = {
 
 type BriefingExportRow = {
   id: string;
-  owner_user_id: string;
+  owner_user_id: number | string;
   source_id: string;
   document_id: string;
   title: string;
@@ -235,7 +234,6 @@ function toSource(row: SourceRow): KnowledgeSource {
     content: row.content,
     tags: parseJsonArray(row.tags_json),
     sourceType: row.source_type,
-    source: row.legacy_source,
     status: row.status,
     sourceFilename: row.source_filename ?? undefined,
     sourceUrl: row.source_url ?? undefined,
@@ -370,7 +368,6 @@ async function getSourceRow(
       content,
       tags_json,
       source_type,
-      legacy_source,
       status,
       source_filename,
       source_url,
@@ -419,7 +416,6 @@ async function getSourceRowByDocumentId(
       content,
       tags_json,
       source_type,
-      legacy_source,
       status,
       source_filename,
       source_url,
@@ -609,7 +605,6 @@ export async function listKnowledgeSources(
       content,
       tags_json,
       source_type,
-      legacy_source,
       status,
       source_filename,
       source_url,
@@ -713,7 +708,6 @@ export async function createSourceDraft(params: {
   sourceUrl?: string;
   mimeType?: string;
   byteSize?: number;
-  source?: KnowledgeSource["source"];
   originalPath?: string | null;
   indexPath: string;
 }): Promise<KnowledgeSource> {
@@ -735,7 +729,6 @@ export async function createSourceDraft(params: {
       content,
       tags_json,
       source_type,
-      legacy_source,
       status,
       source_filename,
       source_url,
@@ -762,7 +755,6 @@ export async function createSourceDraft(params: {
       ${""},
       ${JSON.stringify(params.tags ?? [])},
       ${params.sourceType},
-      ${params.source || "upload"},
       ${"processing"},
       ${params.sourceFilename ?? null},
       ${params.sourceUrl ?? null},

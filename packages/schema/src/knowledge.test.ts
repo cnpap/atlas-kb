@@ -73,7 +73,6 @@ describe("@atlas-kb/schema knowledge contracts", () => {
         content: "用户认为最难的是把碎片知识变成行动。",
         tags: ["research"],
         sourceType: "text",
-        source: "upload",
         status: "ready",
         latestVersion: 1,
         createdAt: "2026-03-23T10:00:00.000Z",
@@ -135,7 +134,6 @@ describe("@atlas-kb/schema knowledge contracts", () => {
             content: "用户认为最难的是把碎片知识变成行动。",
             tags: ["research"],
             sourceType: "file",
-            source: "upload",
             status: "ready",
             sourceFilename: "访谈纪要.docx",
             mimeType:

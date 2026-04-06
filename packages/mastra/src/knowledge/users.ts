@@ -12,9 +12,9 @@ const DEFAULT_PASSWORD = "atlas-kb-dev";
 const USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{2,63}$/;
 
 type UserRow = {
-  id: string;
+  id: number | string;
   username: string;
-  password_hash: string;
+  password: string;
   created_at: string;
   updated_at: string;
 };
@@ -37,7 +37,7 @@ function normalizeUsername(input: string): string {
 
 function toAuthUser(row: Pick<UserRow, "id" | "username">): AuthUser {
   return {
-    id: row.id,
+    id: String(row.id),
     username: row.username,
   };
 }
@@ -45,9 +45,10 @@ function toAuthUser(row: Pick<UserRow, "id" | "username">): AuthUser {
 async function getUserRowById(userId: string): Promise<UserRow | null> {
   const sql = await ensureKnowledgeDatabase();
   const [row] = await sql<UserRow[]>`
-    SELECT id, username, password_hash, created_at, updated_at
+    SELECT id, username, password, created_at, updated_at
     FROM ${sql.unsafe(KNOWLEDGE_TABLES.users)}
     WHERE id = ${userId}
+      AND username IS NOT NULL
     LIMIT 1
   `;
 
@@ -57,7 +58,7 @@ async function getUserRowById(userId: string): Promise<UserRow | null> {
 async function getUserRowByUsername(username: string): Promise<UserRow | null> {
   const sql = await ensureKnowledgeDatabase();
   const [row] = await sql<UserRow[]>`
-    SELECT id, username, password_hash, created_at, updated_at
+    SELECT id, username, password, created_at, updated_at
     FROM ${sql.unsafe(KNOWLEDGE_TABLES.users)}
     WHERE username = ${normalizeUsername(username)}
     LIMIT 1
@@ -113,35 +114,39 @@ export async function createUser(params: {
     throw new BadRequestError("密码不能为空");
   }
 
-  const existing = await getUserRowByUsername(username);
-
-  if (existing) {
-    throw new ConflictError(`用户名 "${username}" 已存在`);
-  }
-
   const user = {
-    id: crypto.randomUUID(),
     username,
-    passwordHash: await Bun.password.hash(password),
+    passwordHash: await Bun.password.hash(password, {
+      algorithm: "bcrypt",
+      cost: 12,
+    }),
     createdAt: nowIso(),
     updatedAt: nowIso(),
   };
 
-  await sql`
-    INSERT INTO ${sql.unsafe(KNOWLEDGE_TABLES.users)} (id, username, password_hash, created_at, updated_at)
+  const [row] = await sql<UserRow[]>`
+    INSERT INTO ${sql.unsafe(KNOWLEDGE_TABLES.users)} (name, username, email, password, created_at, updated_at)
     VALUES (
-      ${user.id},
       ${user.username},
+      ${user.username},
+      ${null},
       ${user.passwordHash},
       ${user.createdAt},
       ${user.updatedAt}
     )
+    ON CONFLICT (username) DO UPDATE SET
+      name = EXCLUDED.name,
+      email = EXCLUDED.email,
+      password = EXCLUDED.password,
+      updated_at = EXCLUDED.updated_at
+    RETURNING id, username, password, created_at, updated_at
   `;
 
-  return {
-    id: user.id,
-    username: user.username,
-  };
+  if (!row) {
+    throw new ConflictError(`用户名 "${username}" 保存失败`);
+  }
+
+  return toAuthUser(row);
 }
 
 export async function authenticateUser(params: {
@@ -154,10 +159,7 @@ export async function authenticateUser(params: {
     return undefined;
   }
 
-  const verified = await Bun.password.verify(
-    params.password,
-    user.password_hash,
-  );
+  const verified = await Bun.password.verify(params.password, user.password);
 
   return verified ? toAuthUser(user) : undefined;
 }

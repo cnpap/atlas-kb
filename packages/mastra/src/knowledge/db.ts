@@ -42,19 +42,9 @@ export async function ensureKnowledgeDatabase(): Promise<Sql> {
 
 async function initializeSchema(sql: Sql) {
   await sql`
-    CREATE TABLE IF NOT EXISTS ${sql.unsafe(KNOWLEDGE_TABLES.users)} (
-      id TEXT PRIMARY KEY,
-      username TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL
-    )
-  `;
-
-  await sql`
     CREATE TABLE IF NOT EXISTS ${sql.unsafe(KNOWLEDGE_TABLES.collections)} (
       id TEXT PRIMARY KEY,
-      owner_user_id TEXT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.users)}(id) ON DELETE CASCADE,
+      owner_user_id BIGINT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.users)}(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       description TEXT NOT NULL,
       color TEXT NOT NULL,
@@ -69,7 +59,7 @@ async function initializeSchema(sql: Sql) {
   await sql`
     CREATE TABLE IF NOT EXISTS ${sql.unsafe(KNOWLEDGE_TABLES.sources)} (
       id TEXT PRIMARY KEY,
-      owner_user_id TEXT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.users)}(id) ON DELETE CASCADE,
+      owner_user_id BIGINT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.users)}(id) ON DELETE CASCADE,
       collection_id TEXT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.collections)}(id) ON DELETE CASCADE,
       document_id TEXT NOT NULL,
       title TEXT NOT NULL,
@@ -79,7 +69,6 @@ async function initializeSchema(sql: Sql) {
       content TEXT NOT NULL,
       tags_json JSONB NOT NULL,
       source_type TEXT NOT NULL,
-      legacy_source TEXT NOT NULL,
       status TEXT NOT NULL,
       source_filename TEXT,
       source_url TEXT,
@@ -120,7 +109,7 @@ async function initializeSchema(sql: Sql) {
   await sql`
     CREATE TABLE IF NOT EXISTS ${sql.unsafe(KNOWLEDGE_TABLES.importJobs)} (
       id TEXT PRIMARY KEY,
-      owner_user_id TEXT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.users)}(id) ON DELETE CASCADE,
+      owner_user_id BIGINT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.users)}(id) ON DELETE CASCADE,
       source_id TEXT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.sources)}(id) ON DELETE CASCADE,
       collection_id TEXT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.collections)}(id) ON DELETE CASCADE,
       source_type TEXT NOT NULL,
@@ -141,7 +130,7 @@ async function initializeSchema(sql: Sql) {
   await sql`
     CREATE TABLE IF NOT EXISTS ${sql.unsafe(KNOWLEDGE_TABLES.chatSessions)} (
       id TEXT PRIMARY KEY,
-      owner_user_id TEXT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.users)}(id) ON DELETE CASCADE,
+      owner_user_id BIGINT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.users)}(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
       collection_id TEXT REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.collections)}(id) ON DELETE SET NULL,
       preview TEXT NOT NULL,
@@ -159,7 +148,7 @@ async function initializeSchema(sql: Sql) {
   await sql`
     CREATE TABLE IF NOT EXISTS ${sql.unsafe(KNOWLEDGE_TABLES.chatMessages)} (
       id TEXT PRIMARY KEY,
-      owner_user_id TEXT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.users)}(id) ON DELETE CASCADE,
+      owner_user_id BIGINT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.users)}(id) ON DELETE CASCADE,
       session_id TEXT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.chatSessions)}(id) ON DELETE CASCADE,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
@@ -178,7 +167,7 @@ async function initializeSchema(sql: Sql) {
   await sql`
     CREATE TABLE IF NOT EXISTS ${sql.unsafe(KNOWLEDGE_TABLES.chatFeedback)} (
       id TEXT PRIMARY KEY,
-      owner_user_id TEXT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.users)}(id) ON DELETE CASCADE,
+      owner_user_id BIGINT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.users)}(id) ON DELETE CASCADE,
       message_id TEXT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.chatMessages)}(id) ON DELETE CASCADE,
       rating TEXT NOT NULL,
       note TEXT,
@@ -194,7 +183,7 @@ async function initializeSchema(sql: Sql) {
   await sql`
     CREATE TABLE IF NOT EXISTS ${sql.unsafe(KNOWLEDGE_TABLES.briefingExports)} (
       id TEXT PRIMARY KEY,
-      owner_user_id TEXT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.users)}(id) ON DELETE CASCADE,
+      owner_user_id BIGINT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.users)}(id) ON DELETE CASCADE,
       source_id TEXT NOT NULL REFERENCES ${sql.unsafe(KNOWLEDGE_TABLES.sources)}(id) ON DELETE CASCADE,
       document_id TEXT NOT NULL,
       title TEXT NOT NULL,
@@ -224,7 +213,6 @@ export async function resetKnowledgeDatabase(): Promise<void> {
         KNOWLEDGE_TABLES.importJobs,
         KNOWLEDGE_TABLES.sources,
         KNOWLEDGE_TABLES.collections,
-        KNOWLEDGE_TABLES.users,
       ].join(", ")} CASCADE`,
     );
   });
