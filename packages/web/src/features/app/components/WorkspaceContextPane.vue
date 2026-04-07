@@ -5,14 +5,11 @@
     KnowledgeSource,
   } from "@atlas-kb/schema";
   import {
-    Download,
     FileCog,
     FolderPlus,
     Info,
-    PencilLine,
     Search,
     Settings,
-    Trash2,
     Upload,
   } from "lucide-vue-next";
   import {
@@ -36,6 +33,7 @@
 
   defineEmits<{
     deleteSource: [source: KnowledgeSource];
+    downloadExportTask: [task: KnowledgeExportTask];
     downloadSource: [source: KnowledgeSource];
     editSource: [source: KnowledgeSource];
     openExportModal: [source: KnowledgeSource];
@@ -184,31 +182,31 @@
                   导出
                 </button>
                 <button
-                  class="soft-button !rounded-[6px] !p-2"
+                  class="soft-button !rounded-[6px] !px-2.5 !py-2 text-xs"
                   data-testid="source-edit-button"
                   type="button"
                   :disabled="sourceActionId === source.id"
                   @click="$emit('editSource', source)"
                 >
-                  <PencilLine class="size-4" />
+                  编辑
                 </button>
                 <button
-                  class="soft-button !rounded-[6px] !p-2"
+                  class="soft-button !rounded-[6px] !px-2.5 !py-2 text-xs"
                   data-testid="source-download-button"
                   type="button"
                   :disabled="sourceActionId === source.id"
                   @click="$emit('downloadSource', source)"
                 >
-                  <Download class="size-4" />
+                  下载
                 </button>
                 <button
-                  class="soft-button !rounded-[6px] !p-2"
+                  class="soft-button warn !rounded-[6px] !px-2.5 !py-2 text-xs"
                   data-testid="source-delete-button"
                   type="button"
                   :disabled="sourceActionId === source.id"
                   @click="$emit('deleteSource', source)"
                 >
-                  <Trash2 class="size-4" />
+                  删除
                 </button>
               </div>
             </div>
@@ -272,8 +270,18 @@
             </div>
 
             <div
-              class="flex items-center justify-end border-t border-[rgba(93,72,34,0.08)] pt-3"
+              v-if="task.status === 'completed'"
+              class="flex items-center justify-end gap-2 border-t border-[rgba(93,72,34,0.08)] pt-3"
             >
+              <button
+                v-if="task.exportFile"
+                class="soft-button !rounded-[6px] !px-3 !py-2 text-xs"
+                :data-testid="`export-task-download-${task.id}`"
+                type="button"
+                @click="$emit('downloadExportTask', task)"
+              >
+                下载
+              </button>
               <button
                 class="soft-button !rounded-[6px] !px-3 !py-2 text-xs"
                 :data-testid="`export-task-detail-${task.id}`"

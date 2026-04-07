@@ -3,6 +3,7 @@
     ChatMessage,
     ChatSession,
     KnowledgeCollection,
+    KnowledgeExportTask,
     KnowledgeSource,
     KnowledgeSourcesData,
   } from "@atlas-kb/schema";
@@ -906,9 +907,7 @@
     await openExportTaskDetail(taskId);
   }
 
-  function handleDownloadExportResult() {
-    const task = selectedTaskDetail.value;
-
+  function handleDownloadExportTask(task: KnowledgeExportTask) {
     if (!task?.exportFile) {
       return;
     }
@@ -1081,6 +1080,7 @@
       @open-export-modal="handleOpenExportModal"
       @open-task-detail="handleOpenExportTaskDetail"
       @delete-source="deleteSource"
+      @download-export-task="handleDownloadExportTask"
       @download-source="downloadSource"
       @edit-source="openSource"
       @open-import="showImportModal = true"
@@ -1116,7 +1116,6 @@
     :loading="loadingExportTaskDetail"
     :pending="savingExportTask"
     :task="selectedTaskDetail"
-    @download="handleDownloadExportResult"
     @submit="saveExportTask"
   />
 

@@ -1,11 +1,12 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { OpenAICompatibleConfig } from "@mastra/core/llm";
 
 const DEFAULT_DATA_DIR_NAME = ".atlas-kb";
 const DEFAULT_RUNTIME_DIR = "runtime";
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_OPENAI_MODEL = "gpt-5.4";
-const DEFAULT_RUNTIME_MODEL = `openai/${DEFAULT_OPENAI_MODEL}`;
+const DEFAULT_RUNTIME_PROVIDER = "openai";
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_QDRANT_URL = "http://127.0.0.1:6333";
 const DEFAULT_KNOWLEDGE_S3_PREFIX = "knowledge-sources";
@@ -20,10 +21,6 @@ function getProjectRoot(): string {
 function trimEnvValue(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
-}
-
-function normalizeRuntimeModelIdentifier(model: string): string {
-  return model.includes("/") ? model : `openai/${model}`;
 }
 
 function normalizeOpenAIBaseUrl(baseUrl?: string): string {
@@ -106,18 +103,57 @@ export function getDashScopeApiKey(): string | undefined {
   return trimEnvValue(process.env.DASHSCOPE_API_KEY);
 }
 
-export function getRuntimeModel(): string {
-  const configuredRuntimeModel =
-    trimEnvValue(process.env.RUNTIME_MODEL) ??
-    trimEnvValue(process.env.OPENAI_MODEL);
-
-  return configuredRuntimeModel
-    ? normalizeRuntimeModelIdentifier(configuredRuntimeModel)
-    : DEFAULT_RUNTIME_MODEL;
+export function getRuntimeModelProvider(): string {
+  return trimEnvValue(process.env.RUNTIME_PROVIDER) ?? DEFAULT_RUNTIME_PROVIDER;
 }
 
-export function getRuntimeModelProvider(): string {
-  return getRuntimeModel().split("/", 1)[0] || "openai";
+export function getRuntimeModelId(): string {
+  const provider = getRuntimeModelProvider();
+
+  if (provider === "openai") {
+    return getOpenAIModel();
+  }
+
+  const configuredModel = trimEnvValue(process.env.RUNTIME_MODEL);
+
+  if (configuredModel) {
+    return configuredModel;
+  }
+
+  throw new Error(`Missing required runtime model for provider: ${provider}`);
+}
+
+export function getRuntimeModelLabel(): string {
+  return `${getRuntimeModelProvider()}/${getRuntimeModelId()}`;
+}
+
+export function getRuntimeModel(): OpenAICompatibleConfig {
+  const provider = getRuntimeModelProvider();
+  const modelId = getRuntimeModelId();
+
+  if (provider === "openai") {
+    return {
+      providerId: "openai",
+      modelId,
+      url: getOpenAIBaseUrl(),
+      apiKey: getOpenAIApiKey(),
+    };
+  }
+
+  if (provider === "alibaba-cn") {
+    return {
+      providerId: "alibaba-cn",
+      modelId,
+      apiKey: getDashScopeApiKey(),
+    };
+  }
+
+  return {
+    providerId: provider,
+    modelId,
+    url: getOpenAIBaseUrl(),
+    apiKey: getOpenAIApiKey(),
+  };
 }
 
 export function hasRuntimeModelApiKey(): boolean {

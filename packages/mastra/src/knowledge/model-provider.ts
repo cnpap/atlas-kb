@@ -7,7 +7,7 @@ import {
 } from "@atlas-kb/errors";
 import {
   getOpenAIBaseUrl,
-  getRuntimeModel,
+  getRuntimeModelLabel,
   getRuntimeModelProvider,
 } from "./config";
 
@@ -89,7 +89,7 @@ export function getModelProviderLogContext(): ModelProviderLogContext {
     hasDashScopeApiKey: Boolean(process.env.DASHSCOPE_API_KEY?.trim()),
     hasOpenAIApiKey: Boolean(process.env.OPENAI_API_KEY?.trim()),
     openAIBaseUrl: getOpenAIBaseUrl(),
-    runtimeModel: getRuntimeModel(),
+    runtimeModel: getRuntimeModelLabel(),
     runtimeProvider: getRuntimeModelProvider(),
   };
 }

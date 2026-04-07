@@ -4,12 +4,7 @@
     KnowledgeExportTaskParameters,
   } from "@atlas-kb/schema";
   import { computed, reactive, watch } from "vue";
-  import { Download, LoaderCircle, Save } from "lucide-vue-next";
-  import {
-    formatDateTime,
-    getExportTaskStatusLabel,
-    getExportTaskStatusTone,
-  } from "@/lib/knowledge-ui";
+  import { LoaderCircle, Save } from "lucide-vue-next";
 
   const props = defineProps<{
     loading?: boolean;
@@ -19,7 +14,6 @@
   }>();
 
   const emit = defineEmits<{
-    download: [task: KnowledgeExportTaskDetail];
     submit: [parameters: KnowledgeExportTaskParameters];
     "update:open": [value: boolean];
   }>();
@@ -86,7 +80,7 @@
     :open="open"
     :close="!pending"
     :title="task ? `${task.templateName} · ${task.sourceTitle}` : '导出任务详情'"
-    description="导出完成后可以在这里下载结果、修改字段并重新保存。"
+    description="在这里修改字段并重新保存。"
     @update:open="updateOpen"
   >
     <template #body>
@@ -96,69 +90,7 @@
         </div>
 
         <div v-else-if="task" class="space-y-5">
-          <div
-            class="rounded-[8px] border border-[var(--border-soft)] bg-[var(--bg-panel-muted)] px-4 py-3"
-          >
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <div class="min-w-0">
-                <p class="text-sm font-semibold text-[var(--text-strong)]">
-                  {{ task.sourceTitle }}
-                </p>
-                <p class="mt-1 text-[12px] text-[var(--text-muted)]">
-                  {{ task.templateName }}
-                </p>
-              </div>
-              <span
-                class="status-pill"
-                :class="getExportTaskStatusTone(task.status)"
-              >
-                {{ getExportTaskStatusLabel(task.status) }}
-              </span>
-            </div>
-            <p class="mt-2 text-[10px] text-[var(--text-dim)]">
-              更新时间：{{ formatDateTime(task.updatedAt) }}
-            </p>
-            <p
-              v-if="task.failureMessage"
-              class="mt-2 text-[12px] text-[var(--danger)]"
-            >
-              {{ task.failureMessage }}
-            </p>
-          </div>
-
-          <div
-            v-if="task.exportFile"
-            data-testid="export-task-result"
-            class="flex items-center justify-between gap-3 rounded-[8px] border border-[var(--border-soft)] bg-white px-4 py-3"
-          >
-            <div class="min-w-0">
-              <p
-                class="truncate text-sm font-semibold text-[var(--text-strong)]"
-              >
-                {{ task.exportFile.outputFilename }}
-              </p>
-              <p class="mt-1 text-[10px] text-[var(--text-dim)]">
-                生成时间：{{ formatDateTime(task.exportFile.createdAt) }}
-              </p>
-            </div>
-            <button
-              class="soft-button !px-3 !py-2"
-              type="button"
-              @click="$emit('download', task)"
-            >
-              <Download class="size-4" />
-              <span class="text-xs">下载</span>
-            </button>
-          </div>
-
-          <p
-            v-if="!task.canEdit"
-            class="text-sm leading-6 text-[var(--text-muted)]"
-          >
-            当前任务还没有可编辑结果，请等待导出完成后再查看详情。
-          </p>
-
-          <div v-else class="space-y-4">
+          <div v-if="task.canEdit" class="space-y-4">
             <div
               v-for="field in task.template.fields"
               :key="field.id"

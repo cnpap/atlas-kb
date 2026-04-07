@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createKnowledgeAgent } from "../agents";
 import {
   answerKnowledgeQuestion,
   createChatReply,
@@ -22,6 +23,9 @@ import {
 
 const originalFetch = globalThis.fetch;
 const originalApiKey = process.env.OPENAI_API_KEY;
+const originalOpenAIModel = process.env.OPENAI_MODEL;
+const originalRuntimeProvider = process.env.RUNTIME_PROVIDER;
+const originalRuntimeModel = process.env.RUNTIME_MODEL;
 const originalEmbeddingApiKey = process.env.EMBEDDING_API_KEY;
 const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
 const originalQdrantUrl = process.env.QDRANT_URL;
@@ -339,6 +343,12 @@ function buildToolDrivenAnswer(args: { messages: unknown[]; query: string }) {
 }
 
 function mockProviders() {
+  mockProvidersWithOptions();
+}
+
+function mockProvidersWithOptions(options?: {
+  bareOpenAIFileListAnswer?: boolean;
+}) {
   globalThis.fetch = (async (
     input: string | URL | Request,
     init?: RequestInit,
@@ -393,6 +403,24 @@ function mockProviders() {
 
     if (url.includes("chat/completions")) {
       if (!hasToolReply) {
+        if (
+          options?.bareOpenAIFileListAnswer &&
+          /有哪些文件|哪些资料|哪些文档/.test(query)
+        ) {
+          return jsonResponse({
+            choices: [
+              {
+                index: 0,
+                finish_reason: "stop",
+                message: {
+                  role: "assistant",
+                  content: "",
+                },
+              },
+            ],
+          });
+        }
+
         if (/有哪些文件|哪些资料|哪些文档/.test(query)) {
           return buildToolCallResponse({
             toolCallId: "call_list_files",
@@ -433,6 +461,25 @@ function mockProviders() {
 
     if (url.includes("/responses")) {
       if (!hasResponseFunctionOutput(body.input)) {
+        if (
+          options?.bareOpenAIFileListAnswer &&
+          /有哪些文件|哪些资料|哪些文档/.test(responseInputText)
+        ) {
+          return jsonResponse({
+            id: "resp_empty",
+            object: "response",
+            created_at: Date.now(),
+            model: "openai/gpt-5.4",
+            output: [],
+            output_text: "",
+            usage: {
+              input_tokens: 16,
+              output_tokens: 0,
+              total_tokens: 16,
+            },
+          });
+        }
+
         if (/有哪些文件|哪些资料|哪些文档/.test(responseInputText)) {
           return buildResponsesToolCall({
             toolCallId: "call_list_files",
@@ -514,6 +561,9 @@ describe("@atlas-kb/mastra workspace search flow", () => {
     process.env.ATLAS_KB_DATA_DIR = knowledgeDataDir;
     process.env.QDRANT_URL = "http://127.0.0.1:6333";
     process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENAI_MODEL = "gpt-5.4";
+    process.env.RUNTIME_PROVIDER = "openai";
+    delete process.env.RUNTIME_MODEL;
     process.env.EMBEDDING_API_KEY = "test-embedding-key";
     process.env.ATLAS_KB_S3_ENDPOINT = "http://127.0.0.1:9000";
     process.env.ATLAS_KB_S3_REGION = "us-east-1";
@@ -551,6 +601,24 @@ describe("@atlas-kb/mastra workspace search flow", () => {
       delete process.env.OPENAI_API_KEY;
     } else {
       process.env.OPENAI_API_KEY = originalApiKey;
+    }
+
+    if (originalOpenAIModel === undefined) {
+      delete process.env.OPENAI_MODEL;
+    } else {
+      process.env.OPENAI_MODEL = originalOpenAIModel;
+    }
+
+    if (originalRuntimeProvider === undefined) {
+      delete process.env.RUNTIME_PROVIDER;
+    } else {
+      process.env.RUNTIME_PROVIDER = originalRuntimeProvider;
+    }
+
+    if (originalRuntimeModel === undefined) {
+      delete process.env.RUNTIME_MODEL;
+    } else {
+      process.env.RUNTIME_MODEL = originalRuntimeModel;
     }
 
     if (originalEmbeddingApiKey === undefined) {
@@ -767,6 +835,81 @@ describe("@atlas-kb/mastra workspace search flow", () => {
     expect(reply.assistantMessage.content).toContain(
       "2026年全市机关党的建设工作暨纪检工作会议通知.txt",
     );
+  });
+
+  it("guides the knowledge agent to investigate with tools before concluding", async () => {
+    const agent = createKnowledgeAgent({
+      collectionId: "research-space",
+      workspace: {} as never,
+    });
+    const instructions = await agent.getInstructions();
+    const text =
+      typeof instructions === "string" ? instructions : instructions.content;
+
+    expect(String(text)).toContain(
+      "利用现有工具查明当前 workspace 里的真实情况",
+    );
+    expect(String(text)).toContain("如果你还没有查看工具结果，不要直接下结论");
+    expect(String(text)).toContain("请查看文件列表");
+  });
+
+  it("logs diagnostics when gpt-5.4 returns an empty file-list answer without using tools", async () => {
+    mockProvidersWithOptions({
+      bareOpenAIFileListAnswer: true,
+    });
+
+    const user = await ensureDefaultUser();
+    const collection = await createKnowledgeCollection({
+      userId: user.id,
+      input: {
+        id: "gpt54-empty-file-list",
+        name: "GPT 5.4 Empty File List",
+        description: "fallback diagnostics",
+      },
+    });
+
+    await importKnowledgeText({
+      userId: user.id,
+      collectionId: collection.id,
+      input: {
+        title: "请示通知",
+        content: "first document body",
+      },
+    });
+
+    const session = await createChatSession({
+      userId: user.id,
+      collectionId: collection.id,
+    });
+
+    const originalConsoleError = console.error;
+    const errorLogs: unknown[][] = [];
+    console.error = (...args: unknown[]) => {
+      errorLogs.push(args);
+    };
+
+    try {
+      const reply = await createChatReply({
+        userId: user.id,
+        sessionId: session.id,
+        input: {
+          query: "当前我们有哪些文件？",
+        },
+      });
+
+      expect(reply.assistantMessage.content).toBe(
+        "没有在当前资料文件夹中找到能直接回答该问题的证据。你可以换个问法，或者先导入更相关的资料。",
+      );
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    expect(errorLogs.length).toBeGreaterThan(0);
+    expect(String(errorLogs[0]?.[0])).toContain(
+      "[knowledge-agent] empty-evidence fallback",
+    );
+    expect(JSON.stringify(errorLogs[0]?.[1])).toContain("openai/gpt-5.4");
+    expect(JSON.stringify(errorLogs[0]?.[1])).toContain(collection.id);
   });
 
   it("saves feedback on assistant replies", async () => {
