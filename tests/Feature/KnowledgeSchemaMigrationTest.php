@@ -58,6 +58,23 @@ function knowledgeTableForeignKeys(string $table): array
         ->all();
 }
 
+test('knowledge template library migrations are ordered by dependency', function () {
+    $expectedMigrationFiles = [
+        '2026_04_07_041040_create_knowledge_template_libraries_table.php',
+        '2026_04_07_041041_create_knowledge_template_library_files_table.php',
+        '2026_04_07_041042_create_kb_template_user_assignments_table.php',
+        '2026_04_07_041043_create_kb_template_library_assignments_table.php',
+    ];
+
+    $actualMigrationFiles = collect(glob(database_path('migrations/*.php')))
+        ->map(static fn (string $path): string => basename($path))
+        ->filter(static fn (string $path): bool => in_array($path, $expectedMigrationFiles, true))
+        ->values()
+        ->all();
+
+    expect($actualMigrationFiles)->toBe($expectedMigrationFiles);
+});
+
 test('knowledge base tables are created with the expected contract', function () {
     $tables = [
         'kb_collections' => [
