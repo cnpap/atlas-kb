@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
-  buildKnowledgeSourceObjectKey,
   createUser,
   getDefaultPassword,
   getDefaultUsername,
+  LocalFilesystem,
   resetKnowledgeRepository,
   resetKnowledgeRuntimeCache,
-  setKnowledgeObjectStorageClientForTests,
+  setKnowledgeFilesystemFactoryForTests,
   waitForPendingKnowledgeImports,
 } from "@atlas-kb/mastra/knowledge";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "./app";
@@ -24,7 +24,15 @@ const originalS3Region = process.env.ATLAS_KB_S3_REGION;
 const originalS3Bucket = process.env.ATLAS_KB_S3_BUCKET;
 const originalS3AccessKeyId = process.env.ATLAS_KB_S3_ACCESS_KEY_ID;
 const originalS3SecretAccessKey = process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY;
-const mirroredObjectStore = new Map<string, string>();
+
+function getWorkspaceFilePath(args: {
+  collectionId: string;
+  relativePath: string;
+  rootDir: string;
+  userId: string;
+}) {
+  return join(args.rootDir, args.userId, args.collectionId, args.relativePath);
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -136,22 +144,6 @@ async function readTextRequestBody(value: unknown): Promise<string> {
   return "";
 }
 
-function getMirroredObjectKeyFromUrl(url: string): string | undefined {
-  const parsed = new URL(url);
-  const bucket = process.env.ATLAS_KB_S3_BUCKET?.trim();
-  const pathSegments = parsed.pathname.split("/").filter(Boolean);
-
-  if (!bucket || pathSegments.length === 0) {
-    return undefined;
-  }
-
-  if (pathSegments[0] !== bucket) {
-    return undefined;
-  }
-
-  return decodeURIComponent(pathSegments.slice(1).join("/"));
-}
-
 function mockProviders() {
   globalThis.fetch = (async (
     input: string | URL | Request,
@@ -237,19 +229,6 @@ function mockProviders() {
           },
         ],
       });
-    }
-
-    if (init?.method?.toUpperCase() === "PUT" && url.includes(":9000")) {
-      const objectKey = getMirroredObjectKeyFromUrl(url);
-
-      if (objectKey) {
-        mirroredObjectStore.set(
-          objectKey,
-          await readTextRequestBody(init?.body),
-        );
-      }
-
-      return new Response(null, { status: 200 });
     }
 
     return jsonResponse({
@@ -351,10 +330,11 @@ async function uploadFileThroughDirectObjectFlow(params: {
 
 describe("@atlas-kb/api knowledge endpoints", () => {
   let knowledgeDataDir = "";
+  let workspaceFilesDir = "";
 
   beforeEach(async () => {
     knowledgeDataDir = await mkdtemp(join(tmpdir(), "atlas-kb-api-test-"));
-    mirroredObjectStore.clear();
+    workspaceFilesDir = join(knowledgeDataDir, "workspace-files");
     process.env.ATLAS_KB_DATA_DIR = knowledgeDataDir;
     process.env.QDRANT_URL = "http://127.0.0.1:6333";
     process.env.OPENAI_API_KEY = "test-openai-key";
@@ -367,27 +347,10 @@ describe("@atlas-kb/api knowledge endpoints", () => {
     globalThis.fetch = originalFetch;
     resetKnowledgeRuntimeCache();
     await resetKnowledgeRepository();
-    setKnowledgeObjectStorageClientForTests({
-      async deleteObject(args) {
-        mirroredObjectStore.delete(args.key);
-      },
-      async getObject(args) {
-        const value = mirroredObjectStore.get(args.key);
-
-        if (value === undefined) {
-          throw new Error(`missing test object: ${args.key}`);
-        }
-
-        return new TextEncoder().encode(value);
-      },
-      async putObject(args) {
-        mirroredObjectStore.set(
-          args.key,
-          typeof args.body === "string"
-            ? args.body
-            : new TextDecoder().decode(args.body),
-        );
-      },
+    setKnowledgeFilesystemFactoryForTests(({ userId, collectionId }) => {
+      return new LocalFilesystem({
+        basePath: join(workspaceFilesDir, userId, collectionId),
+      });
     });
     mockProviders();
   });
@@ -453,7 +416,7 @@ describe("@atlas-kb/api knowledge endpoints", () => {
 
     resetKnowledgeRuntimeCache();
     globalThis.fetch = originalFetch;
-    setKnowledgeObjectStorageClientForTests();
+    setKnowledgeFilesystemFactoryForTests();
     await rm(knowledgeDataDir, { force: true, recursive: true });
   });
 
@@ -807,7 +770,7 @@ describe("@atlas-kb/api knowledge endpoints", () => {
     );
   });
 
-  it("mirrors manual text sources to object storage across import, update, and delete", async () => {
+  it("keeps manual text sources in the workspace filesystem across import, update, and delete", async () => {
     const app = createApp();
     const session = await login(app);
 
@@ -854,14 +817,16 @@ describe("@atlas-kb/api knowledge endpoints", () => {
       };
     }>(importResponse);
 
-    const objectKey = buildKnowledgeSourceObjectKey({
+    expect(importData.source.sourceFilename).toBe("Manual Source.txt");
+    const workspaceFilePath = getWorkspaceFilePath({
+      rootDir: workspaceFilesDir,
       userId: session.user.id,
       collectionId: collectionData.collection.id,
       relativePath: "Manual Source.txt",
     });
-
-    expect(importData.source.sourceFilename).toBe("Manual Source.txt");
-    expect(mirroredObjectStore.get(objectKey)).toBe("first manual text body");
+    expect(await readFile(workspaceFilePath, "utf-8")).toBe(
+      "first manual text body",
+    );
 
     const updateResponse = await app.handle(
       new Request(`http://localhost/api/kb/sources/${importData.source.id}`, {
@@ -877,7 +842,9 @@ describe("@atlas-kb/api knowledge endpoints", () => {
     );
 
     expect(updateResponse.status).toBe(200);
-    expect(mirroredObjectStore.get(objectKey)).toBe("updated manual text body");
+    expect(await readFile(workspaceFilePath, "utf-8")).toBe(
+      "updated manual text body",
+    );
 
     const deleteResponse = await app.handle(
       new Request(`http://localhost/api/kb/sources/${importData.source.id}`, {
@@ -887,7 +854,7 @@ describe("@atlas-kb/api knowledge endpoints", () => {
     );
 
     expect(deleteResponse.status).toBe(200);
-    expect(mirroredObjectStore.has(objectKey)).toBe(false);
+    await expect(readFile(workspaceFilePath, "utf-8")).rejects.toThrow();
   });
 
   it("generates a briefing opinion", async () => {

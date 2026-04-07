@@ -6,14 +6,9 @@ import { getStoredSourceRecord, requireKnowledgeSource } from "./repository";
 function buildDownloadFilename(params: {
   sourceFilename?: string;
   title: string;
-  sourceType: string;
 }) {
   if (params.sourceFilename?.trim()) {
     return basename(params.sourceFilename);
-  }
-
-  if (params.sourceType === "url") {
-    return `${params.title}.html`;
   }
 
   return `${params.title}.txt`;
@@ -53,7 +48,6 @@ export async function getKnowledgeSourceDownloadUrl(params: {
     filename: buildDownloadFilename({
       sourceFilename: source.sourceFilename,
       title: source.title,
-      sourceType: source.sourceType,
     }),
     mimeType: source.mimeType || "application/octet-stream",
   };

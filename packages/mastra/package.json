@@ -26,6 +26,7 @@
     "@mastra/memory": "1.13.1",
     "@mastra/pg": "^1.8.3",
     "@mastra/qdrant": "^1.0.2",
+    "@mastra/s3": "^0.3.0",
     "ai": "*",
     "postgres": "^3.4.8"
   }

@@ -188,56 +188,6 @@ describe("@atlas-kb/schema knowledge contracts", () => {
         ],
         createdAt: "2026-03-23T10:00:01.000Z",
       },
-      search: {
-        query: "请基于研究资料给我一个总结",
-        rewrittenQueries: ["请基于研究资料给我一个总结"],
-        queryVariants: ["请基于研究资料给我一个总结"],
-        engine: "hybrid",
-        total: 1,
-        usedHitIds: ["客户访谈纪要.txt#chunk:0"],
-        hits: [
-          {
-            sourceId: "source-1",
-            documentId: "客户访谈纪要.txt",
-            collectionId: "research",
-            chunkId: "客户访谈纪要.txt#chunk:0",
-            title: "客户访谈纪要",
-            summary: "关于目标用户痛点的整理",
-            snippet: "用户认为最难的是把碎片知识变成行动。",
-            sourceType: "text",
-            tags: ["research"],
-            score: 1,
-            strategy: "fusion",
-            usedInAnswer: true,
-            recallPaths: ["关键词召回", "语义召回"],
-          },
-        ],
-      },
-      retrieval: {
-        query: "请基于研究资料给我一个总结",
-        rewrittenQueries: ["请基于研究资料给我一个总结"],
-        queryVariants: ["请基于研究资料给我一个总结"],
-        engine: "hybrid",
-        total: 1,
-        usedHitIds: ["客户访谈纪要.txt#chunk:0"],
-        hits: [
-          {
-            sourceId: "source-1",
-            documentId: "客户访谈纪要.txt",
-            collectionId: "research",
-            chunkId: "客户访谈纪要.txt#chunk:0",
-            title: "客户访谈纪要",
-            summary: "关于目标用户痛点的整理",
-            snippet: "用户认为最难的是把碎片知识变成行动。",
-            sourceType: "text",
-            tags: ["research"],
-            score: 1,
-            strategy: "fusion",
-            usedInAnswer: true,
-            recallPaths: ["关键词召回", "语义召回"],
-          },
-        ],
-      },
     });
 
     const result = ChatReplyResponseSchema.parse(payload);
@@ -247,18 +197,36 @@ describe("@atlas-kb/schema knowledge contracts", () => {
     );
   });
 
-  it("parses stream trace events", () => {
+  it("parses stream completion events", () => {
     const event = ChatReplyStreamDataEventSchema.parse({
-      type: "trace",
-      event: {
-        id: "status:search",
-        kind: "search",
-        state: "completed",
-        title: "命中 2 条资料",
+      type: "reply-completed",
+      session: {
+        id: "session-1",
+        title: "如何整理研究资料",
+        collectionId: "research",
+        preview: "请基于研究资料给我一个总结",
         createdAt: "2026-03-23T10:00:00.000Z",
+        updatedAt: "2026-03-23T10:00:01.000Z",
+        lastMessageAt: "2026-03-23T10:00:01.000Z",
+      },
+      userMessage: {
+        id: "msg-user",
+        sessionId: "session-1",
+        role: "user",
+        content: "请基于研究资料给我一个总结",
+        citations: [],
+        createdAt: "2026-03-23T10:00:00.000Z",
+      },
+      assistantMessage: {
+        id: "msg-assistant",
+        sessionId: "session-1",
+        role: "assistant",
+        content: "可以先按主题拆分，再形成行动项。",
+        citations: [],
+        createdAt: "2026-03-23T10:00:01.000Z",
       },
     });
 
-    expect(event.type).toBe("trace");
+    expect(event.type).toBe("reply-completed");
   });
 });

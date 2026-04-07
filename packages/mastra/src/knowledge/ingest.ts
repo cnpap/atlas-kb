@@ -1,4 +1,3 @@
-import { basename } from "node:path";
 import { BadRequestError } from "@atlas-kb/errors";
 import type {
   KnowledgeBatchFileImportRequest,
@@ -8,33 +7,25 @@ import type {
   KnowledgeSource,
   KnowledgeSourceUpdateRequest,
   KnowledgeTextImportRequest,
-  KnowledgeUrlImportRequest,
 } from "@atlas-kb/schema";
 import { hasEmbeddingConfig } from "./config";
 import {
   allocateManagedSourceFileName,
   buildManagedSourceFileName,
   buildTextSourceContent,
-  deleteManagedSourceFiles,
   extractFileContent,
-  overwriteStoredSourceFile,
-  storeTextSourceFile,
-  storeUploadedSourceFile,
 } from "./storage";
-import { getKnowledgeWorkspace, invalidateKnowledgeWorkspace } from "./runtime";
+import {
+  getKnowledgeWorkspace,
+  removeDocumentFromKnowledgeWorkspace,
+} from "./runtime";
 import {
   createKnowledgeSourceRecord,
-  getStoredSourceRecord,
   listKnowledgeSources,
   replaceSourceContent,
   requireKnowledgeCollection,
   requireKnowledgeSource,
 } from "./repository";
-import {
-  buildContentPreview,
-  buildSummary,
-  normalizeWhitespace,
-} from "./search-utils";
 
 type ImportResult = {
   collection: KnowledgeCollection;
@@ -57,46 +48,17 @@ function parseTags(tags?: string[]): string[] {
   return [...new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean))];
 }
 
-function resolveTitle(input: {
-  explicitTitle?: string;
-  extractedTitle: string;
-}) {
-  return input.explicitTitle?.trim() || input.extractedTitle;
-}
-
-function buildIndexMetadata(args: {
-  collectionId: string;
-  source: Pick<
-    KnowledgeSource,
-    "id" | "sourceType" | "sourceFilename" | "sourceUrl" | "status"
-  >;
-  summary: string;
-  tags: string[];
-  title: string;
-}) {
-  return {
-    collectionId: args.collectionId,
-    sourceFilename: args.source.sourceFilename,
-    sourceId: args.source.id,
-    sourceType: args.source.sourceType,
-    sourceUrl: args.source.sourceUrl,
-    status: args.source.status,
-    summary: args.summary,
-    tags: args.tags,
-    title: args.title,
-  };
-}
-
 async function resolveManagedImportFileName(args: {
   collectionId: string;
   mimeType?: string;
   sourceFilename?: string;
   sourceId?: string;
   sourceType: KnowledgeSource["sourceType"];
-  sourceUrl?: string;
   title: string;
   userId: string;
 }) {
+  // 上传文件和文本导入共用同一个文件名分配器，保证每个资料最终都落成
+  // 当前资料库内唯一的 workspace 相对路径。
   const sources = await listKnowledgeSources(args.userId, args.collectionId);
   const usedNames = new Set(
     sources
@@ -112,89 +74,107 @@ async function resolveManagedImportFileName(args: {
       mimeType: args.mimeType,
       sourceFilename: args.sourceFilename,
       sourceType: args.sourceType,
-      sourceUrl: args.sourceUrl,
       title: args.title,
     }),
     usedNames,
   );
 }
 
-async function indexSourceDocument(args: {
+function buildIndexMetadata(args: {
   collectionId: string;
-  content: string;
-  documentId: string;
-  mimeType?: string;
-  source: Pick<
-    KnowledgeSource,
-    "id" | "sourceType" | "sourceFilename" | "sourceUrl" | "status"
-  >;
+  sourceType: KnowledgeSource["sourceType"];
+  sourceFilename?: string;
   summary: string;
   tags: string[];
   title: string;
-  userId: string;
 }) {
-  const workspace = await getKnowledgeWorkspace({
-    userId: args.userId,
+  return {
     collectionId: args.collectionId,
-  });
-
-  await workspace.index(args.documentId, args.content, {
-    mimeType: args.mimeType,
-    metadata: buildIndexMetadata(args),
-  });
+    sourceFilename: args.sourceFilename,
+    sourceType: args.sourceType,
+    summary: args.summary,
+    tags: args.tags,
+    title: args.title,
+  };
 }
 
-async function createSuccessfulImport(args: {
+async function getMutableWorkspace(params: {
+  collectionId: string;
+  userId: string;
+}) {
+  const workspace = await getKnowledgeWorkspace(params);
+  const filesystem = workspace.filesystem;
+
+  if (!filesystem) {
+    throw new Error("Knowledge workspace filesystem is not available");
+  }
+
+  return {
+    filesystem,
+    workspace,
+  };
+}
+
+async function createFileBackedSource(args: {
   byteSize?: number;
   collectionId: string;
   content: string;
-  documentId: string;
+  fileBody: string | Uint8Array;
   mimeType?: string;
-  originalPath?: string | null;
-  sourceFilename?: string;
-  sourceId: string;
+  sourceFilename: string;
+  sourceId?: string;
   sourceType: KnowledgeSource["sourceType"];
-  sourceUrl?: string;
   summary?: string;
   tags: string[];
   title: string;
   userId: string;
 }): Promise<KnowledgeImportData> {
-  await indexSourceDocument({
+  // 这是本项目唯一的导入主链路：
+  // 1. 先把文件写入当前资料库的 workspace
+  // 2. 再对同一个相对路径执行手动索引
+  // 3. 最后落一条指向同一路径的资料记录
+  await requireKnowledgeCollection(args.userId, args.collectionId);
+
+  const { filesystem, workspace } = await getMutableWorkspace({
     userId: args.userId,
     collectionId: args.collectionId,
-    content: args.content,
-    documentId: args.documentId,
+  });
+  const documentId = args.sourceFilename;
+  const normalizedTags = parseTags(args.tags);
+  const summary = args.summary?.trim();
+
+  await filesystem.writeFile(documentId, args.fileBody, {
     mimeType: args.mimeType,
-    source: {
-      id: args.sourceId,
+    overwrite: false,
+  });
+  await workspace.index(documentId, args.content, {
+    mimeType: args.mimeType,
+    metadata: buildIndexMetadata({
+      collectionId: args.collectionId,
       sourceFilename: args.sourceFilename,
       sourceType: args.sourceType,
-      sourceUrl: args.sourceUrl,
-      status: "ready",
-    },
-    summary: args.summary?.trim() || buildSummary(args.content),
-    tags: args.tags,
-    title: args.title,
+      summary: summary || "",
+      tags: normalizedTags,
+      title: args.title,
+    }),
   });
 
   const source = await createKnowledgeSourceRecord({
     sourceId: args.sourceId,
     userId: args.userId,
     collectionId: args.collectionId,
-    documentId: args.documentId,
+    documentId,
     sourceType: args.sourceType,
     title: args.title,
-    summary: args.summary,
+    summary,
     content: args.content,
-    tags: args.tags,
+    tags: normalizedTags,
     sourceFilename: args.sourceFilename,
-    sourceUrl: args.sourceUrl,
     mimeType: args.mimeType,
     byteSize: args.byteSize,
     status: "ready",
-    originalPath: args.originalPath,
-    indexPath: args.documentId,
+    originalPath: documentId,
+    indexPath: documentId,
   });
 
   return {
@@ -208,61 +188,6 @@ async function createSuccessfulImport(args: {
   };
 }
 
-async function createFailedImport(args: {
-  byteSize?: number;
-  collectionId: string;
-  content?: string;
-  documentId: string;
-  error: unknown;
-  mimeType?: string;
-  sourceFilename?: string;
-  sourceId: string;
-  sourceType: KnowledgeSource["sourceType"];
-  sourceUrl?: string;
-  summary?: string;
-  tags: string[];
-  title: string;
-  userId: string;
-}): Promise<KnowledgeImportData> {
-  const message = args.error instanceof Error ? args.error.message : "导入失败";
-  const fallbackContent = normalizeWhitespace(
-    args.content ||
-      `资料导入失败\n标题：${args.title.trim()}\n原因：${message}`,
-  );
-  const fallbackSummary = args.summary?.trim() || buildSummary(fallbackContent);
-  const fallbackPreview = buildContentPreview(fallbackContent);
-
-  const source = await createKnowledgeSourceRecord({
-    sourceId: args.sourceId,
-    userId: args.userId,
-    collectionId: args.collectionId,
-    documentId: args.documentId,
-    sourceType: args.sourceType,
-    title: args.title,
-    summary: fallbackSummary,
-    content: fallbackPreview ? fallbackContent : message,
-    tags: args.tags,
-    sourceFilename: args.sourceFilename,
-    sourceUrl: args.sourceUrl,
-    mimeType: args.mimeType,
-    byteSize: args.byteSize,
-    status: "failed",
-    failureMessage: message,
-    originalPath: null,
-    indexPath: args.documentId,
-  });
-
-  return {
-    collection: await requireKnowledgeCollection(
-      args.userId,
-      args.collectionId,
-    ),
-    source,
-    engine: getImportEngine(),
-    indexed: false,
-  };
-}
-
 export async function importKnowledgeFile(args: {
   userId: string;
   collectionId: string;
@@ -271,81 +196,35 @@ export async function importKnowledgeFile(args: {
 }): Promise<KnowledgeImportData> {
   await requireKnowledgeCollection(args.userId, args.collectionId);
 
-  const sourceId = crypto.randomUUID();
-  const fileName = args.file.name || `upload-${sourceId}.txt`;
   const bytes = new Uint8Array(await args.file.arrayBuffer());
-  let managedFileName = fileName;
-  let stored: Awaited<ReturnType<typeof storeUploadedSourceFile>> | undefined;
+  const extracted = await extractFileContent({
+    bytes,
+    fileName: args.file.name,
+    mimeType: args.file.type || undefined,
+  });
+  const title = args.input.title?.trim() || extracted.title;
+  const sourceFilename = await resolveManagedImportFileName({
+    userId: args.userId,
+    collectionId: args.collectionId,
+    sourceType: "file",
+    title,
+    sourceFilename: args.file.name,
+    mimeType: extracted.mimeType,
+  });
 
-  try {
-    const extracted = await extractFileContent({
-      bytes,
-      fileName,
-      mimeType: args.file.type || undefined,
-    });
-    const title = resolveTitle({
-      explicitTitle: args.input.title,
-      extractedTitle: extracted.title,
-    });
-    const tags = parseTags(args.input.tags);
-    const resolvedFileName = await resolveManagedImportFileName({
-      userId: args.userId,
-      collectionId: args.collectionId,
-      sourceType: "file",
-      title,
-      sourceFilename: fileName,
-      mimeType: extracted.mimeType,
-    });
-    managedFileName = resolvedFileName;
-    stored = await storeUploadedSourceFile({
-      userId: args.userId,
-      collectionId: args.collectionId,
-      bytes,
-      fileName: resolvedFileName,
-      mimeType: extracted.mimeType,
-    });
-
-    return await createSuccessfulImport({
-      userId: args.userId,
-      collectionId: args.collectionId,
-      sourceId,
-      sourceType: "file",
-      documentId: stored.documentPath,
-      content: extracted.content,
-      title,
-      summary: args.input.summary?.trim() || buildSummary(extracted.content),
-      tags,
-      mimeType: extracted.mimeType,
-      byteSize: args.file.size,
-      sourceFilename: resolvedFileName,
-      originalPath: stored.originalPath,
-    });
-  } catch (error) {
-    await deleteManagedSourceFiles({
-      userId: args.userId,
-      collectionId: args.collectionId,
-      originalPath: stored?.originalPath,
-    });
-    await invalidateKnowledgeWorkspace({
-      userId: args.userId,
-      collectionId: args.collectionId,
-    });
-
-    return createFailedImport({
-      userId: args.userId,
-      collectionId: args.collectionId,
-      sourceId,
-      sourceType: "file",
-      documentId: stored?.documentPath ?? managedFileName,
-      title: args.input.title?.trim() || basename(fileName),
-      summary: args.input.summary,
-      tags: parseTags(args.input.tags),
-      mimeType: args.file.type || undefined,
-      byteSize: args.file.size,
-      sourceFilename: managedFileName,
-      error,
-    });
-  }
+  return createFileBackedSource({
+    userId: args.userId,
+    collectionId: args.collectionId,
+    content: extracted.content,
+    fileBody: bytes,
+    mimeType: extracted.mimeType,
+    byteSize: args.file.size,
+    sourceFilename,
+    sourceType: "file",
+    summary: args.input.summary?.trim() || extracted.excerpt,
+    tags: parseTags(args.input.tags),
+    title,
+  });
 }
 
 export async function importKnowledgeFiles(args: {
@@ -370,23 +249,13 @@ export async function importKnowledgeFiles(args: {
         },
       });
 
-      if (result.indexed && result.source.status === "ready") {
-        results.push({
-          accepted: true,
-          fileName: file.name,
-          mimeType: file.type || undefined,
-          byteSize: file.size,
-          source: result.source,
-        });
-      } else {
-        results.push({
-          accepted: false,
-          fileName: file.name,
-          mimeType: file.type || undefined,
-          byteSize: file.size,
-          errorMessage: result.source.failureMessage || "导入失败",
-        });
-      }
+      results.push({
+        accepted: true,
+        fileName: file.name,
+        mimeType: file.type || undefined,
+        byteSize: file.size,
+        source: result.source,
+      });
     } catch (error) {
       results.push({
         accepted: false,
@@ -417,163 +286,33 @@ export async function importKnowledgeText(args: {
 }): Promise<KnowledgeImportData> {
   await requireKnowledgeCollection(args.userId, args.collectionId);
 
-  const content = normalizeWhitespace(args.input.content);
-
-  if (!content) {
-    throw new BadRequestError("文本资料不能为空");
-  }
-
-  const sourceId = crypto.randomUUID();
-  const tags = parseTags(args.input.tags);
-  const title =
-    args.input.title?.trim() ||
-    buildTextSourceContent({
-      content,
-      fileName: `${sourceId}.txt`,
-    }).title;
-  const managedFileName = await resolveManagedImportFileName({
+  const extracted = buildTextSourceContent({
+    content: args.input.content,
+    fileName: `${args.input.title?.trim() || "Untitled Source"}.txt`,
+    title: args.input.title,
+  });
+  const sourceFilename = await resolveManagedImportFileName({
     userId: args.userId,
     collectionId: args.collectionId,
     sourceType: "text",
-    title,
-    mimeType: "text/plain",
+    title: extracted.title,
+    sourceFilename: `${extracted.title}.txt`,
+    mimeType: extracted.mimeType,
   });
-  const stored = await storeTextSourceFile({
+
+  return createFileBackedSource({
     userId: args.userId,
     collectionId: args.collectionId,
-    content,
-    fileName: managedFileName,
+    content: extracted.content,
+    fileBody: extracted.content,
     mimeType: "text/plain; charset=utf-8",
+    byteSize: new TextEncoder().encode(extracted.content).byteLength,
+    sourceFilename,
+    sourceType: "text",
+    summary: args.input.summary?.trim() || extracted.excerpt,
+    tags: parseTags(args.input.tags),
+    title: extracted.title,
   });
-
-  try {
-    return await createSuccessfulImport({
-      userId: args.userId,
-      collectionId: args.collectionId,
-      sourceId,
-      sourceType: "text",
-      documentId: stored.documentPath,
-      content,
-      title,
-      summary: args.input.summary?.trim() || buildSummary(content),
-      tags,
-      mimeType: "text/plain",
-      byteSize: content.length,
-      sourceFilename: managedFileName,
-      originalPath: stored.originalPath,
-    });
-  } catch (error) {
-    await deleteManagedSourceFiles({
-      userId: args.userId,
-      collectionId: args.collectionId,
-      originalPath: stored.originalPath,
-    });
-    await invalidateKnowledgeWorkspace({
-      userId: args.userId,
-      collectionId: args.collectionId,
-    });
-
-    return createFailedImport({
-      userId: args.userId,
-      collectionId: args.collectionId,
-      sourceId,
-      sourceType: "text",
-      documentId: stored.documentPath,
-      title,
-      summary: args.input.summary?.trim() || buildSummary(content),
-      tags,
-      mimeType: "text/plain",
-      byteSize: content.length,
-      sourceFilename: managedFileName,
-      error,
-      content,
-    });
-  }
-}
-
-export async function importKnowledgeUrl(args: {
-  userId: string;
-  collectionId: string;
-  input: KnowledgeUrlImportRequest;
-}): Promise<KnowledgeImportData> {
-  const response = await fetch(args.input.url, {
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  if (!response.ok) {
-    throw new BadRequestError(`URL 拉取失败: ${response.status}`);
-  }
-
-  const content = normalizeWhitespace(await response.text());
-
-  if (!content) {
-    throw new BadRequestError("URL 内容为空，无法导入");
-  }
-
-  const sourceId = crypto.randomUUID();
-  const title = args.input.title?.trim() || args.input.url;
-  const tags = parseTags(args.input.tags);
-  const managedFileName = await resolveManagedImportFileName({
-    userId: args.userId,
-    collectionId: args.collectionId,
-    sourceType: "url",
-    title,
-    sourceUrl: args.input.url,
-    mimeType: "text/html",
-  });
-  const stored = await storeTextSourceFile({
-    userId: args.userId,
-    collectionId: args.collectionId,
-    content,
-    fileName: managedFileName,
-    mimeType: "text/html; charset=utf-8",
-  });
-
-  try {
-    return await createSuccessfulImport({
-      userId: args.userId,
-      collectionId: args.collectionId,
-      sourceId,
-      sourceType: "url",
-      documentId: stored.documentPath,
-      content,
-      title,
-      summary: args.input.summary?.trim() || buildSummary(content),
-      tags,
-      mimeType: "text/html",
-      byteSize: content.length,
-      sourceFilename: managedFileName,
-      originalPath: stored.originalPath,
-      sourceUrl: args.input.url,
-    });
-  } catch (error) {
-    await deleteManagedSourceFiles({
-      userId: args.userId,
-      collectionId: args.collectionId,
-      originalPath: stored.originalPath,
-    });
-    await invalidateKnowledgeWorkspace({
-      userId: args.userId,
-      collectionId: args.collectionId,
-    });
-
-    return createFailedImport({
-      userId: args.userId,
-      collectionId: args.collectionId,
-      sourceId,
-      sourceType: "url",
-      documentId: stored.documentPath,
-      title,
-      summary: args.input.summary?.trim() || buildSummary(content),
-      tags,
-      mimeType: "text/html",
-      byteSize: content.length,
-      sourceFilename: managedFileName,
-      sourceUrl: args.input.url,
-      error,
-      content,
-    });
-  }
 }
 
 export async function updateKnowledgeSource(
@@ -581,151 +320,70 @@ export async function updateKnowledgeSource(
   sourceId: string,
   input: KnowledgeSourceUpdateRequest,
 ): Promise<KnowledgeSource> {
+  // 编辑资料时，只做三件事：覆盖原文件、移除旧索引、对同一路径重新索引。
   const source = await requireKnowledgeSource(userId, sourceId);
-  const stored = await getStoredSourceRecord(userId, sourceId);
+  const nextContent =
+    input.content !== undefined ? input.content.trim() : source.content;
 
-  if (!stored) {
-    throw new BadRequestError(`资料 "${sourceId}" 不存在`);
+  if (!nextContent) {
+    throw new BadRequestError("资料内容不能为空");
   }
 
-  const nextContent = normalizeWhitespace(input.content ?? source.content);
   const nextTitle = input.title?.trim() || source.title;
   const nextSummary = input.summary?.trim() || source.summary;
   const nextTags = parseTags(input.tags ?? source.tags);
-  const contentChanged = nextContent !== source.content;
-  const nextSourceFilename = await resolveManagedImportFileName({
+  const documentId = source.documentId || source.sourceFilename;
+
+  if (!documentId) {
+    throw new BadRequestError(`资料 "${sourceId}" 缺少有效文件路径`);
+  }
+
+  const { filesystem, workspace } = await getMutableWorkspace({
     userId,
     collectionId: source.collectionId,
-    sourceId: source.id,
-    sourceType: source.sourceType,
-    title: nextTitle,
-    sourceFilename: source.sourceFilename,
-    sourceUrl: source.sourceUrl,
-    mimeType: source.mimeType,
   });
-  const currentDocumentId = stored.documentId || stored.indexPath;
-  const pathChanged = currentDocumentId !== nextSourceFilename;
 
-  if (!contentChanged && !pathChanged) {
-    return replaceSourceContent({
-      userId,
-      sourceId,
-      documentId: currentDocumentId,
-      title: nextTitle,
-      summary: nextSummary,
-      content: nextContent,
-      tags: nextTags,
-      mimeType: source.mimeType,
-      byteSize: source.byteSize,
-      sourceFilename: nextSourceFilename,
-      sourceUrl: source.sourceUrl,
-      status: source.status,
-      failureMessage: undefined,
-      originalPath: stored.originalPath,
-      indexPath: stored.indexPath,
-    });
-  }
-
-  const nextPaths =
-    stored.originalPath && stored.indexPath && !pathChanged
-      ? {
-          documentId: currentDocumentId,
-          indexPath: stored.indexPath,
-          originalPath: stored.originalPath,
-        }
-      : (() => undefined)();
-
-  const resolvedPaths =
-    nextPaths ??
-    (await storeTextSourceFile({
-      userId,
+  await filesystem.writeFile(documentId, nextContent, {
+    mimeType: source.mimeType,
+    overwrite: true,
+  });
+  await removeDocumentFromKnowledgeWorkspace({
+    userId,
+    collectionId: source.collectionId,
+    documentId,
+  });
+  await workspace.index(documentId, nextContent, {
+    mimeType: source.mimeType,
+    metadata: buildIndexMetadata({
       collectionId: source.collectionId,
-      content: nextContent,
-      fileName: nextSourceFilename,
-      mimeType: source.mimeType,
-    }).then((paths) => ({
-      documentId: paths.documentPath,
-      indexPath: paths.indexPath,
-      originalPath: paths.originalPath,
-    })));
-
-  try {
-    await overwriteStoredSourceFile({
-      userId,
-      collectionId: source.collectionId,
-      originalPath: resolvedPaths.originalPath,
-      content: nextContent,
-      mimeType: source.mimeType,
-    });
-
-    if (
-      pathChanged &&
-      stored.originalPath &&
-      stored.originalPath !== resolvedPaths.originalPath
-    ) {
-      await deleteManagedSourceFiles({
-        userId,
-        collectionId: source.collectionId,
-        originalPath: stored.originalPath,
-      });
-      await invalidateKnowledgeWorkspace({
-        userId,
-        collectionId: source.collectionId,
-      });
-    }
-
-    await indexSourceDocument({
-      userId,
-      collectionId: source.collectionId,
-      content: nextContent,
-      documentId: resolvedPaths.documentId,
-      mimeType: source.mimeType,
-      source: {
-        id: source.id,
-        sourceFilename: nextSourceFilename,
-        sourceType: source.sourceType,
-        sourceUrl: source.sourceUrl,
-        status: "ready",
-      },
+      sourceFilename: source.sourceFilename || documentId,
+      sourceType: source.sourceType,
       summary: nextSummary,
       tags: nextTags,
       title: nextTitle,
-    });
+    }),
+  });
 
-    return replaceSourceContent({
-      userId,
-      sourceId,
-      documentId: resolvedPaths.documentId,
-      title: nextTitle,
-      summary: nextSummary,
-      content: nextContent,
-      tags: nextTags,
-      mimeType: source.mimeType,
-      byteSize: source.byteSize,
-      sourceFilename: nextSourceFilename,
-      sourceUrl: source.sourceUrl,
-      status: "ready",
-      failureMessage: undefined,
-      originalPath: resolvedPaths.originalPath,
-      indexPath: resolvedPaths.indexPath,
-    });
-  } catch (error) {
-    await overwriteStoredSourceFile({
-      userId,
-      collectionId: source.collectionId,
-      originalPath: resolvedPaths.originalPath,
-      content: source.content,
-      mimeType: source.mimeType,
-    }).catch(() => undefined);
-    await invalidateKnowledgeWorkspace({
-      userId,
-      collectionId: source.collectionId,
-    });
-
-    throw error;
-  }
+  return replaceSourceContent({
+    userId,
+    sourceId,
+    documentId,
+    title: nextTitle,
+    summary: nextSummary,
+    content: nextContent,
+    tags: nextTags,
+    mimeType: source.mimeType,
+    byteSize: new TextEncoder().encode(nextContent).byteLength,
+    sourceFilename: source.sourceFilename || documentId,
+    status: "ready",
+    failureMessage: undefined,
+    originalPath: documentId,
+    indexPath: documentId,
+  });
 }
 
 export async function waitForPendingKnowledgeImports(): Promise<void> {
+  // 兼容历史调用点。当前本项目已经没有后台导入任务，因此这里没有
+  // 任何需要等待的异步工作。
   return;
 }

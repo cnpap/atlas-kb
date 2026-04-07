@@ -51,7 +51,6 @@ type ReplyAcceptedEvent = Extract<
   ChatReplyStreamDataEvent,
   { type: "reply-accepted" }
 >;
-type TraceDataEvent = Extract<ChatReplyStreamDataEvent, { type: "trace" }>;
 type ReplyCompletedEvent = Extract<
   ChatReplyStreamDataEvent,
   { type: "reply-completed" }
@@ -65,7 +64,6 @@ type ChatReplyStreamUIMessage = UIMessage<
   never,
   {
     replyAccepted: ReplyAcceptedEvent;
-    trace: TraceDataEvent;
     replyCompleted: ReplyCompletedEvent;
     replyError: ReplyErrorEvent;
   }
@@ -80,13 +78,6 @@ function writeStreamEvent(
       writer.write({
         type: "data-replyAccepted",
         id: "reply-accepted",
-        data: event,
-      });
-      return;
-    case "trace":
-      writer.write({
-        type: "data-trace",
-        id: event.event.id,
         data: event,
       });
       return;
@@ -158,6 +149,10 @@ export async function createChatReply(params: {
   sessionId: string;
   input: ChatReplyRequest;
 }): Promise<ChatReplyFinal> {
+  // 持久化对话主链路：
+  // 1. 先保存用户消息
+  // 2. 再用 sessionId 作为记忆线程调用绑定 workspace 的智能体
+  // 3. 最后保存助手消息
   const session = await requireChatSession(params.userId, params.sessionId);
   const parsedInput = ChatReplyRequestSchema.parse(params.input);
   const collectionId = session.collectionId;
@@ -185,7 +180,6 @@ export async function createChatReply(params: {
     sessionId: session.id,
     role: "assistant",
     content: answer.answer,
-    trace: answer.trace,
   });
 
   const refreshedSession = await requireChatSession(params.userId, session.id);
@@ -201,6 +195,8 @@ export async function streamChatReply(params: {
   input: ChatReplyStreamRequest;
   userId: string;
 }): Promise<Response> {
+  // 流式对话和 createChatReply 保持同样的持久化顺序，只是对前端只发
+  // 已接收、文本增量、已完成、错误 这几个最小事件。
   const parsedInput = ChatReplyStreamRequestSchema.parse(params.input);
   const session = await requireChatSession(
     params.userId,
@@ -280,12 +276,6 @@ export async function streamChatReply(params: {
                 writeTextDelta(String(part.textDelta ?? ""));
               }
             },
-            onTraceEvent: async (event) => {
-              writeStreamEvent(writer, {
-                type: "trace",
-                event,
-              });
-            },
           });
 
           if (!textStarted && answer.answer) {
@@ -299,7 +289,6 @@ export async function streamChatReply(params: {
             sessionId: session.id,
             role: "assistant",
             content: answer.answer,
-            trace: answer.trace,
           });
 
           const refreshedSession = await requireChatSession(

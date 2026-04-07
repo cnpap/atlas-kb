@@ -31,6 +31,7 @@
       <div class="pane-actions-grid w-full">
         <button
           class="soft-button flex-1"
+          data-testid="create-collection-button"
           type="button"
           @click="$emit('createCollection')"
         >
@@ -71,6 +72,7 @@
           :key="collection.id"
           class="stack-item cursor-pointer text-left !py-2"
           :class="activeCollectionId === collection.id ? 'is-active' : ''"
+          data-testid="collection-item"
           type="button"
           @click="$emit('selectCollection', collection.id)"
         >

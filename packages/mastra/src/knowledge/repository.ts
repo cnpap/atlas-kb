@@ -6,7 +6,6 @@ import type {
   ChatMessageFeedbackRequest,
   ChatMessagesData,
   ChatSession,
-  ChatTraceEvent,
   DashboardSummary,
   KnowledgeCollection,
   KnowledgeCollectionCreateRequest,
@@ -15,7 +14,6 @@ import type {
   KnowledgeSource,
   KnowledgeSourceData,
   KnowledgeSourcesData,
-  SearchKnowledgeResult,
 } from "@atlas-kb/schema";
 import {
   buildContentPreview,
@@ -24,12 +22,11 @@ import {
   slugify,
 } from "./search-utils";
 import { ensureKnowledgeDatabase, resetKnowledgeDatabase } from "./db";
-import { getDatabaseUrl } from "./config";
-import { invalidateKnowledgeWorkspace } from "./runtime";
 import {
-  deleteManagedCollectionFiles,
-  deleteManagedSourceFiles,
-} from "./storage";
+  getKnowledgeWorkspace,
+  invalidateKnowledgeWorkspace,
+  removeDocumentFromKnowledgeWorkspace,
+} from "./runtime";
 
 type CollectionRow = {
   id: string;
@@ -90,13 +87,11 @@ export type StoredKnowledgeSourceRecord = {
   sourceType: KnowledgeSource["sourceType"];
   status: KnowledgeSource["status"];
   sourceFilename?: string;
-  sourceUrl?: string;
   mimeType?: string;
   byteSize?: number;
   latestVersion: number;
   readyAt?: string;
   lastProcessedAt?: string;
-  snapshotUpdatedAt?: string;
   failureMessage?: string;
   originalPath?: string | null;
   indexPath: string;
@@ -122,8 +117,6 @@ type ChatMessageRow = {
   role: ChatMessage["role"];
   content: string;
   citations_json: unknown;
-  retrieval_json: unknown;
-  trace_json: unknown;
   created_at: string | Date;
   feedback_id: string | null;
   feedback_rating: ChatMessageFeedback["rating"] | null;
@@ -250,7 +243,6 @@ function toSource(row: SourceRow): KnowledgeSource {
     sourceType: row.source_type,
     status: row.status,
     sourceFilename: row.source_filename ?? undefined,
-    sourceUrl: row.source_url ?? undefined,
     mimeType: row.mime_type ?? undefined,
     byteSize:
       row.byte_size === null || row.byte_size === undefined
@@ -259,7 +251,6 @@ function toSource(row: SourceRow): KnowledgeSource {
     latestVersion: row.latest_version,
     readyAt: toOptionalIsoTimestamp(row.ready_at),
     lastProcessedAt: toOptionalIsoTimestamp(row.last_processed_at),
-    snapshotUpdatedAt: toOptionalIsoTimestamp(row.snapshot_updated_at),
     failureMessage: row.failure_message ?? undefined,
     createdAt: toIsoTimestamp(row.created_at),
     updatedAt: toIsoTimestamp(row.updated_at),
@@ -281,7 +272,6 @@ function toStoredSourceRecord(row: SourceRow): StoredKnowledgeSourceRecord {
     sourceType: row.source_type,
     status: row.status,
     sourceFilename: row.source_filename ?? undefined,
-    sourceUrl: row.source_url ?? undefined,
     mimeType: row.mime_type ?? undefined,
     byteSize:
       row.byte_size === null || row.byte_size === undefined
@@ -290,7 +280,6 @@ function toStoredSourceRecord(row: SourceRow): StoredKnowledgeSourceRecord {
     latestVersion: row.latest_version,
     readyAt: toOptionalIsoTimestamp(row.ready_at),
     lastProcessedAt: toOptionalIsoTimestamp(row.last_processed_at),
-    snapshotUpdatedAt: toOptionalIsoTimestamp(row.snapshot_updated_at),
     failureMessage: row.failure_message ?? undefined,
     originalPath: row.original_path,
     indexPath: row.index_path,
@@ -330,8 +319,6 @@ function toChatMessage(row: ChatMessageRow): ChatMessage {
     content: row.content,
     citations:
       parseOptionalJson<ChatMessage["citations"]>(row.citations_json) ?? [],
-    retrieval: parseOptionalJson<SearchKnowledgeResult>(row.retrieval_json),
-    trace: parseOptionalJson<ChatTraceEvent[]>(row.trace_json),
     createdAt: toIsoTimestamp(row.created_at),
     feedback,
   };
@@ -430,66 +417,6 @@ export async function getStoredSourceRecord(
   const row = await getSourceRow(userId, sourceId);
   return row ? toStoredSourceRecord(row) : null;
 }
-
-async function getSourceRowByDocumentId(
-  userId: string,
-  documentId: string,
-): Promise<SourceRow | null> {
-  const sql = await ensureKnowledgeDatabase();
-  const [row] = await sql<SourceRow[]>`
-    SELECT
-      id,
-      owner_user_id,
-      collection_id,
-      document_id,
-      title,
-      summary,
-      excerpt,
-      content_preview,
-      content,
-      tags_json,
-      source_type,
-      status,
-      source_filename,
-      source_url,
-      mime_type,
-      byte_size,
-      latest_version,
-      ready_at,
-      last_processed_at,
-      snapshot_updated_at,
-      failure_message,
-      original_path,
-      index_path,
-      created_at,
-      updated_at
-    FROM kb_sources
-    WHERE owner_user_id = ${userId}
-      AND document_id = ${documentId}
-    LIMIT 1
-  `;
-
-  return row ?? null;
-}
-
-export async function getStoredSourceRecordByDocumentId(
-  userId: string,
-  documentId: string,
-): Promise<StoredKnowledgeSourceRecord | null> {
-  const row = await getSourceRowByDocumentId(userId, documentId);
-  return row ? toStoredSourceRecord(row) : null;
-}
-
-export function resolveDatabasePath(): string {
-  return getDatabaseUrl();
-}
-
-export function toStoredKnowledgeSource(
-  source: KnowledgeSource,
-): KnowledgeSource {
-  return source;
-}
-
 export async function resetKnowledgeRepository(): Promise<void> {
   await resetKnowledgeDatabase();
 }
@@ -608,6 +535,10 @@ export async function deleteKnowledgeCollection(
   collectionId: string,
 ): Promise<void> {
   const sql = await ensureKnowledgeDatabase();
+  const workspace = await getKnowledgeWorkspace({
+    userId,
+    collectionId,
+  }).catch(() => undefined);
 
   await sql`
     DELETE FROM kb_collections
@@ -615,10 +546,9 @@ export async function deleteKnowledgeCollection(
       AND id = ${collectionId}
   `;
 
-  await deleteManagedCollectionFiles({
-    userId,
-    collectionId,
-  });
+  await workspace?.filesystem
+    ?.rmdir("", { recursive: true })
+    .catch(() => undefined);
 
   await invalidateKnowledgeWorkspace({
     userId,
@@ -667,21 +597,13 @@ export async function listKnowledgeSources(
   return rows.map((row) => toSource(row));
 }
 
-export async function getKnowledgeCollectionSources(
-  userId: string,
-  collectionId: string,
-): Promise<KnowledgeSource[]> {
-  await requireKnowledgeCollection(userId, collectionId);
-  return listKnowledgeSources(userId, collectionId);
-}
-
 export async function getKnowledgeCollectionSourcesData(
   userId: string,
   collectionId: string,
 ): Promise<KnowledgeSourcesData> {
   const [collection, sources] = await Promise.all([
     requireKnowledgeCollection(userId, collectionId),
-    getKnowledgeCollectionSources(userId, collectionId),
+    listKnowledgeSources(userId, collectionId),
   ]);
 
   return {
@@ -695,14 +617,6 @@ export async function getKnowledgeSourceById(
   sourceId: string,
 ): Promise<KnowledgeSource | undefined> {
   const row = await getSourceRow(userId, sourceId);
-  return row ? toSource(row) : undefined;
-}
-
-export async function getDocumentById(
-  userId: string,
-  documentId: string,
-): Promise<KnowledgeSource | undefined> {
-  const row = await getSourceRowByDocumentId(userId, documentId);
   return row ? toSource(row) : undefined;
 }
 
@@ -739,7 +653,6 @@ export async function createKnowledgeSourceRecord(params: {
   content: string;
   tags: string[];
   sourceFilename?: string;
-  sourceUrl?: string;
   mimeType?: string;
   byteSize?: number;
   status: KnowledgeSource["status"];
@@ -797,94 +710,14 @@ export async function createKnowledgeSourceRecord(params: {
       ${params.sourceType},
       ${params.status},
       ${params.sourceFilename ?? null},
-      ${params.sourceUrl ?? null},
+      ${null},
       ${params.mimeType ?? null},
       ${params.byteSize ?? null},
       ${1},
       ${params.status === "ready" ? now : null},
       ${now},
-      ${params.sourceType === "url" ? now : null},
+      ${null},
       ${params.failureMessage ?? null},
-      ${params.originalPath ?? null},
-      ${params.indexPath},
-      ${now},
-      ${now}
-    )
-  `;
-
-  await touchCollection(params.collectionId);
-  return requireKnowledgeSource(params.userId, id);
-}
-
-export async function createSourceDraft(params: {
-  sourceId?: string;
-  userId: string;
-  collectionId: string;
-  sourceType: KnowledgeSource["sourceType"];
-  title: string;
-  summary?: string;
-  tags?: string[];
-  sourceFilename?: string;
-  sourceUrl?: string;
-  mimeType?: string;
-  byteSize?: number;
-  originalPath?: string | null;
-  indexPath: string;
-}): Promise<KnowledgeSource> {
-  await requireKnowledgeCollection(params.userId, params.collectionId);
-  const sql = await ensureKnowledgeDatabase();
-  const now = nowIso();
-  const id = params.sourceId ?? crypto.randomUUID();
-
-  await sql`
-    INSERT INTO kb_sources (
-      id,
-      owner_user_id,
-      collection_id,
-      document_id,
-      title,
-      summary,
-      excerpt,
-      content_preview,
-      content,
-      tags_json,
-      source_type,
-      status,
-      source_filename,
-      source_url,
-      mime_type,
-      byte_size,
-      latest_version,
-      ready_at,
-      last_processed_at,
-      snapshot_updated_at,
-      failure_message,
-      original_path,
-      index_path,
-      created_at,
-      updated_at
-    ) VALUES (
-      ${id},
-      ${params.userId},
-      ${params.collectionId},
-      ${`draft:${id}`},
-      ${params.title.trim()},
-      ${params.summary?.trim() || "资料处理中"},
-      ${params.summary?.trim() || "资料处理中"},
-      ${params.summary?.trim() || "资料处理中"},
-      ${""},
-      ${JSON.stringify(params.tags ?? [])},
-      ${params.sourceType},
-      ${"processing"},
-      ${params.sourceFilename ?? null},
-      ${params.sourceUrl ?? null},
-      ${params.mimeType ?? null},
-      ${params.byteSize ?? null},
-      ${0},
-      ${null},
-      ${null},
-      ${null},
-      ${null},
       ${params.originalPath ?? null},
       ${params.indexPath},
       ${now},
@@ -907,7 +740,6 @@ export async function replaceSourceContent(params: {
   mimeType?: string;
   byteSize?: number;
   sourceFilename?: string;
-  sourceUrl?: string;
   status: KnowledgeSource["status"];
   failureMessage?: string;
   originalPath?: string | null;
@@ -933,14 +765,14 @@ export async function replaceSourceContent(params: {
       content = ${content},
       tags_json = ${JSON.stringify(params.tags)},
       source_filename = ${params.sourceFilename ?? current.sourceFilename ?? null},
-      source_url = ${params.sourceUrl ?? current.sourceUrl ?? null},
+      source_url = ${null},
       mime_type = ${params.mimeType ?? current.mimeType ?? null},
       byte_size = ${params.byteSize ?? current.byteSize ?? null},
       latest_version = ${nextVersion},
       status = ${params.status},
       ready_at = ${params.status === "ready" ? now : null},
       last_processed_at = ${now},
-      snapshot_updated_at = ${current.sourceType === "url" ? now : (current.snapshotUpdatedAt ?? null)},
+      snapshot_updated_at = ${null},
       failure_message = ${params.failureMessage ?? null},
       original_path = ${params.originalPath ?? null},
       index_path = ${params.indexPath},
@@ -958,8 +790,20 @@ export async function deleteKnowledgeSource(
   sourceId: string,
 ): Promise<void> {
   const source = await requireKnowledgeSource(userId, sourceId);
-  const stored = await getStoredSourceRecord(userId, sourceId);
   const sql = await ensureKnowledgeDatabase();
+  const documentId = source.documentId || source.sourceFilename;
+  const workspace = await getKnowledgeWorkspace({
+    userId,
+    collectionId: source.collectionId,
+  }).catch(() => undefined);
+
+  if (documentId) {
+    await removeDocumentFromKnowledgeWorkspace({
+      userId,
+      collectionId: source.collectionId,
+      documentId,
+    }).catch(() => undefined);
+  }
 
   await sql`
     DELETE FROM kb_sources
@@ -967,34 +811,13 @@ export async function deleteKnowledgeSource(
       AND id = ${sourceId}
   `;
 
-  await deleteManagedSourceFiles({
-    userId,
-    collectionId: source.collectionId,
-    originalPath: stored?.originalPath,
-  });
-
-  await invalidateKnowledgeWorkspace({
-    userId,
-    collectionId: source.collectionId,
-  });
-}
-
-export async function archiveKnowledgeSource(
-  userId: string,
-  sourceId: string,
-): Promise<KnowledgeSource> {
-  const source = await requireKnowledgeSource(userId, sourceId);
-  const sql = await ensureKnowledgeDatabase();
-
-  await sql`
-    UPDATE kb_sources
-    SET status = ${"archived"}, updated_at = ${nowIso()}
-    WHERE owner_user_id = ${userId}
-      AND id = ${sourceId}
-  `;
-
-  await touchCollection(source.collectionId);
-  return requireKnowledgeSource(userId, sourceId);
+  if (documentId) {
+    await workspace?.filesystem
+      ?.deleteFile(documentId, {
+        force: true,
+      })
+      .catch(() => undefined);
+  }
 }
 
 export async function getDashboardSummary(
@@ -1187,8 +1010,6 @@ export async function listChatMessages(
       m.role,
       m.content,
       m.citations_json,
-      m.retrieval_json,
-      m.trace_json,
       m.created_at,
       f.id AS feedback_id,
       f.rating AS feedback_rating,
@@ -1210,8 +1031,6 @@ export async function appendChatMessage(params: {
   role: ChatMessage["role"];
   content: string;
   citations?: ChatMessage["citations"];
-  retrieval?: SearchKnowledgeResult;
-  trace?: ChatTraceEvent[];
 }): Promise<ChatMessage> {
   const session = await requireChatSession(params.userId, params.sessionId);
   const sql = await ensureKnowledgeDatabase();
@@ -1227,8 +1046,6 @@ export async function appendChatMessage(params: {
       role,
       content,
       citations_json,
-      retrieval_json,
-      trace_json,
       created_at
     ) VALUES (
       ${id},
@@ -1237,8 +1054,6 @@ export async function appendChatMessage(params: {
       ${params.role},
       ${params.content.trim()},
       ${JSON.stringify(params.citations ?? [])},
-      ${params.retrieval ? JSON.stringify(params.retrieval) : null},
-      ${params.trace ? JSON.stringify(params.trace) : null},
       ${now}
     )
   `;

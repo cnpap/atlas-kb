@@ -70,7 +70,6 @@ type ReplyAcceptedEvent = Extract<
   ChatReplyStreamDataEvent,
   { type: "reply-accepted" }
 >;
-type TraceStreamEvent = Extract<ChatReplyStreamDataEvent, { type: "trace" }>;
 type ReplyCompletedEvent = Extract<
   ChatReplyStreamDataEvent,
   { type: "reply-completed" }
@@ -84,7 +83,6 @@ type ChatReplyStreamUIMessage = UIMessage<
   never,
   {
     replyAccepted: ReplyAcceptedEvent;
-    trace: TraceStreamEvent;
     replyCompleted: ReplyCompletedEvent;
     replyError: ReplyErrorEvent;
   }

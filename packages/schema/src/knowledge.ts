@@ -29,12 +29,7 @@ export const KnowledgeCollectionSchema = z.object({
   lastActivityAt: TimestampSchema,
 });
 
-export const KnowledgeSourceTypeSchema = z.enum([
-  "file",
-  "text",
-  "url",
-  "seed",
-]);
+export const KnowledgeSourceTypeSchema = z.enum(["file", "text", "seed"]);
 
 export const KnowledgeRecallPathSchema = z.enum([
   "关键词召回",
@@ -63,31 +58,14 @@ export const KnowledgeSourceSchema = z.object({
   sourceType: KnowledgeSourceTypeSchema,
   status: KnowledgeSourceStatusSchema,
   sourceFilename: z.string().trim().min(1).optional(),
-  sourceUrl: z.url().optional(),
   mimeType: z.string().trim().min(1).optional(),
   byteSize: z.number().int().positive().optional(),
   latestVersion: z.number().int().nonnegative(),
   readyAt: TimestampSchema.optional(),
   lastProcessedAt: TimestampSchema.optional(),
-  snapshotUpdatedAt: TimestampSchema.optional(),
   failureMessage: z.string().trim().min(1).optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
-});
-
-export const KnowledgeSourceVersionSchema = z.object({
-  id: z.string().trim().min(1),
-  sourceId: z.string().trim().min(1),
-  version: z.number().int().nonnegative(),
-  parser: z.string().trim().min(1),
-  content: z.string().trim().min(1),
-  contentPreview: z.string().trim().min(1),
-  mimeType: z.string().trim().min(1).optional(),
-  byteSize: z.number().int().positive().optional(),
-  filePath: z.string().trim().min(1).optional(),
-  snapshotHtml: z.string().trim().min(1).optional(),
-  sourceUrl: z.url().optional(),
-  createdAt: TimestampSchema,
 });
 
 export const KnowledgeCollectionIdParamsSchema = z.object({
@@ -152,11 +130,6 @@ export const KnowledgeTextImportRequestSchema =
     content: z.string().trim().min(1),
   });
 
-export const KnowledgeUrlImportRequestSchema =
-  KnowledgeSourceMetadataSchema.extend({
-    url: z.url(),
-  });
-
 export const KnowledgeSourceUpdateRequestSchema =
   KnowledgeSourceMetadataSchema.extend({
     content: z.string().trim().min(1).optional(),
@@ -182,7 +155,6 @@ export const SearchKnowledgeHitSchema = z.object({
   snippet: z.string().trim().min(1),
   sectionPath: z.string().trim().min(1).optional(),
   sourceFilename: z.string().trim().min(1).optional(),
-  sourceUrl: z.url().optional(),
   downloadUrl: z.string().trim().min(1).optional(),
   sourceType: KnowledgeSourceTypeSchema,
   tags: z.array(z.string().trim().min(1)),
@@ -222,7 +194,6 @@ export const ChatCitationSchema = z.object({
   sectionPath: z.string().trim().min(1).optional(),
   snippet: z.string().trim().min(1),
   sourceFilename: z.string().trim().min(1).optional(),
-  sourceUrl: z.url().optional(),
   downloadUrl: z.string().trim().min(1).optional(),
   sourceType: KnowledgeSourceTypeSchema,
 });
@@ -237,40 +208,12 @@ export const ChatMessageFeedbackSchema = z.object({
   createdAt: TimestampSchema,
 });
 
-export const ChatTraceEventKindSchema = z.enum([
-  "status",
-  "search",
-  "tool-call",
-  "reasoning",
-  "error",
-]);
-
-export const ChatTraceEventStateSchema = z.enum([
-  "running",
-  "completed",
-  "failed",
-  "info",
-]);
-
-export const ChatTraceEventSchema = z.object({
-  id: z.string().trim().min(1),
-  kind: ChatTraceEventKindSchema,
-  state: ChatTraceEventStateSchema,
-  title: z.string().trim().min(1),
-  detail: z.string().trim().min(1).optional(),
-  createdAt: TimestampSchema,
-  toolCallId: z.string().trim().min(1).optional(),
-  toolName: z.string().trim().min(1).optional(),
-});
-
 export const ChatMessageSchema = z.object({
   id: z.string().trim().min(1),
   sessionId: z.string().trim().min(1),
   role: ChatMessageRoleSchema,
   content: z.string().trim().min(1),
   citations: z.array(ChatCitationSchema).optional().default([]),
-  retrieval: SearchKnowledgeResultSchema.optional(),
-  trace: z.array(ChatTraceEventSchema).optional(),
   createdAt: TimestampSchema,
   feedback: ChatMessageFeedbackSchema.optional(),
 });
@@ -293,8 +236,6 @@ export const ChatReplyFinalSchema = z.object({
   session: ChatSessionSchema,
   userMessage: ChatMessageSchema,
   assistantMessage: ChatMessageSchema,
-  retrieval: SearchKnowledgeResultSchema.optional(),
-  search: SearchKnowledgeResultSchema.optional(),
 });
 
 export const ChatReplyStreamRequestSchema = z.object({
@@ -313,18 +254,11 @@ export const ChatReplyStreamAcceptedEventSchema = z.object({
   userMessage: ChatMessageSchema,
 });
 
-export const ChatReplyStreamTraceEventSchema = z.object({
-  type: z.literal("trace"),
-  event: ChatTraceEventSchema,
-});
-
 export const ChatReplyStreamCompletedEventSchema = z.object({
   type: z.literal("reply-completed"),
   session: ChatSessionSchema,
   userMessage: ChatMessageSchema,
   assistantMessage: ChatMessageSchema,
-  retrieval: SearchKnowledgeResultSchema.optional(),
-  search: SearchKnowledgeResultSchema.optional(),
 });
 
 export const ChatReplyStreamErrorEventSchema = z.object({
@@ -334,7 +268,6 @@ export const ChatReplyStreamErrorEventSchema = z.object({
 
 export const ChatReplyStreamDataEventSchema = z.discriminatedUnion("type", [
   ChatReplyStreamAcceptedEventSchema,
-  ChatReplyStreamTraceEventSchema,
   ChatReplyStreamCompletedEventSchema,
   ChatReplyStreamErrorEventSchema,
 ]);
@@ -688,9 +621,6 @@ export type KnowledgeRetrievalEngine = z.infer<
 >;
 export type KnowledgeCollection = z.infer<typeof KnowledgeCollectionSchema>;
 export type KnowledgeSource = z.infer<typeof KnowledgeSourceSchema>;
-export type KnowledgeSourceVersion = z.infer<
-  typeof KnowledgeSourceVersionSchema
->;
 export type KnowledgeCollectionCreateRequest = z.infer<
   typeof KnowledgeCollectionCreateRequestSchema
 >;
@@ -703,9 +633,6 @@ export type KnowledgeBatchFileImportRequest = z.infer<
 export type KnowledgeTextImportRequest = z.infer<
   typeof KnowledgeTextImportRequestSchema
 >;
-export type KnowledgeUrlImportRequest = z.infer<
-  typeof KnowledgeUrlImportRequestSchema
->;
 export type KnowledgeSourceUpdateRequest = z.infer<
   typeof KnowledgeSourceUpdateRequestSchema
 >;
@@ -717,7 +644,6 @@ export type SearchKnowledgeResult = z.infer<typeof SearchKnowledgeResultSchema>;
 export type ChatSession = z.infer<typeof ChatSessionSchema>;
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 export type ChatCitation = z.infer<typeof ChatCitationSchema>;
-export type ChatTraceEvent = z.infer<typeof ChatTraceEventSchema>;
 export type ChatSessionsQuery = z.infer<typeof ChatSessionsQuerySchema>;
 export type ChatSessionCreateRequest = z.infer<
   typeof ChatSessionCreateRequestSchema

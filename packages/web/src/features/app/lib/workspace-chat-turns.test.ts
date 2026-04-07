@@ -27,23 +27,6 @@ function createAssistantMessage(
     id: "assistant-1",
     role: "assistant",
     sessionId: "session-1",
-    trace: [
-      {
-        createdAt: "2026-03-29T00:00:01.000Z",
-        detail: "查询变体 2 个。",
-        id: "status:search",
-        kind: "search",
-        state: "completed",
-        title: "命中 6 条资料",
-      },
-      {
-        createdAt: "2026-03-29T00:00:00.000Z",
-        id: "status:reply",
-        kind: "status",
-        state: "running",
-        title: "已提交问题，正在准备检索",
-      },
-    ],
     ...overrides,
   };
 }
@@ -61,27 +44,14 @@ describe("workspace chat turns", () => {
     expect(turns[0]?.id).toBe("turn-0");
     expect(turns[0]?.userMessage?.id).toBe("user-1");
     expect(turns[0]?.assistantMessage?.id).toBe("assistant-1");
-    expect(turns[0]?.traceEvents.map((event) => event.id)).toEqual([
-      "status:reply",
-      "status:search",
-    ]);
     expect(turns[0]?.isSelected).toBe(true);
-    expect(turns[0]?.status).toBe("streaming");
+    expect(turns[0]?.status).toBe("completed");
   });
 
-  it("keeps partial answer content visible when the assistant trace fails", () => {
+  it("treats temporary assistant messages as streaming turns", () => {
     const assistantMessage = createAssistantMessage({
-      content: "这是保留下来的部分回答。",
-      trace: [
-        {
-          createdAt: "2026-03-29T00:00:01.000Z",
-          detail: "模型响应中断。",
-          id: "status:reply",
-          kind: "status",
-          state: "failed",
-          title: "回答生成失败",
-        },
-      ],
+      content: "",
+      id: "temp:assistant-1",
     });
 
     const turns = buildWorkspaceChatTurns([
@@ -89,10 +59,8 @@ describe("workspace chat turns", () => {
       assistantMessage,
     ]);
 
-    expect(turns[0]?.assistantMessage?.content).toBe(
-      "这是保留下来的部分回答。",
-    );
-    expect(getWorkspaceChatTurnStatus(turns[0]!)).toBe("failed");
+    expect(turns[0]?.assistantMessage?.id).toBe("temp:assistant-1");
+    expect(getWorkspaceChatTurnStatus(turns[0]!)).toBe("streaming");
   });
 
   it("keeps turn ids stable when temporary ids are replaced by persisted ids", () => {
@@ -103,30 +71,11 @@ describe("workspace chat turns", () => {
       createAssistantMessage({
         content: "",
         id: "temp:assistant-1",
-        trace: [
-          {
-            createdAt: "2026-03-29T00:00:00.000Z",
-            id: "status:reply",
-            kind: "status",
-            state: "running",
-            title: "已提交问题，正在准备检索",
-          },
-        ],
       }),
     ]);
     const persistedTurns = buildWorkspaceChatTurns([
       createUserMessage(),
-      createAssistantMessage({
-        trace: [
-          {
-            createdAt: "2026-03-29T00:00:00.000Z",
-            id: "status:reply",
-            kind: "status",
-            state: "completed",
-            title: "已提交问题，正在准备检索",
-          },
-        ],
-      }),
+      createAssistantMessage(),
     ]);
 
     expect(draftTurns[0]?.id).toBe("turn-0");

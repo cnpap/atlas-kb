@@ -121,7 +121,6 @@ function toSearchHit(args: {
     ),
     sectionPath: buildSectionPath(args.result),
     sourceFilename: args.source.sourceFilename,
-    sourceUrl: args.source.sourceUrl,
     sourceType: args.source.sourceType,
     tags: [...args.source.tags],
     score: args.result.score,
@@ -150,7 +149,6 @@ export function toCitation(hit: SearchKnowledgeHit): AskKnowledgeCitation {
     sectionPath: hit.sectionPath,
     snippet: hit.snippet,
     sourceFilename: hit.sourceFilename,
-    sourceUrl: hit.sourceUrl,
     downloadUrl: hit.downloadUrl,
     sourceType: hit.sourceType,
   };

@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatTraceEvent } from "@atlas-kb/schema";
+import type { ChatMessage } from "@atlas-kb/schema";
 
 export type WorkspaceChatTurnStatus =
   | "pending"
@@ -12,7 +12,6 @@ export type WorkspaceChatTurn = {
   id: string;
   isSelected: boolean;
   status: WorkspaceChatTurnStatus;
-  traceEvents: ChatTraceEvent[];
   userMessage: ChatMessage | null;
 };
 
@@ -20,18 +19,6 @@ type MutableWorkspaceChatTurn = Omit<
   WorkspaceChatTurn,
   "isSelected" | "status"
 >;
-
-function sortTraceEvents(events: ChatTraceEvent[]): ChatTraceEvent[] {
-  return [...events].sort((left, right) => {
-    const createdAtOrder = left.createdAt.localeCompare(right.createdAt);
-
-    if (createdAtOrder !== 0) {
-      return createdAtOrder;
-    }
-
-    return left.id.localeCompare(right.id);
-  });
-}
 
 function createTurn(
   turnIndex: number,
@@ -45,13 +32,12 @@ function createTurn(
     assistantMessage: seed.assistantMessage ?? null,
     createdAt: seed.createdAt,
     id: `turn-${turnIndex}`,
-    traceEvents: sortTraceEvents(seed.assistantMessage?.trace ?? []),
     userMessage: seed.userMessage ?? null,
   };
 }
 
 export function getWorkspaceChatTurnStatus(
-  turn: Pick<WorkspaceChatTurn, "assistantMessage" | "traceEvents">,
+  turn: Pick<WorkspaceChatTurn, "assistantMessage">,
 ): WorkspaceChatTurnStatus {
   const assistantMessage = turn.assistantMessage;
 
@@ -59,22 +45,11 @@ export function getWorkspaceChatTurnStatus(
     return "pending";
   }
 
-  if (turn.traceEvents.some((event) => event.state === "failed")) {
-    return "failed";
-  }
-
-  if (
-    assistantMessage.id.startsWith("temp:") ||
-    turn.traceEvents.some((event) => event.state === "running")
-  ) {
+  if (assistantMessage.id.startsWith("temp:")) {
     return "streaming";
   }
 
-  if (assistantMessage.content.trim()) {
-    return "completed";
-  }
-
-  return "pending";
+  return assistantMessage.content.trim() ? "completed" : "pending";
 }
 
 export function buildWorkspaceChatTurns(
@@ -110,7 +85,6 @@ export function buildWorkspaceChatTurns(
     }
 
     targetTurn.assistantMessage = message;
-    targetTurn.traceEvents = sortTraceEvents(message.trace ?? []);
     pendingTurn = null;
   }
 

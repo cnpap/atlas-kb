@@ -1,4 +1,4 @@
-type SourceType = "file" | "text" | "url" | "seed";
+type SourceType = "file" | "text" | "seed";
 type SourceStatus = "ready" | "processing" | "failed" | "archived";
 export type KnowledgeFileKind =
   | "generic"
@@ -102,8 +102,6 @@ export function getSourceTypeLabel(type: SourceType): string {
       return "文件";
     case "text":
       return "笔记";
-    case "url":
-      return "网页";
     case "seed":
       return "示例";
     default:

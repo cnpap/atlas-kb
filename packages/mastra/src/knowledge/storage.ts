@@ -1,23 +1,10 @@
 import { basename, extname } from "node:path";
 import type { KnowledgeSource } from "@atlas-kb/schema";
 import {
-  deleteKnowledgeCollectionObjects,
-  deleteKnowledgeSourceObject,
-  putKnowledgeSourceObject,
-} from "./object-storage";
-import {
   buildContentPreview,
   buildSummary,
   normalizeWhitespace,
 } from "./search-utils";
-
-export type ManagedSourcePaths = {
-  absoluteDocumentPath: string;
-  directory: string;
-  documentPath: string;
-  indexPath: string;
-  originalPath: string;
-};
 
 export type ExtractedSourceContent = {
   content: string;
@@ -106,8 +93,6 @@ function getFallbackExtension(args: {
   }
 
   switch (args.sourceType) {
-    case "url":
-      return ".html";
     default:
       return ".txt";
   }
@@ -131,15 +116,12 @@ export function buildManagedSourceFileName(args: {
   mimeType?: string;
   sourceFilename?: string;
   sourceType: KnowledgeSource["sourceType"];
-  sourceUrl?: string;
   title: string;
 }) {
   const preferredName =
     args.sourceType === "file" || args.sourceType === "seed"
       ? args.sourceFilename?.trim() || args.title.trim()
-      : args.sourceType === "url"
-        ? `${args.title.trim()}.html`
-        : `${args.title.trim()}.txt`;
+      : `${args.title.trim()}.txt`;
 
   return ensureManagedFileExtension({
     fileName: sanitizeManagedFileName(preferredName || "source"),
@@ -201,104 +183,6 @@ function decodeTextContent(bytes: Uint8Array): string {
   }
 
   return normalized;
-}
-
-export function getManagedSourcePaths(args: {
-  collectionId: string;
-  fileName: string;
-  userId: string;
-}): ManagedSourcePaths {
-  const documentPath = sanitizeManagedFileName(args.fileName).replaceAll(
-    "\\",
-    "/",
-  );
-
-  return {
-    absoluteDocumentPath: documentPath,
-    directory: "",
-    documentPath,
-    indexPath: documentPath,
-    originalPath: documentPath,
-  };
-}
-
-export async function storeUploadedSourceFile(args: {
-  collectionId: string;
-  bytes: Uint8Array;
-  fileName: string;
-  mimeType?: string;
-  userId: string;
-}) {
-  const paths = getManagedSourcePaths(args);
-
-  await putKnowledgeSourceObject({
-    userId: args.userId,
-    collectionId: args.collectionId,
-    relativePath: paths.documentPath,
-    body: args.bytes,
-    contentType: args.mimeType,
-  });
-
-  return paths;
-}
-
-export async function storeTextSourceFile(args: {
-  collectionId: string;
-  content: string;
-  fileName: string;
-  mimeType?: string;
-  userId: string;
-}) {
-  const paths = getManagedSourcePaths(args);
-
-  await putKnowledgeSourceObject({
-    userId: args.userId,
-    collectionId: args.collectionId,
-    relativePath: paths.documentPath,
-    body: normalizeWhitespace(args.content),
-    contentType: args.mimeType ?? "text/plain; charset=utf-8",
-  });
-
-  return paths;
-}
-
-export async function overwriteStoredSourceFile(args: {
-  collectionId: string;
-  content: string;
-  mimeType?: string;
-  originalPath: string;
-  userId: string;
-}) {
-  await putKnowledgeSourceObject({
-    userId: args.userId,
-    collectionId: args.collectionId,
-    relativePath: args.originalPath,
-    body: normalizeWhitespace(args.content),
-    contentType: args.mimeType,
-  });
-}
-
-export async function deleteManagedSourceFiles(args: {
-  collectionId: string;
-  originalPath?: string | null;
-  userId: string;
-}) {
-  if (!args.originalPath) {
-    return;
-  }
-
-  await deleteKnowledgeSourceObject({
-    userId: args.userId,
-    collectionId: args.collectionId,
-    relativePath: args.originalPath,
-  });
-}
-
-export async function deleteManagedCollectionFiles(args: {
-  collectionId: string;
-  userId: string;
-}) {
-  await deleteKnowledgeCollectionObjects(args);
 }
 
 export async function extractFileContent(args: {

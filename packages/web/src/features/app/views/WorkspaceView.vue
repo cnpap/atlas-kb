@@ -3,14 +3,12 @@
     BriefingExport,
     BriefingForm,
     ChatMessage,
-    ChatTraceEvent,
     ChatSession,
     KnowledgeCollection,
     KnowledgeExportTask,
     KnowledgeSource,
     KnowledgeSourcesData,
     KnowledgeTemplateSummary,
-    SearchKnowledgeHit,
   } from "@atlas-kb/schema";
   import { useToast } from "@nuxt/ui/composables";
   import { computed, onMounted, ref, watch } from "vue";
@@ -57,7 +55,7 @@
   import WorkspaceSidebar from "@/features/app/components/WorkspaceSidebar.vue";
   import { buildWorkspaceChatTurns } from "@/features/app/lib/workspace-chat-turns";
 
-  type PanelMode = "citations" | "library" | "exports";
+  type PanelMode = "library" | "exports";
 
   const route = useRoute();
   const router = useRouter();
@@ -127,11 +125,7 @@
   });
 
   const panel = computed<PanelMode>(() =>
-    route.query.panel === "citations"
-      ? "citations"
-      : route.query.panel === "exports"
-        ? "exports"
-        : "library",
+    route.query.panel === "exports" ? "exports" : "library",
   );
   const activeCollectionId = computed(() => readQueryValue(route.query.group));
   const activeSessionId = computed(() => readQueryValue(route.query.session));
@@ -146,36 +140,10 @@
     () =>
       sessions.value.find((item) => item.id === activeSessionId.value) || null,
   );
-  const selectedAssistantMessage = computed(() => {
-    const explicit =
-      messages.value.find(
-        (item) =>
-          item.id === selectedAssistantMessageId.value &&
-          item.role === "assistant",
-      ) || null;
-
-    if (explicit) {
-      return explicit;
-    }
-
-    return (
-      [...messages.value].reverse().find((item) => item.role === "assistant") ||
-      null
-    );
-  });
-  const retrieval = computed(
-    () => selectedAssistantMessage.value?.retrieval || null,
-  );
   const chatTurns = computed(() =>
     buildWorkspaceChatTurns(messages.value, {
-      selectedAssistantMessageId: selectedAssistantMessage.value?.id || "",
+      selectedAssistantMessageId: selectedAssistantMessageId.value,
     }),
-  );
-  const usedHits = computed(() =>
-    (retrieval.value?.hits ?? []).filter((item) => item.usedInAnswer),
-  );
-  const extraHits = computed(() =>
-    (retrieval.value?.hits ?? []).filter((item) => !item.usedInAnswer),
   );
   const filteredSources = computed(() => {
     const keyword = sourceFilter.value.trim().toLowerCase();
@@ -212,49 +180,13 @@
     return generateClientId(`temp:${prefix}`);
   }
 
-  function messageHasFailedTrace(messageId: string): boolean {
-    const trace =
-      messages.value.find((message) => message.id === messageId)?.trace ?? [];
-
-    return trace.some((event) => event.state === "failed");
-  }
-
-  function ensureReplyFailedTrace(messageId: string, detail: string) {
-    if (messageHasFailedTrace(messageId)) {
-      return;
-    }
-
-    upsertTraceEvent(messageId, {
-      id: "status:reply",
-      kind: "status",
-      state: "failed",
-      title: "回答生成失败",
-      detail,
-      createdAt: new Date().toISOString(),
-    });
-  }
-
-  function replaceMessage(
-    currentMessageId: string,
-    nextMessage: ChatMessage,
-    options: {
-      preserveTrace?: boolean;
-    } = {},
-  ) {
+  function replaceMessage(currentMessageId: string, nextMessage: ChatMessage) {
     messages.value = messages.value.map((message) => {
       if (message.id !== currentMessageId) {
         return message;
       }
 
-      const trace =
-        options.preserveTrace && nextMessage.trace === undefined
-          ? message.trace
-          : nextMessage.trace;
-
-      return {
-        ...nextMessage,
-        trace,
-      };
+      return nextMessage;
     });
 
     if (selectedAssistantMessageId.value === currentMessageId) {
@@ -271,24 +203,6 @@
           }
         : message,
     );
-  }
-
-  function upsertTraceEvent(messageId: string, event: ChatTraceEvent) {
-    messages.value = messages.value.map((message) => {
-      if (message.id !== messageId) {
-        return message;
-      }
-
-      const existingTrace = message.trace ?? [];
-      const nextTrace = existingTrace.some((item) => item.id === event.id)
-        ? existingTrace.map((item) => (item.id === event.id ? event : item))
-        : [...existingTrace, event];
-
-      return {
-        ...message,
-        trace: nextTrace,
-      };
-    });
   }
 
   function parseTags(input: string): string[] | undefined {
@@ -368,7 +282,7 @@
       if (!activeCollectionId.value && preferredCollectionId) {
         await replaceWorkspaceQuery({
           group: preferredCollectionId,
-          panel: route.query.panel === "citations" ? "citations" : "library",
+          panel: route.query.panel === "exports" ? "exports" : "library",
         });
       }
     } catch (cause) {
@@ -720,15 +634,6 @@
           content: "",
           citations: [],
           createdAt: draftCreatedAt,
-          trace: [
-            {
-              id: "status:reply",
-              kind: "status",
-              state: "running",
-              title: "已提交问题，正在准备检索",
-              createdAt: draftCreatedAt,
-            },
-          ],
         },
       ];
       selectedAssistantMessageId.value = tempAssistantId;
@@ -748,9 +653,6 @@
                 acceptedReply = true;
                 replaceMessage(tempUserId, event.userMessage);
                 break;
-              case "trace":
-                upsertTraceEvent(tempAssistantId, event.event);
-                break;
               case "reply-completed":
                 completedReplyState.assistantMessage = event.assistantMessage;
                 replaceMessage(tempUserId, event.userMessage);
@@ -760,7 +662,6 @@
               case "reply-error":
                 replyErrorMessage = event.message;
                 error.value = event.message;
-                ensureReplyFailedTrace(tempAssistantId, event.message);
                 break;
             }
           }
@@ -777,22 +678,10 @@
 
       composer.value = "";
       await loadSessions(activeCollectionId.value);
-
-      const firstCitation = completedReplyState.assistantMessage.citations[0];
-
-      if (firstCitation) {
-        await replaceWorkspaceQuery({
-          group: firstCitation.collectionId,
-          source: firstCitation.sourceId,
-          session: sessionId,
-          panel: "citations",
-        });
-      } else {
-        await replaceWorkspaceQuery({
-          session: sessionId,
-          panel: "citations",
-        });
-      }
+      await replaceWorkspaceQuery({
+        session: sessionId,
+        panel: "library",
+      });
     } catch (cause) {
       if (!acceptedReply) {
         messages.value = previousMessages;
@@ -801,10 +690,6 @@
 
       if (!error.value) {
         error.value = getErrorMessage(cause);
-      }
-
-      if (acceptedReply && !completedReplyState.assistantMessage) {
-        ensureReplyFailedTrace(tempAssistantId, getErrorMessage(cause));
       }
     } finally {
       replying.value = false;
@@ -1130,15 +1015,6 @@
     });
   }
 
-  async function focusHit(hit: SearchKnowledgeHit) {
-    selectedAssistantMessageId.value = selectedAssistantMessage.value?.id || "";
-    await replaceWorkspaceQuery({
-      group: hit.collectionId,
-      source: hit.sourceId,
-      panel: "citations",
-    });
-  }
-
   async function openSource(source: KnowledgeSource) {
     await replaceWorkspaceQuery({
       group: source.collectionId,
@@ -1248,22 +1124,18 @@
       :active-collection="activeCollection"
       :export-tasks="exportTasks"
       :export-templates="exportTemplates"
-      :extra-hits="extraHits"
       :filtered-sources="filteredSources"
       :loading-export-tasks="loadingExportTasks"
       :loading-sources="loadingSources"
       :panel="panel"
-      :retrieval="retrieval"
       :selected-source="selectedSource"
       :source-action-id="sourceActionId"
       :source-filter="sourceFilter"
-      :used-hits="usedHits"
       @open-briefing="openBriefing"
       @create-export-task="createExportTask($event.source, $event.templateId)"
       @delete-source="deleteSource"
       @download-source="downloadSource"
       @edit-source="openSource"
-      @focus-hit="focusHit"
       @open-import="showImportModal = true"
       @open-panel="openPanel"
       @open-settings="showCollectionSettingsModal = true"

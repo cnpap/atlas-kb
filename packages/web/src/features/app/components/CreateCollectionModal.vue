@@ -62,6 +62,7 @@
           <input
             v-model="name"
             class="field-shell w-full text-sm"
+            data-testid="create-collection-name"
             placeholder="例如：市场研究、技术文档..."
           >
         </div>
@@ -70,6 +71,7 @@
           <textarea
             v-model="description"
             class="field-shell w-full text-sm !min-h-[100px]"
+            data-testid="create-collection-description"
             placeholder="简要说明此分组包含的资料范围..."
           />
         </div>
@@ -87,6 +89,7 @@
         </button>
         <button
           class="soft-button primary"
+          data-testid="create-collection-submit"
           type="button"
           :disabled="creating || !name.trim() || !description.trim()"
           @click="submit"

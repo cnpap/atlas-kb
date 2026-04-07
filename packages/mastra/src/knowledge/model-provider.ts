@@ -5,12 +5,18 @@ import {
   ModelProviderRateLimitError,
   ModelProviderUnavailableError,
 } from "@atlas-kb/errors";
-import { getOpenAIBaseUrl, getOpenAIModel } from "./config";
+import {
+  getOpenAIBaseUrl,
+  getRuntimeModel,
+  getRuntimeModelProvider,
+} from "./config";
 
 type ModelProviderLogContext = {
+  hasDashScopeApiKey: boolean;
   hasOpenAIApiKey: boolean;
   openAIBaseUrl: string;
-  openAIModel: string;
+  runtimeModel: string;
+  runtimeProvider: string;
 };
 
 export class ModelInvocationTimeoutError extends Error {
@@ -80,9 +86,11 @@ function extractStatusCode(error: unknown): number | undefined {
 
 export function getModelProviderLogContext(): ModelProviderLogContext {
   return {
+    hasDashScopeApiKey: Boolean(process.env.DASHSCOPE_API_KEY?.trim()),
     hasOpenAIApiKey: Boolean(process.env.OPENAI_API_KEY?.trim()),
     openAIBaseUrl: getOpenAIBaseUrl(),
-    openAIModel: getOpenAIModel(),
+    runtimeModel: getRuntimeModel(),
+    runtimeProvider: getRuntimeModelProvider(),
   };
 }
 
@@ -118,6 +126,19 @@ function logModelProviderIssue(
 }
 
 export function requireChatModelProvider(): void {
+  const provider = getRuntimeModelProvider();
+
+  if (provider === "alibaba-cn") {
+    if (process.env.DASHSCOPE_API_KEY?.trim()) {
+      return;
+    }
+
+    logModelProviderIssue("配置检查", "缺少 DASHSCOPE_API_KEY。");
+    throw new ModelProviderConfigurationError(
+      "知识库回答暂时不可用，请稍后重试。",
+    );
+  }
+
   if (process.env.OPENAI_API_KEY?.trim()) {
     return;
   }

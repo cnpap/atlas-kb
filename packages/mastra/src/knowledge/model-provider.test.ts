@@ -8,6 +8,8 @@ import {
 const originalApiKey = process.env.OPENAI_API_KEY;
 const originalBaseUrl = process.env.OPENAI_BASE_URL;
 const originalModel = process.env.OPENAI_MODEL;
+const originalRuntimeModel = process.env.RUNTIME_MODEL;
+const originalDashScopeApiKey = process.env.DASHSCOPE_API_KEY;
 
 afterEach(() => {
   if (originalApiKey === undefined) {
@@ -27,12 +29,25 @@ afterEach(() => {
   } else {
     process.env.OPENAI_MODEL = originalModel;
   }
+
+  if (originalRuntimeModel === undefined) {
+    delete process.env.RUNTIME_MODEL;
+  } else {
+    process.env.RUNTIME_MODEL = originalRuntimeModel;
+  }
+
+  if (originalDashScopeApiKey === undefined) {
+    delete process.env.DASHSCOPE_API_KEY;
+  } else {
+    process.env.DASHSCOPE_API_KEY = originalDashScopeApiKey;
+  }
 });
 
 describe("@atlas-kb/mastra model provider errors", () => {
   it("does not expose provider configuration details in mapped errors", () => {
     process.env.OPENAI_BASE_URL = "https://api.duckcoding.ai/v1";
     process.env.OPENAI_MODEL = "gpt-5.4";
+    process.env.RUNTIME_MODEL = "openai/gpt-5.4";
 
     const error = mapModelProviderError(
       new Error("The operation timed out."),
@@ -54,10 +69,19 @@ describe("@atlas-kb/mastra model provider errors", () => {
   });
 
   it("does not expose missing key diagnostics to callers", () => {
+    process.env.RUNTIME_MODEL = "openai/gpt-5.4";
     delete process.env.OPENAI_API_KEY;
 
     expect(() => requireChatModelProvider()).toThrow(
       "知识库回答暂时不可用，请稍后重试。",
     );
+  });
+
+  it("uses DashScope key when runtime model points to alibaba-cn", () => {
+    process.env.RUNTIME_MODEL = "alibaba-cn/qwen-plus";
+    delete process.env.OPENAI_API_KEY;
+    process.env.DASHSCOPE_API_KEY = "test-dashscope-key";
+
+    expect(() => requireChatModelProvider()).not.toThrow();
   });
 });

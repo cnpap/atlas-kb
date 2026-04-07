@@ -1,5 +1,10 @@
 import { QdrantVector } from "@mastra/qdrant";
-import { Workspace } from "@mastra/core/workspace";
+import {
+  LocalFilesystem,
+  type WorkspaceFilesystem,
+  Workspace,
+} from "@mastra/core/workspace";
+import { S3Filesystem } from "@mastra/s3";
 import { UpstreamServiceError } from "@atlas-kb/errors";
 import { createHash } from "node:crypto";
 import {
@@ -7,19 +12,31 @@ import {
   getEmbeddingDimensions,
   getEmbeddingModel,
   getEmbeddingUrl,
+  getKnowledgeS3AccessKeyId,
+  getKnowledgeS3Bucket,
+  getKnowledgeS3Endpoint,
+  getKnowledgeS3ForcePathStyle,
+  getKnowledgeS3Region,
+  getKnowledgeS3SecretAccessKey,
   getQdrantApiKey,
   getQdrantCollectionPrefix,
   getQdrantUrl,
   hasEmbeddingConfig,
   resetKnowledgeConfigCache,
+  validateKnowledgeStorageConfig,
 } from "./config";
-import { S3Filesystem } from "./s3-filesystem";
+import { buildKnowledgeSourceObjectPrefix } from "./object-storage";
 
 type WorkspaceEntry = {
   indexName: string;
   vectorStore?: QdrantVector;
-  workspace: Workspace<S3Filesystem>;
+  workspace: Workspace<WorkspaceFilesystem>;
 };
+
+type KnowledgeFilesystemFactory = (args: {
+  collectionId: string;
+  userId: string;
+}) => WorkspaceFilesystem;
 
 interface EmbeddingResponse {
   data?: Array<{
@@ -39,6 +56,7 @@ function summarizeProviderError(payload: string): string | undefined {
 
 const workspaceCache = new Map<string, Promise<WorkspaceEntry>>();
 let embeddingDimensionPromise: Promise<number | undefined> | undefined;
+let filesystemFactoryOverride: KnowledgeFilesystemFactory | undefined;
 
 function getCacheKey(userId: string, collectionId: string): string {
   return `${userId}:${collectionId}`;
@@ -69,6 +87,8 @@ function formatUuidFromHex(hex: string): string {
 }
 
 export function toVectorPointId(documentId: string): string {
+  // 本项目在删除资料和覆盖资料时，都是按单文档粒度清理索引。
+  // 这里保证 documentId 能稳定映射成同一个向量点标识，方便精确删除。
   return formatUuidFromHex(
     createHash("sha256").update(documentId).digest("hex"),
   );
@@ -82,6 +102,27 @@ class WorkspaceQdrantVector extends QdrantVector {
       ...args,
       ids: mappedIds,
     });
+  }
+}
+
+class KnowledgeWorkspaceS3Filesystem extends S3Filesystem {
+  private normalizeWorkspacePath(path: string): string {
+    return path.trim() === "." ? "" : path;
+  }
+
+  override readdir(
+    path: string,
+    options?: Parameters<S3Filesystem["readdir"]>[1],
+  ) {
+    return super.readdir(this.normalizeWorkspacePath(path), options);
+  }
+
+  override stat(path: string) {
+    return super.stat(this.normalizeWorkspacePath(path));
+  }
+
+  override exists(path: string) {
+    return super.exists(this.normalizeWorkspacePath(path));
   }
 }
 
@@ -169,36 +210,27 @@ function createVectorStore(): QdrantVector | undefined {
   });
 }
 
-async function deleteVectorIndex(indexName: string): Promise<void> {
-  const vectorStore = createVectorStore();
-
-  if (!vectorStore) {
-    return;
-  }
-
-  try {
-    await vectorStore.deleteIndex({ indexName });
-  } catch {
-    return;
-  }
-}
-
-async function prepareVectorIndex(
+async function ensureVectorIndex(
   vectorStore: QdrantVector,
   indexName: string,
 ): Promise<number> {
+  // workspace 初始化时只负责确保索引存在。这里必须是幂等的，不能在正常
+  // 读写或聊天流量下重建、清空现有索引。
   const dimension = await resolveEmbeddingDimension();
 
   if (!dimension) {
     throw new Error("未能解析 embedding 维度");
   }
 
-  await deleteVectorIndex(indexName);
-  await vectorStore.createIndex({
-    indexName,
-    dimension,
-    metric: "cosine",
-  });
+  const existingIndexes = await vectorStore.listIndexes().catch(() => []);
+
+  if (!existingIndexes.includes(indexName)) {
+    await vectorStore.createIndex({
+      indexName,
+      dimension,
+      metric: "cosine",
+    });
+  }
 
   return dimension;
 }
@@ -208,10 +240,15 @@ async function createWorkspaceEntry(
   collectionId: string,
 ): Promise<WorkspaceEntry> {
   const indexName = getWorkspaceIndexName(userId, collectionId);
-  const filesystem = new S3Filesystem({
-    userId,
-    collectionId,
-  });
+  const filesystem =
+    filesystemFactoryOverride?.({
+      userId,
+      collectionId,
+    }) ??
+    createKnowledgeWorkspaceFilesystem({
+      userId,
+      collectionId,
+    });
 
   const vectorStore = createVectorStore();
   const workspace = new Workspace({
@@ -229,7 +266,7 @@ async function createWorkspaceEntry(
   });
 
   if (vectorStore) {
-    await prepareVectorIndex(vectorStore, indexName);
+    await ensureVectorIndex(vectorStore, indexName);
   }
 
   await workspace.init();
@@ -241,10 +278,36 @@ async function createWorkspaceEntry(
   };
 }
 
+function createKnowledgeWorkspaceFilesystem(args: {
+  collectionId: string;
+  userId: string;
+}): WorkspaceFilesystem {
+  validateKnowledgeStorageConfig();
+
+  // Mastra 的 list_files 工具默认会以 "." 表示 workspace 根目录，但官方
+  // S3Filesystem 不会把 "." 归一化为空路径，最终会把它拼进 S3 key，
+  // 导致“列当前有哪些文件”在 S3 workspace 下返回空结果。
+  // 这里保留官方 S3Filesystem 作为主体，只补一个最小兼容层来对齐根路径语义。
+  return new KnowledgeWorkspaceS3Filesystem({
+    id: `knowledge-s3:${args.userId}:${args.collectionId}`,
+    bucket: getKnowledgeS3Bucket()!,
+    region: getKnowledgeS3Region()!,
+    accessKeyId: getKnowledgeS3AccessKeyId()!,
+    secretAccessKey: getKnowledgeS3SecretAccessKey()!,
+    endpoint: getKnowledgeS3Endpoint()!,
+    forcePathStyle: getKnowledgeS3ForcePathStyle(),
+    prefix: buildKnowledgeSourceObjectPrefix(args),
+    displayName: "Atlas KB S3",
+    description: "Atlas KB 知识库资料文件存储。",
+  });
+}
+
 export async function getKnowledgeWorkspace(params: {
   collectionId: string;
   userId: string;
-}): Promise<Workspace<S3Filesystem>> {
+}): Promise<Workspace<WorkspaceFilesystem>> {
+  // 上传、编辑、删除、搜索、对话都会通过这里拿到同一个资料库
+  // 级别的 workspace。这里是业务链路绑定 Mastra 原生 workspace 的唯一入口。
   const key = getCacheKey(params.userId, params.collectionId);
   const cached = workspaceCache.get(key);
 
@@ -268,23 +331,19 @@ export async function invalidateKnowledgeWorkspace(params: {
   collectionId: string;
   userId: string;
 }): Promise<void> {
+  // 这里只清理进程内缓存的 workspace 实例，不能删除数据库记录、S3 对象
+  // 或 Qdrant collection。
   const key = getCacheKey(params.userId, params.collectionId);
   const existing = workspaceCache.get(key);
   workspaceCache.delete(key);
 
   if (!existing) {
-    await deleteVectorIndex(
-      getWorkspaceIndexName(params.userId, params.collectionId),
-    );
     return;
   }
 
   const entry = await existing.catch(() => undefined);
 
   if (!entry) {
-    await deleteVectorIndex(
-      getWorkspaceIndexName(params.userId, params.collectionId),
-    );
     return;
   }
 
@@ -292,9 +351,28 @@ export async function invalidateKnowledgeWorkspace(params: {
     await entry.workspace.destroy();
   } catch {
     return;
-  } finally {
-    await deleteVectorIndex(entry.indexName);
   }
+}
+
+export async function removeDocumentFromKnowledgeWorkspace(params: {
+  collectionId: string;
+  documentId: string;
+  userId: string;
+}): Promise<void> {
+  // 资料删除和资料覆盖前，都要先移除该文档对应的旧索引记录，避免搜索结果
+  // 继续命中已删除或已过期内容。
+  //
+  // 当前 Mastra 没有暴露稳定的公开单文档删除接口，所以这里把内部
+  // _searchEngine.remove 封装在 runtime 层，业务层禁止直接访问内部字段。
+  const workspace = await getKnowledgeWorkspace({
+    userId: params.userId,
+    collectionId: params.collectionId,
+  });
+  const searchEngine = (
+    workspace as { _searchEngine?: { remove?: (id: string) => Promise<void> } }
+  )._searchEngine;
+
+  await searchEngine?.remove?.(params.documentId);
 }
 
 export function resetKnowledgeRuntimeCache(): void {
@@ -308,3 +386,11 @@ export function resetKnowledgeRuntimeCache(): void {
   workspaceCache.clear();
   resetKnowledgeConfigCache();
 }
+
+export function setKnowledgeFilesystemFactoryForTests(
+  factory?: KnowledgeFilesystemFactory,
+): void {
+  filesystemFactoryOverride = factory;
+}
+
+export { LocalFilesystem };

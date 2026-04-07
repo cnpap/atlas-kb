@@ -5,6 +5,7 @@ const DEFAULT_DATA_DIR_NAME = ".atlas-kb";
 const DEFAULT_RUNTIME_DIR = "runtime";
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_OPENAI_MODEL = "gpt-5.4";
+const DEFAULT_RUNTIME_MODEL = `openai/${DEFAULT_OPENAI_MODEL}`;
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_QDRANT_URL = "http://127.0.0.1:6333";
 const DEFAULT_KNOWLEDGE_S3_PREFIX = "knowledge-sources";
@@ -19,6 +20,10 @@ function getProjectRoot(): string {
 function trimEnvValue(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function normalizeRuntimeModelIdentifier(model: string): string {
+  return model.includes("/") ? model : `openai/${model}`;
 }
 
 function normalizeOpenAIBaseUrl(baseUrl?: string): string {
@@ -95,6 +100,33 @@ export function getOpenAIUrl(path: string, baseUrl?: string): string {
 
 export function getOpenAIModel(): string {
   return trimEnvValue(process.env.OPENAI_MODEL) ?? DEFAULT_OPENAI_MODEL;
+}
+
+export function getDashScopeApiKey(): string | undefined {
+  return trimEnvValue(process.env.DASHSCOPE_API_KEY);
+}
+
+export function getRuntimeModel(): string {
+  const configuredRuntimeModel =
+    trimEnvValue(process.env.RUNTIME_MODEL) ??
+    trimEnvValue(process.env.OPENAI_MODEL);
+
+  return configuredRuntimeModel
+    ? normalizeRuntimeModelIdentifier(configuredRuntimeModel)
+    : DEFAULT_RUNTIME_MODEL;
+}
+
+export function getRuntimeModelProvider(): string {
+  return getRuntimeModel().split("/", 1)[0] || "openai";
+}
+
+export function hasRuntimeModelApiKey(): boolean {
+  switch (getRuntimeModelProvider()) {
+    case "alibaba-cn":
+      return Boolean(getDashScopeApiKey());
+    default:
+      return Boolean(getOpenAIApiKey());
+  }
 }
 
 export function getEmbeddingApiKey(): string | undefined {

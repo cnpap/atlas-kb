@@ -15,9 +15,9 @@ export {
 } from "./chat";
 export { getKnowledgeSourceDownloadUrl } from "./download";
 export {
+  importKnowledgeFile,
   importKnowledgeFiles,
   importKnowledgeText,
-  importKnowledgeUrl,
   updateKnowledgeSource,
   waitForPendingKnowledgeImports,
 } from "./ingest";
@@ -25,19 +25,15 @@ export { answerKnowledgeQuestion, runKnowledgeAgentQuestion } from "./agent";
 export { searchKnowledge } from "./search";
 export {
   appendChatMessage,
-  archiveKnowledgeSource,
   createKnowledgeCollection,
   createKnowledgeSourceRecord,
-  createSourceDraft,
   deleteKnowledgeCollection,
   deleteKnowledgeSource,
   getChatMessagesData,
   getChatSessionById,
   getDashboardSummary,
-  getDocumentById,
   getKnowledgeCollection,
   getKnowledgeCollectionData,
-  getKnowledgeCollectionSources,
   getKnowledgeCollectionSourcesData,
   getKnowledgeSourceById,
   getKnowledgeSourceData,
@@ -49,8 +45,6 @@ export {
   requireKnowledgeCollection,
   requireKnowledgeSource,
   resetKnowledgeRepository,
-  resolveDatabasePath,
-  toStoredKnowledgeSource,
   updateKnowledgeCollection,
 } from "./repository";
 export {
@@ -66,15 +60,14 @@ export {
 export {
   getKnowledgeWorkspace,
   invalidateKnowledgeWorkspace,
+  LocalFilesystem,
+  removeDocumentFromKnowledgeWorkspace,
   resetKnowledgeRuntimeCache,
+  setKnowledgeFilesystemFactoryForTests,
 } from "./runtime";
 export {
   buildKnowledgeSourceObjectKey,
-  getKnowledgeSourceObject,
   getPresignedGetUrl,
-  getPresignedPutUrl,
-  putKnowledgeSourceObject,
-  setKnowledgeObjectStorageClientForTests,
 } from "./object-storage";
 export {
   createKnowledgeExportTaskInAdmin,
@@ -86,7 +79,6 @@ export {
   allocateManagedSourceFileName,
   buildManagedSourceFileName,
   extractFileContent,
-  getManagedSourcePaths,
 } from "./storage";
 export { generateKnowledgeTemplateExportPayload } from "./template-exports";
 export {

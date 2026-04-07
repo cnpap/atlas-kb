@@ -147,6 +147,7 @@
         <template v-if="mode === 'file'">
           <label
             class="field-shell flex cursor-pointer flex-col items-center justify-center gap-2 py-8 text-center"
+            data-testid="import-file-dropzone"
           >
             <Upload class="size-8 text-[var(--text-dim)]" />
             <p class="text-sm font-medium">
@@ -160,6 +161,7 @@
               type="file"
               multiple
               class="hidden"
+              data-testid="import-file-input"
               @change="handleFileChange"
             >
           </label>
@@ -256,6 +258,7 @@
         </button>
         <button
           class="soft-button primary"
+          data-testid="import-submit-button"
           type="button"
           :disabled="!canSubmit"
           @click="submit"

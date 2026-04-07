@@ -1,28 +1,21 @@
 import {
-  allocateManagedSourceFileName,
   answerKnowledgeQuestion,
-  buildManagedSourceFileName,
   createKnowledgeCollection,
   createKnowledgeExportTaskInAdmin,
-  createKnowledgeSourceRecord,
   deleteKnowledgeCollection,
   deleteKnowledgeSource,
-  extractFileContent,
   generateBriefingOpinion,
   generateKnowledgeTemplateExportPayload,
   getKnowledgeCollectionData,
   getKnowledgeCollectionSourcesData,
-  getManagedSourcePaths,
   getKnowledgeSourceData,
   getKnowledgeSourceDownloadUrl,
   getKnowledgeTemplateDetailFromAdmin,
-  getKnowledgeWorkspace,
+  importKnowledgeFile,
   importKnowledgeText,
   listKnowledgeExportTasksFromAdmin,
   listKnowledgeCollections,
-  listKnowledgeSources,
   listKnowledgeTemplatesFromAdmin,
-  putKnowledgeSourceObject,
   requireKnowledgeCollection,
   searchKnowledge,
   updateKnowledgeCollection,
@@ -217,87 +210,18 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
       const title = readOptionalFormValue(formData, "title");
       const summary = readOptionalFormValue(formData, "summary");
       const tags = parseTagInput(readOptionalFormValue(formData, "tags"));
-
-      const sources = await listKnowledgeSources(userId, collectionId);
-      const usedNames = new Set(
-        sources
-          .map((s) => s.sourceFilename?.trim() || s.documentId?.trim())
-          .filter((v): v is string => Boolean(v)),
-      );
-      const resolvedFileName = allocateManagedSourceFileName(
-        buildManagedSourceFileName({
-          sourceType: "file",
-          title: file.name,
-          sourceFilename: file.name,
-          mimeType: file.type || undefined,
-        }),
-        usedNames,
-      );
-      const paths = getManagedSourcePaths({
-        userId,
-        collectionId,
-        fileName: resolvedFileName,
-      });
-      const collection = await requireKnowledgeCollection(userId, collectionId);
-      const objectBytes = new Uint8Array(await file.arrayBuffer());
-
-      await putKnowledgeSourceObject({
-        userId,
-        collectionId,
-        relativePath: paths.documentPath,
-        body: objectBytes,
-        contentType: file.type || undefined,
-      });
-
-      const extracted = await extractFileContent({
-        bytes: objectBytes,
-        fileName: resolvedFileName,
-        mimeType: file.type || undefined,
-      });
-
-      const workspace = await getKnowledgeWorkspace({ userId, collectionId });
-      const documentId = paths.documentPath;
-      const normalizedTags = tags ?? [];
-      const resolvedSummary = summary || extracted.excerpt;
-      const resolvedTitle = title || extracted.title;
-
-      await workspace.index(documentId, extracted.content, {
-        mimeType: extracted.mimeType,
-        metadata: {
+      return success(
+        await importKnowledgeFile({
+          userId,
           collectionId,
-          sourceFilename: resolvedFileName,
-          sourceType: "file",
-          summary: resolvedSummary,
-          tags: normalizedTags,
-          title: resolvedTitle,
-        },
-      });
-
-      const sourceId = crypto.randomUUID();
-      const source = await createKnowledgeSourceRecord({
-        sourceId,
-        userId,
-        collectionId,
-        documentId,
-        sourceType: "file",
-        title: resolvedTitle,
-        summary: resolvedSummary,
-        content: extracted.content,
-        tags: normalizedTags,
-        sourceFilename: resolvedFileName,
-        mimeType: extracted.mimeType,
-        byteSize: file.size,
-        status: "ready",
-        originalPath: paths.documentPath,
-        indexPath: documentId,
-      });
-
-      return success({
-        collection,
-        source,
-        engine: "lexical" as const,
-        indexed: true,
-      });
+          file,
+          input: {
+            title,
+            summary,
+            tags,
+          },
+        }),
+      );
     },
     {
       params: KnowledgeCollectionIdParamsSchema,

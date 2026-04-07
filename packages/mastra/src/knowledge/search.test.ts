@@ -11,11 +11,12 @@ import {
   ensureDefaultUser,
   importKnowledgeFiles,
   importKnowledgeText,
+  LocalFilesystem,
   resetKnowledgeRepository,
   resetKnowledgeRuntimeCache,
   saveMessageFeedback,
   searchKnowledge,
-  setKnowledgeObjectStorageClientForTests,
+  setKnowledgeFilesystemFactoryForTests,
   waitForPendingKnowledgeImports,
 } from "./index";
 
@@ -495,11 +496,11 @@ function mockProviders() {
 
 describe("@atlas-kb/mastra workspace search flow", () => {
   let knowledgeDataDir = "";
-  let storedObjects = new Map<string, Uint8Array>();
+  let workspaceFilesDir = "";
 
   beforeEach(async () => {
-    storedObjects = new Map<string, Uint8Array>();
     knowledgeDataDir = await mkdtemp(join(tmpdir(), "atlas-kb-mastra-test-"));
+    workspaceFilesDir = join(knowledgeDataDir, "workspace-files");
     process.env.ATLAS_KB_DATA_DIR = knowledgeDataDir;
     process.env.QDRANT_URL = "http://127.0.0.1:6333";
     process.env.OPENAI_API_KEY = "test-openai-key";
@@ -511,47 +512,10 @@ describe("@atlas-kb/mastra workspace search flow", () => {
     process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY = "test-secret-key";
     resetKnowledgeRuntimeCache();
     await resetKnowledgeRepository();
-    setKnowledgeObjectStorageClientForTests({
-      async deleteObject(args) {
-        storedObjects.delete(args.key);
-      },
-      async getObject(args) {
-        const value = storedObjects.get(args.key);
-
-        if (!value) {
-          throw new Error(`missing test object: ${args.key}`);
-        }
-
-        return value;
-      },
-      async headObject(args) {
-        const value = storedObjects.get(args.key);
-
-        if (!value) {
-          return null;
-        }
-
-        return {
-          key: args.key,
-          size: value.byteLength,
-        };
-      },
-      async listObjects(args) {
-        return [...storedObjects.entries()]
-          .filter(([key]) => key.startsWith(args.prefix))
-          .map(([key, value]) => ({
-            key,
-            size: value.byteLength,
-          }));
-      },
-      async putObject(args) {
-        storedObjects.set(
-          args.key,
-          typeof args.body === "string"
-            ? new TextEncoder().encode(args.body)
-            : args.body,
-        );
-      },
+    setKnowledgeFilesystemFactoryForTests(({ userId, collectionId }) => {
+      return new LocalFilesystem({
+        basePath: join(workspaceFilesDir, userId, collectionId),
+      });
     });
     mockProviders();
   });
@@ -616,7 +580,7 @@ describe("@atlas-kb/mastra workspace search flow", () => {
     }
 
     globalThis.fetch = originalFetch;
-    setKnowledgeObjectStorageClientForTests();
+    setKnowledgeFilesystemFactoryForTests();
     await rm(knowledgeDataDir, { force: true, recursive: true });
   });
 
@@ -712,7 +676,7 @@ describe("@atlas-kb/mastra workspace search flow", () => {
     expect(result.mode).toBe("model");
   });
 
-  it("stores trace data when creating a chat reply", async () => {
+  it("persists assistant replies when creating a chat reply", async () => {
     const user = await ensureDefaultUser();
     const collection = await createKnowledgeCollection({
       userId: user.id,
@@ -747,7 +711,7 @@ describe("@atlas-kb/mastra workspace search flow", () => {
     });
 
     expect(reply.assistantMessage.content).toBeTruthy();
-    expect(reply.assistantMessage.trace?.length).toBeGreaterThan(0);
+    expect(reply.assistantMessage.createdAt).toBeTruthy();
   });
 
   it("lists workspace files through the native workspace tool", async () => {
@@ -793,11 +757,6 @@ describe("@atlas-kb/mastra workspace search flow", () => {
     expect(reply.assistantMessage.content).toContain(
       "2026年全市机关党的建设工作暨纪检工作会议通知.txt",
     );
-    expect(
-      reply.assistantMessage.trace?.some(
-        (event) => event.toolName === "mastra_workspace_list_files",
-      ),
-    ).toBe(true);
   });
 
   it("saves feedback on assistant replies", async () => {
@@ -885,10 +844,5 @@ describe("@atlas-kb/mastra workspace search flow", () => {
 
     expect(reply.assistantMessage.content).toContain("请示通知.txt");
     expect(reply.assistantMessage.content).toContain("会议纪要.txt");
-    expect(
-      reply.assistantMessage.trace?.some(
-        (event) => event.toolName === "mastra_workspace_list_files",
-      ),
-    ).toBe(true);
   });
 });
