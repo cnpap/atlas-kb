@@ -5,29 +5,22 @@
     ChatMessage,
     ChatSession,
     KnowledgeCollection,
-    KnowledgeExportTask,
     KnowledgeSource,
     KnowledgeSourcesData,
-    KnowledgeTemplateSummary,
   } from "@atlas-kb/schema";
   import { useToast } from "@nuxt/ui/composables";
   import { computed, onMounted, ref, watch } from "vue";
   import { useRoute, useRouter } from "vue-router";
   import {
-    createBriefingExportRequest,
     createChatSessionRequest,
-    createKnowledgeExportTaskRequest,
     createKnowledgeCollectionRequest,
     deleteChatSessionRequest,
     deleteKnowledgeCollectionRequest,
     deleteKnowledgeSourceRequest,
     downloadBriefingExportFile,
     downloadKnowledgeSourceRequest,
-    fetchBriefingOpinionRequest,
     fetchChatMessagesRequest,
     fetchKnowledgeCollectionSources,
-    listKnowledgeExportTasksRequest,
-    listKnowledgeTemplatesRequest,
     getErrorMessage,
     importKnowledgeTextRequest,
     listChatSessionsRequest,
@@ -54,6 +47,7 @@
   import WorkspaceContextPane from "@/features/app/components/WorkspaceContextPane.vue";
   import WorkspaceSidebar from "@/features/app/components/WorkspaceSidebar.vue";
   import { buildWorkspaceChatTurns } from "@/features/app/lib/workspace-chat-turns";
+  import { useWorkspaceExports } from "@/features/app/composables/useWorkspaceExports";
 
   type PanelMode = "library" | "exports";
 
@@ -70,20 +64,13 @@
   const sessions = ref<ChatSession[]>([]);
   const sources = ref<KnowledgeSource[]>([]);
   const messages = ref<ChatMessage[]>([]);
-  const briefingHistory = ref<BriefingExport[]>([]);
-  const exportTasks = ref<KnowledgeExportTask[]>([]);
-  const exportTemplates = ref<KnowledgeTemplateSummary[]>([]);
-
   const loadingCollections = ref(true);
   const loadingSessions = ref(true);
   const loadingMessages = ref(false);
   const loadingSources = ref(false);
-  const loadingBriefing = ref(false);
-  const loadingExportTasks = ref(false);
   const replying = ref(false);
   const creatingCollection = ref(false);
   const savingCollection = ref(false);
-  const savingBriefing = ref(false);
   const savingSource = ref(false);
   const importPending = ref(false);
   const sourceActionId = ref("");
@@ -92,10 +79,6 @@
   const sourceFilter = ref("");
   const selectedAssistantMessageId = ref("");
   const suspendedMessageLoadSessionId = ref("");
-  const briefing = ref<
-    Awaited<ReturnType<typeof fetchBriefingOpinionRequest>>["briefing"] | null
-  >(null);
-
   const showCreateCollection = ref(false);
   const showBriefingModal = ref(false);
   const showImportModal = ref(false);
@@ -228,6 +211,42 @@
   function downloadBriefingRecord(item: BriefingExport) {
     downloadBriefingExportFile(item);
   }
+
+  async function openExportPanelForSource(source: KnowledgeSource) {
+    await replaceWorkspaceQuery({
+      group: source.collectionId,
+      source: source.id,
+      panel: "exports",
+    });
+  }
+
+  const {
+    briefing,
+    briefingHistory,
+    createExportTask,
+    exportBriefing,
+    exportTasks,
+    exportTemplates,
+    loadBriefing,
+    loadExportTasks,
+    loadExportTemplates,
+    loadingBriefing,
+    loadingExportTasks,
+    openBriefing,
+    openExportPanelForSource: openExportPanelForSourceAndLoad,
+    refreshBriefing,
+    resetBriefingState,
+    savingBriefing,
+  } = useWorkspaceExports({
+    getBriefingExportSummary,
+    onError: (message) => {
+      error.value = message;
+    },
+    onOpenExportsForSource: openExportPanelForSource,
+    onSuccess: (message) => {
+      showToast(message);
+    },
+  });
 
   async function replaceWorkspaceQuery(
     patch: Record<string, string | undefined>,
@@ -826,126 +845,6 @@
     }
   }
 
-  async function loadBriefing(sourceId: string) {
-    loadingBriefing.value = true;
-    error.value = "";
-
-    try {
-      const data = await fetchBriefingOpinionRequest(sourceId);
-      briefing.value = data.briefing;
-      briefingHistory.value = data.history;
-    } catch (cause) {
-      briefing.value = null;
-      briefingHistory.value = [];
-      error.value = cause instanceof Error ? cause.message : "拟办意见生成失败";
-    } finally {
-      loadingBriefing.value = false;
-    }
-  }
-
-  async function loadExportTemplates() {
-    try {
-      const data = await listKnowledgeTemplatesRequest();
-      exportTemplates.value = data.templates;
-    } catch (cause) {
-      exportTemplates.value = [];
-      error.value = cause instanceof Error ? cause.message : "导出模版加载失败";
-    }
-  }
-
-  async function loadExportTasks(sourceId?: string) {
-    loadingExportTasks.value = true;
-
-    try {
-      const data = await listKnowledgeExportTasksRequest({
-        sourceId,
-      });
-      exportTasks.value = data.tasks;
-    } catch (cause) {
-      exportTasks.value = [];
-      error.value = cause instanceof Error ? cause.message : "导出任务加载失败";
-    } finally {
-      loadingExportTasks.value = false;
-    }
-  }
-
-  async function createExportTask(
-    source: KnowledgeSource,
-    templateId?: string,
-  ) {
-    try {
-      await createKnowledgeExportTaskRequest({
-        sourceId: source.id,
-        body: {
-          taskType: templateId ? undefined : "briefing",
-          templateId,
-        },
-      });
-      await replaceWorkspaceQuery({
-        source: source.id,
-        panel: "exports",
-      });
-      await loadExportTasks(source.id);
-      showToast("导出任务已提交");
-    } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : "导出任务提交失败";
-    }
-  }
-
-  async function openBriefing(source: KnowledgeSource) {
-    if (source.status !== "ready") {
-      error.value = "当前资料尚未处理完成，暂时无法生成拟办意见";
-      return;
-    }
-
-    await replaceWorkspaceQuery({
-      group: source.collectionId,
-      source: source.id,
-      panel: "exports",
-    });
-    await loadExportTasks(source.id);
-  }
-
-  async function refreshBriefing() {
-    if (!selectedSource.value) {
-      return;
-    }
-
-    await loadBriefing(selectedSource.value.id);
-  }
-
-  async function exportBriefing(payload: {
-    citations: BriefingExport["citations"];
-    form: BriefingForm;
-  }) {
-    if (!selectedSource.value) {
-      return;
-    }
-
-    savingBriefing.value = true;
-    error.value = "";
-
-    try {
-      const data = await createBriefingExportRequest({
-        sourceId: selectedSource.value.id,
-        body: {
-          summary: getBriefingExportSummary(selectedSource.value, payload.form),
-          form: payload.form,
-          citations: payload.citations,
-        },
-      });
-
-      briefingHistory.value = [data.export, ...briefingHistory.value];
-      downloadBriefingRecord(data.export);
-      showBriefingModal.value = false;
-      showToast("拟办意见已导出");
-    } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : "导出拟办意见失败";
-    } finally {
-      savingBriefing.value = false;
-    }
-  }
-
   async function deleteSource(source: KnowledgeSource) {
     const accepted = window.confirm(`确认删除资料“${source.title}”？`);
 
@@ -968,8 +867,7 @@
       }
 
       if (selectedSource.value?.id === source.id) {
-        briefing.value = null;
-        briefingHistory.value = [];
+        resetBriefingState();
         showBriefingModal.value = false;
       }
 
@@ -1022,6 +920,37 @@
       panel: "library",
     });
     showSourceEditorModal.value = true;
+  }
+
+  async function handleOpenExportPanel(source: KnowledgeSource) {
+    await openExportPanelForSourceAndLoad(source);
+  }
+
+  async function handleOpenBriefing(source: KnowledgeSource) {
+    await openBriefing(source);
+    await loadBriefing(source.id);
+    showBriefingModal.value = true;
+  }
+
+  async function handleRefreshBriefing() {
+    await refreshBriefing(selectedSource.value);
+  }
+
+  async function handleExportBriefing(payload: {
+    citations: BriefingExport["citations"];
+    form: BriefingForm;
+  }) {
+    const exported = await exportBriefing({
+      ...payload,
+      source: selectedSource.value,
+    });
+
+    if (!exported) {
+      return;
+    }
+
+    downloadBriefingRecord(exported);
+    showBriefingModal.value = false;
   }
 
   async function logoutCurrentUser() {
@@ -1131,7 +1060,8 @@
       :selected-source="selectedSource"
       :source-action-id="sourceActionId"
       :source-filter="sourceFilter"
-      @open-briefing="openBriefing"
+      @open-export-panel="handleOpenExportPanel"
+      @open-briefing="handleOpenBriefing"
       @create-export-task="createExportTask($event.source, $event.templateId)"
       @delete-source="deleteSource"
       @download-source="downloadSource"
@@ -1164,8 +1094,8 @@
     :pending="savingBriefing"
     :source="selectedSource"
     @download-history="downloadBriefingRecord"
-    @refresh="refreshBriefing"
-    @submit="exportBriefing"
+    @refresh="handleRefreshBriefing"
+    @submit="handleExportBriefing"
   />
 
   <SourceEditorModal

@@ -4,19 +4,18 @@ import {
   NotFoundError,
 } from "@atlas-kb/errors";
 import type { AuthUser } from "@atlas-kb/schema";
-import type { Selectable } from "kysely";
 import { ensureKnowledgeDatabase } from "./db";
 import type { Users } from "./db.generated";
+import { nowIso, toDbUserId } from "./repository-shared";
 
 const DEFAULT_USERNAME = "admin";
 const DEFAULT_PASSWORD = "atlas-kb-dev";
 const USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{2,63}$/;
 
-type UserRow = Selectable<Users>;
-
-function nowIso() {
-  return new Date().toISOString();
-}
+type UserRow = Pick<
+  Users,
+  "created_at" | "id" | "password" | "updated_at" | "username"
+>;
 
 function normalizeUsername(input: string): string {
   const normalized = input.trim().toLowerCase();
@@ -44,7 +43,7 @@ async function getUserRowById(userId: string): Promise<UserRow | null> {
     (await db
       .selectFrom("users")
       .select(["id", "username", "password", "created_at", "updated_at"])
-      .where("id", "=", Number(userId))
+      .where("id", "=", toDbUserId(userId))
       .where("username", "is not", null)
       .executeTakeFirst()) ?? null
   );

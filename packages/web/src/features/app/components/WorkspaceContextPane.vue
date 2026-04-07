@@ -42,6 +42,7 @@
     createExportTask: [
       payload: { source: KnowledgeSource; templateId?: string },
     ];
+    openExportPanel: [source: KnowledgeSource];
     openBriefing: [source: KnowledgeSource];
     openImport: [];
     openPanel: [panel: "library" | "exports"];
@@ -177,6 +178,14 @@
                 data-testid="source-card-actions"
               >
                 <button
+                  class="soft-button !rounded-[6px] !px-2.5 !py-2 text-xs"
+                  data-testid="source-export-button"
+                  type="button"
+                  @click="$emit('openExportPanel', source)"
+                >
+                  导出
+                </button>
+                <button
                   class="soft-button !rounded-[6px] !p-2"
                   data-testid="source-edit-button"
                   type="button"
@@ -253,6 +262,13 @@
             {{ template.name }}
           </button>
         </div>
+
+        <p
+          v-if="exportTemplates.length === 0"
+          class="mb-5 text-sm text-[var(--text-muted)]"
+        >
+          当前没有可用模板，请先在管理端给当前用户分配导出模板。
+        </p>
 
         <div
           v-if="loadingExportTasks"
