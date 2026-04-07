@@ -11,6 +11,26 @@ return new class extends Migration
      */
     public function up(): void
     {
+        Schema::create('kb_collections', function (Blueprint $table) {
+            $table->text('id');
+            $table->foreignId('owner_user_id');
+            $table->text('name');
+            $table->text('description');
+            $table->text('color');
+            $table->text('icon');
+            $table->boolean('is_pinned')->default(false);
+            $table->timestampTz('created_at');
+            $table->timestampTz('updated_at');
+            $table->timestampTz('last_activity_at');
+
+            $table->primary('id', 'kb_collections_pkey');
+            $table->foreign('owner_user_id')
+                ->references('id')
+                ->on('users')
+                ->cascadeOnDelete();
+            $table->rawIndex('owner_user_id, updated_at DESC', 'idx_kb_collections_owner');
+        });
+
         Schema::create('kb_sources', function (Blueprint $table) {
             $table->text('id');
             $table->foreignId('owner_user_id');
@@ -51,6 +71,35 @@ return new class extends Migration
             $table->rawIndex('collection_id, updated_at DESC', 'idx_kb_sources_collection');
             $table->rawIndex('owner_user_id, document_id', 'idx_kb_sources_document');
         });
+
+        Schema::create('kb_import_jobs', function (Blueprint $table) {
+            $table->text('id');
+            $table->foreignId('owner_user_id');
+            $table->text('source_id');
+            $table->text('collection_id');
+            $table->text('source_type');
+            $table->text('stage');
+            $table->text('status');
+            $table->integer('attempt');
+            $table->text('error_message')->nullable();
+            $table->timestampTz('started_at');
+            $table->timestampTz('finished_at')->nullable();
+
+            $table->primary('id', 'kb_import_jobs_pkey');
+            $table->foreign('owner_user_id')
+                ->references('id')
+                ->on('users')
+                ->cascadeOnDelete();
+            $table->foreign('source_id')
+                ->references('id')
+                ->on('kb_sources')
+                ->cascadeOnDelete();
+            $table->foreign('collection_id')
+                ->references('id')
+                ->on('kb_collections')
+                ->cascadeOnDelete();
+            $table->rawIndex('owner_user_id, started_at DESC', 'idx_kb_import_jobs_owner');
+        });
     }
 
     /**
@@ -58,6 +107,8 @@ return new class extends Migration
      */
     public function down(): void
     {
+        Schema::dropIfExists('kb_import_jobs');
         Schema::dropIfExists('kb_sources');
+        Schema::dropIfExists('kb_collections');
     }
 };

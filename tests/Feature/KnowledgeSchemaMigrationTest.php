@@ -58,8 +58,23 @@ function knowledgeTableForeignKeys(string $table): array
         ->all();
 }
 
-test('knowledge template library migrations are ordered by dependency', function () {
+test('development migrations are consolidated around feature boundaries', function () {
     $expectedMigrationFiles = [
+        '2026_04_03_032229_create_kb_content_tables.php',
+        '2026_04_03_032232_create_kb_conversation_tables.php',
+        '2026_04_03_074812_create_kb_template_domain_tables.php',
+    ];
+
+    $obsoleteMigrationFiles = [
+        '2025_08_14_170933_add_two_factor_columns_to_users_table.php',
+        '2026_04_03_032230_create_kb_sources_table.php',
+        '2026_04_03_032231_create_kb_import_jobs_table.php',
+        '2026_04_03_032233_create_kb_chat_messages_table.php',
+        '2026_04_03_032234_create_kb_chat_feedback_table.php',
+        '2026_04_03_032235_create_kb_briefing_exports_table.php',
+        '2026_04_03_074813_create_kb_template_fields_table.php',
+        '2026_04_06_154057_create_knowledge_template_exports_table.php',
+        '2026_04_07_020000_finalize_kb_chat_sessions_collection_contract.php',
         '2026_04_07_041040_create_knowledge_template_libraries_table.php',
         '2026_04_07_041041_create_knowledge_template_library_files_table.php',
         '2026_04_07_041042_create_kb_template_user_assignments_table.php',
@@ -68,11 +83,11 @@ test('knowledge template library migrations are ordered by dependency', function
 
     $actualMigrationFiles = collect(glob(database_path('migrations/*.php')))
         ->map(static fn (string $path): string => basename($path))
-        ->filter(static fn (string $path): bool => in_array($path, $expectedMigrationFiles, true))
         ->values()
         ->all();
 
-    expect($actualMigrationFiles)->toBe($expectedMigrationFiles);
+    expect($actualMigrationFiles)->toContain(...$expectedMigrationFiles)
+        ->not->toContain(...$obsoleteMigrationFiles);
 });
 
 test('knowledge base tables are created with the expected contract', function () {
@@ -325,7 +340,16 @@ test('knowledge base tables are created with the expected contract', function ()
 
 test('knowledge base users are unified into the users table', function () {
     expect(Schema::hasTable('users'))->toBeTrue();
-    expect(Schema::hasColumns('users', ['id', 'name', 'username', 'email', 'password']))->toBeTrue();
+    expect(Schema::hasColumns('users', [
+        'id',
+        'name',
+        'username',
+        'email',
+        'password',
+        'two_factor_secret',
+        'two_factor_recovery_codes',
+        'two_factor_confirmed_at',
+    ]))->toBeTrue();
     expect(Schema::hasTable('kb_users'))->toBeFalse();
 
     if (DB::getDriverName() !== 'pgsql') {
@@ -337,6 +361,9 @@ test('knowledge base users are unified into the users table', function () {
 
     expect($columns['username']['is_nullable'])->toBe('YES');
     expect($columns['email']['is_nullable'])->toBe('YES');
+    expect($columns['two_factor_secret']['is_nullable'])->toBe('YES');
+    expect($columns['two_factor_recovery_codes']['is_nullable'])->toBe('YES');
+    expect($columns['two_factor_confirmed_at']['is_nullable'])->toBe('YES');
     expect(implode("\n", $indexes))->toContain('users_username_unique');
     expect(implode("\n", $indexes))->toContain('users_email_unique');
 });
