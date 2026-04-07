@@ -3,7 +3,6 @@
     KnowledgeCollection,
     KnowledgeExportTask,
     KnowledgeSource,
-    KnowledgeTemplateSummary,
   } from "@atlas-kb/schema";
   import {
     Download,
@@ -18,6 +17,8 @@
   } from "lucide-vue-next";
   import {
     formatRelativeTime,
+    getExportTaskStatusLabel,
+    getExportTaskStatusTone,
     getSourceStatusLabel,
     getSourceStatusTone,
   } from "@/lib/knowledge-ui";
@@ -25,12 +26,10 @@
   defineProps<{
     activeCollection: KnowledgeCollection | null;
     exportTasks: KnowledgeExportTask[];
-    exportTemplates: KnowledgeTemplateSummary[];
     filteredSources: KnowledgeSource[];
     loadingSources?: boolean;
     loadingExportTasks?: boolean;
     panel: "library" | "exports";
-    selectedSource: KnowledgeSource | null;
     sourceActionId: string;
     sourceFilter: string;
   }>();
@@ -39,14 +38,11 @@
     deleteSource: [source: KnowledgeSource];
     downloadSource: [source: KnowledgeSource];
     editSource: [source: KnowledgeSource];
-    createExportTask: [
-      payload: { source: KnowledgeSource; templateId?: string },
-    ];
-    openExportPanel: [source: KnowledgeSource];
-    openBriefing: [source: KnowledgeSource];
+    openExportModal: [source: KnowledgeSource];
     openImport: [];
     openPanel: [panel: "library" | "exports"];
     openSettings: [];
+    openTaskDetail: [taskId: string];
     "update:sourceFilter": [value: string];
   }>();
 </script>
@@ -57,6 +53,7 @@
       <div class="segmented-tabs !bg-transparent !border-none !p-0 gap-2">
         <button
           class="soft-button"
+          data-testid="context-panel-library-tab"
           :class="panel === 'library' ? 'primary' : ''"
           type="button"
           @click="$emit('openPanel', 'library')"
@@ -65,6 +62,7 @@
         </button>
         <button
           class="soft-button"
+          data-testid="context-panel-exports-tab"
           :class="panel === 'exports' ? 'primary' : ''"
           type="button"
           @click="$emit('openPanel', 'exports')"
@@ -181,7 +179,7 @@
                   class="soft-button !rounded-[6px] !px-2.5 !py-2 text-xs"
                   data-testid="source-export-button"
                   type="button"
-                  @click="$emit('openExportPanel', source)"
+                  @click="$emit('openExportModal', source)"
                 >
                   导出
                 </button>
@@ -220,93 +218,74 @@
     </div>
 
     <div v-else class="pane-scroll flex flex-col pt-4">
-      <div v-if="!selectedSource" class="empty-state items-center text-center">
+      <div
+        v-if="loadingExportTasks"
+        class="empty-state items-center text-center text-sm text-[var(--text-muted)]"
+      >
+        正在加载导出任务...
+      </div>
+
+      <div
+        v-else-if="exportTasks.length === 0"
+        class="empty-state items-center text-center"
+      >
         <FileCog class="mb-2 size-8 text-[var(--text-dim)]" />
         <p class="text-sm text-[var(--text-muted)]">
-          选择一个资料文件后，可在这里查看拟办和模版导出任务。
+          当前还没有导出任务。选择文件后点击导出，即可异步创建任务。
         </p>
       </div>
 
-      <template v-else>
-        <div class="mb-5">
-          <p
-            class="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-dim)]"
-          >
-            当前资料
-          </p>
-          <div class="panel-muted border border-[var(--border-soft)] p-4">
-            <p class="text-sm font-semibold text-[var(--text-strong)]">
-              {{ selectedSource.title }}
-            </p>
-            <p class="mt-2 text-[12px] leading-6 text-[var(--text-muted)]">
-              {{ selectedSource.summary }}
-            </p>
-          </div>
-        </div>
-
-        <div class="mb-5 flex flex-wrap gap-2">
-          <button
-            class="soft-button !px-3 !py-1.5"
-            type="button"
-            @click="$emit('openBriefing', selectedSource)"
-          >
-            拟办导出
-          </button>
-          <button
-            v-for="template in exportTemplates"
-            :key="template.id"
-            class="soft-button !px-3 !py-1.5"
-            type="button"
-            @click="$emit('createExportTask', { source: selectedSource, templateId: template.id })"
-          >
-            {{ template.name }}
-          </button>
-        </div>
-
-        <p
-          v-if="exportTemplates.length === 0"
-          class="mb-5 text-sm text-[var(--text-muted)]"
+      <div v-else class="stack-list">
+        <article
+          v-for="task in exportTasks"
+          :key="task.id"
+          class="stack-item !rounded-[8px] !p-3 shadow-none"
         >
-          当前没有可用模板，请先在管理端给当前用户分配导出模板。
-        </p>
-
-        <div
-          v-if="loadingExportTasks"
-          class="empty-state items-center text-center text-sm text-[var(--text-muted)]"
-        >
-          正在加载导出任务...
-        </div>
-
-        <div
-          v-else-if="exportTasks.length === 0"
-          class="empty-state items-center text-center"
-        >
-          <Info class="mb-2 size-8 text-[var(--text-dim)]" />
-          <p class="text-sm text-[var(--text-muted)]">当前还没有导出任务。</p>
-        </div>
-
-        <div v-else class="stack-list">
-          <article
-            v-for="task in exportTasks"
-            :key="task.id"
-            class="stack-item !rounded-[8px] !p-3 shadow-none"
-          >
-            <div class="flex items-start justify-between gap-3">
-              <div class="min-w-0 flex-1">
-                <p class="text-sm font-semibold text-[var(--text-strong)]">
-                  {{ task.templateName }}
-                </p>
-                <p class="mt-1 text-[12px] text-[var(--text-muted)]">
-                  {{ task.status }}
-                </p>
-              </div>
+          <div class="flex flex-col gap-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <span
+                class="status-pill"
+                :class="getExportTaskStatusTone(task.status)"
+              >
+                {{ getExportTaskStatusLabel(task.status) }}
+              </span>
               <span class="text-[10px] text-[var(--text-dim)]">
                 {{ formatRelativeTime(task.updatedAt) }}
               </span>
             </div>
-          </article>
-        </div>
-      </template>
+
+            <div class="min-w-0">
+              <p
+                class="truncate text-sm font-semibold text-[var(--text-strong)]"
+              >
+                {{ task.templateName }}
+              </p>
+              <p class="mt-1 text-[12px] leading-6 text-[var(--text-muted)]">
+                {{ task.sourceTitle }}
+              </p>
+              <p
+                v-if="task.failureMessage"
+                class="mt-1 text-[12px] leading-6 text-[var(--danger)]"
+              >
+                {{ task.failureMessage }}
+              </p>
+            </div>
+
+            <div
+              class="flex items-center justify-end border-t border-[rgba(93,72,34,0.08)] pt-3"
+            >
+              <button
+                class="soft-button !rounded-[6px] !px-3 !py-2 text-xs"
+                :data-testid="`export-task-detail-${task.id}`"
+                type="button"
+                @click="$emit('openTaskDetail', task.id)"
+              >
+                查看详情
+              </button>
+            </div>
+          </div>
+        </article>
+      </div>
     </div>
   </aside>
 </template>

@@ -145,6 +145,97 @@ async function readTextRequestBody(value: unknown): Promise<string> {
 }
 
 function mockProviders() {
+  const templateDetail = {
+    id: "template-1",
+    name: "拟办意见",
+    templateType: "xlsx",
+    sourceFilename: "文件阅办单.xlsx",
+    fieldCount: 2,
+    referenceLibraryCount: 0,
+    parsedAt: "2026-04-07T15:10:24.000Z",
+    updatedAt: "2026-04-07T15:10:24.000Z",
+    systemPrompt: "请提取字段后生成结构化内容。",
+    fields: [
+      {
+        id: "field-1",
+        name: "document_title",
+        label: "文件标题",
+        description: "",
+        sortOrder: 1,
+        locations: [],
+      },
+      {
+        id: "field-2",
+        name: "opinion",
+        label: "拟办意见",
+        description: "",
+        sortOrder: 2,
+        locations: [],
+      },
+    ],
+    referenceLibraries: [],
+  };
+  const adminExportTasks = new Map<
+    string,
+    {
+      canEdit: boolean;
+      completedAt?: string;
+      createdAt: string;
+      exportFile?: {
+        byteSize: number;
+        createdAt: string;
+        downloadUrl: string;
+        id: string;
+        mimeType: string;
+        outputFilename: string;
+        templateId: string;
+      };
+      failedAt?: string;
+      failureMessage?: string;
+      id: string;
+      ownerUserId: string;
+      parameters: Record<string, string>;
+      sourceId: string;
+      sourceTitle: string;
+      startedAt?: string;
+      status: "completed" | "failed" | "pending" | "processing";
+      taskType: string;
+      template: typeof templateDetail;
+      templateId: string;
+      templateName: string;
+      updatedAt: string;
+    }
+  >();
+  adminExportTasks.set("task-existing", {
+    id: "task-existing",
+    ownerUserId: "1",
+    sourceId: "source-existing",
+    sourceTitle: "既有资料",
+    taskType: "template",
+    templateId: templateDetail.id,
+    templateName: templateDetail.name,
+    status: "completed",
+    parameters: {
+      document_title: "既有标题",
+      opinion: "既有拟办意见",
+    },
+    template: templateDetail,
+    canEdit: true,
+    createdAt: "2026-04-07T15:14:00.000Z",
+    updatedAt: "2026-04-07T15:15:00.000Z",
+    completedAt: "2026-04-07T15:15:00.000Z",
+    exportFile: {
+      id: "export-existing",
+      templateId: templateDetail.id,
+      outputFilename: "拟办意见.xlsx",
+      mimeType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      byteSize: 128,
+      downloadUrl: "http://127.0.0.1:8000/storage/exports/export-existing.xlsx",
+      createdAt: "2026-04-07T15:15:00.000Z",
+    },
+  });
+
   globalThis.fetch = (async (
     input: string | URL | Request,
     init?: RequestInit,
@@ -184,14 +275,14 @@ function mockProviders() {
       return jsonResponse({
         data: [
           {
-            id: "template-1",
-            name: "拟办意见",
-            templateType: "xlsx",
-            sourceFilename: "文件阅办单.xlsx",
-            fieldCount: 5,
-            referenceLibraryCount: 0,
-            parsedAt: "2026-04-07T15:10:24.000Z",
-            updatedAt: "2026-04-07T15:10:24.000Z",
+            id: templateDetail.id,
+            name: templateDetail.name,
+            templateType: templateDetail.templateType,
+            sourceFilename: templateDetail.sourceFilename,
+            fieldCount: templateDetail.fieldCount,
+            referenceLibraryCount: templateDetail.referenceLibraryCount,
+            parsedAt: templateDetail.parsedAt,
+            updatedAt: templateDetail.updatedAt,
           },
         ],
       });
@@ -199,34 +290,99 @@ function mockProviders() {
 
     if (url.includes("/api/internal/knowledge-templates/")) {
       return jsonResponse({
-        data: {
-          id: "template-1",
-          name: "拟办意见",
-          templateType: "xlsx",
-          sourceFilename: "文件阅办单.xlsx",
-          fieldCount: 5,
-          referenceLibraryCount: 0,
-          parsedAt: "2026-04-07T15:10:24.000Z",
-          updatedAt: "2026-04-07T15:10:24.000Z",
-          systemPrompt: "请提取字段后生成结构化内容。",
-          fields: [
-            {
-              id: "field-1",
-              name: "opinion",
-              label: "拟办意见",
-              description: "",
-              sortOrder: 1,
-              locations: [],
-            },
-          ],
-          referenceLibraries: [],
-        },
+        data: templateDetail,
       });
     }
 
     if (url.includes("/api/internal/knowledge-template-export-tasks")) {
+      const parsedUrl = new URL(url);
+      const taskIdMatch = parsedUrl.pathname.match(
+        /\/api\/internal\/knowledge-template-export-tasks\/([^/?#]+)/,
+      );
+
+      if (taskIdMatch?.[1]) {
+        const task = adminExportTasks.get(decodeURIComponent(taskIdMatch[1]));
+
+        if (!task) {
+          return jsonResponse(
+            {
+              error: "Not Found",
+            },
+            404,
+          );
+        }
+
+        if ((init?.method || "GET").toUpperCase() === "PATCH") {
+          task.parameters = {
+            ...body.parameters,
+          } as Record<string, string>;
+          task.updatedAt = "2026-04-07T15:18:00.000Z";
+          task.exportFile = {
+            id: "export-updated",
+            templateId: task.templateId,
+            outputFilename: "拟办意见-已更新.xlsx",
+            mimeType:
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            byteSize: 256,
+            downloadUrl:
+              "http://127.0.0.1:8000/storage/exports/export-updated.xlsx",
+            createdAt: task.updatedAt,
+          };
+
+          return jsonResponse({
+            data: task,
+          });
+        }
+
+        return jsonResponse({
+          data: task,
+        });
+      }
+
+      if ((init?.method || "GET").toUpperCase() === "POST") {
+        const createdAt = "2026-04-07T15:16:00.000Z";
+        const taskId = `task-${adminExportTasks.size + 1}`;
+        const task = {
+          id: taskId,
+          ownerUserId: String(body.user_id ?? 1),
+          sourceId: String(body.source_id ?? "source-1"),
+          sourceTitle: "资料一",
+          taskType: "template",
+          templateId: String(body.template_id ?? templateDetail.id),
+          templateName: templateDetail.name,
+          status: "pending" as const,
+          parameters: {},
+          template: templateDetail,
+          canEdit: false,
+          createdAt,
+          updatedAt: createdAt,
+        };
+
+        adminExportTasks.set(taskId, task);
+
+        return jsonResponse({
+          data: task,
+        });
+      }
+
+      const taskIds = parsedUrl.searchParams
+        .get("task_ids")
+        ?.split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const sourceId = parsedUrl.searchParams.get("source_id")?.trim();
+      let tasks = [...adminExportTasks.values()];
+
+      if (taskIds?.length) {
+        tasks = tasks.filter((task) => taskIds.includes(task.id));
+      }
+
+      if (sourceId) {
+        tasks = tasks.filter((task) => task.sourceId === sourceId);
+      }
+
       return jsonResponse({
-        data: [],
+        data: tasks,
       });
     }
 
@@ -907,7 +1063,7 @@ describe("@atlas-kb/api knowledge endpoints", () => {
     await expect(readFile(workspaceFilePath, "utf-8")).rejects.toThrow();
   });
 
-  it("generates a briefing opinion", async () => {
+  it("creates, loads, and updates export tasks through admin-backed endpoints", async () => {
     const app = createApp();
     const session = await login(app);
 
@@ -919,9 +1075,9 @@ describe("@atlas-kb/api knowledge endpoints", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          id: "api-briefing",
-          name: "API Briefing",
-          description: "briefing tests",
+          id: "api-export-tasks",
+          name: "API Export Tasks",
+          description: "export task tests",
         }),
       }),
     );
@@ -942,7 +1098,7 @@ describe("@atlas-kb/api knowledge endpoints", () => {
           },
           body: JSON.stringify({
             title: "公文标题",
-            summary: "拟办测试摘要",
+            summary: "导出测试摘要",
             content: "来文单位为综合办公室，文件标题为关于预算调整的请示。",
           }),
         },
@@ -954,28 +1110,82 @@ describe("@atlas-kb/api knowledge endpoints", () => {
       };
     }>(importResponse);
 
-    const briefingResponse = await app.handle(
+    const createTaskResponse = await app.handle(
       new Request(
-        `http://localhost/api/kb/sources/${importData.source.id}/briefing`,
+        `http://localhost/api/kb/sources/${importData.source.id}/export-tasks`,
         {
-          headers: authHeaders(session.token),
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            templateId: "template-1",
+          }),
         },
       ),
     );
-    const briefingData = await readJson<{
-      briefing: {
-        fields: Array<{
-          key: string;
-          status: string;
-        }>;
-        form: {
-          documentTitle: string;
+    const createdTask = await readJson<{
+      task: {
+        id: string;
+        sourceId: string;
+        status: string;
+      };
+    }>(createTaskResponse);
+
+    expect(createdTask.task.sourceId).toBe(importData.source.id);
+    expect(createdTask.task.status).toBe("pending");
+
+    const detailResponse = await app.handle(
+      new Request("http://localhost/api/kb/export-tasks/task-existing", {
+        headers: authHeaders(session.token),
+      }),
+    );
+    const detailData = await readJson<{
+      task: {
+        canEdit: boolean;
+        parameters: Record<string, string>;
+        template: {
+          fields: Array<{
+            name: string;
+          }>;
         };
       };
-    }>(briefingResponse);
+    }>(detailResponse);
 
-    expect(briefingData.briefing.fields).toHaveLength(6);
-    expect(briefingData.briefing.form.documentTitle).toBeTruthy();
+    expect(detailData.task.canEdit).toBe(true);
+    expect(detailData.task.parameters.opinion).toBe("既有拟办意见");
+    expect(detailData.task.template.fields).toHaveLength(2);
+
+    const updateResponse = await app.handle(
+      new Request("http://localhost/api/kb/export-tasks/task-existing", {
+        method: "PATCH",
+        headers: {
+          ...authHeaders(session.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          parameters: {
+            document_title: "更新后的标题",
+            opinion: "更新后的拟办意见",
+          },
+        }),
+      }),
+    );
+    const updatedTask = await readJson<{
+      task: {
+        exportFile?: {
+          outputFilename: string;
+        };
+        parameters: Record<string, string>;
+      };
+    }>(updateResponse);
+
+    expect(updatedTask.task.parameters.document_title).toBe("更新后的标题");
+    expect(updatedTask.task.parameters.opinion).toBe("更新后的拟办意见");
+    expect(updatedTask.task.exportFile?.outputFilename).toBe(
+      "拟办意见-已更新.xlsx",
+    );
   });
 
   it("isolates data between authenticated users", async () => {
@@ -1064,7 +1274,7 @@ describe("@atlas-kb/api knowledge endpoints", () => {
 
     expect(data.templates).toHaveLength(1);
     expect(data.templates[0]?.templateType).toBe("xlsx");
-    expect(data.templates[0]?.fieldCount).toBe(5);
+    expect(data.templates[0]?.fieldCount).toBe(2);
     expect(data.templates[0]?.parsedAt).toBe("2026-04-07T15:10:24.000Z");
     expect(data.templates[0]?.updatedAt).toBe("2026-04-07T15:10:24.000Z");
   });

@@ -1,7 +1,5 @@
 <script setup lang="ts">
   import type {
-    BriefingExport,
-    BriefingForm,
     ChatMessage,
     ChatSession,
     KnowledgeCollection,
@@ -17,7 +15,6 @@
     deleteChatSessionRequest,
     deleteKnowledgeCollectionRequest,
     deleteKnowledgeSourceRequest,
-    downloadBriefingExportFile,
     downloadKnowledgeSourceRequest,
     fetchChatMessagesRequest,
     fetchKnowledgeCollectionSources,
@@ -40,7 +37,8 @@
   import { generateClientId } from "@/lib/ids";
   import CollectionSettingsModal from "@/features/app/components/CollectionSettingsModal.vue";
   import CreateCollectionModal from "@/features/app/components/CreateCollectionModal.vue";
-  import BriefingOpinionModal from "@/features/app/components/BriefingOpinionModal.vue";
+  import ExportTaskDetailModal from "@/features/app/components/ExportTaskDetailModal.vue";
+  import ExportTemplateModal from "@/features/app/components/ExportTemplateModal.vue";
   import ImportSourcesModal from "@/features/app/components/ImportSourcesModal.vue";
   import SourceEditorModal from "@/features/app/components/SourceEditorModal.vue";
   import WorkspaceChatPane from "@/features/app/components/WorkspaceChatPane.vue";
@@ -68,6 +66,7 @@
   const loadingSessions = ref(true);
   const loadingMessages = ref(false);
   const loadingSources = ref(false);
+  const bootstrappingWorkspace = ref(true);
   const replying = ref(false);
   const creatingCollection = ref(false);
   const savingCollection = ref(false);
@@ -80,7 +79,6 @@
   const selectedAssistantMessageId = ref("");
   const suspendedMessageLoadSessionId = ref("");
   const showCreateCollection = ref(false);
-  const showBriefingModal = ref(false);
   const showImportModal = ref(false);
   const showSourceEditorModal = ref(false);
   const showCollectionSettingsModal = ref(false);
@@ -197,52 +195,34 @@
     return tags.length > 0 ? [...new Set(tags)] : undefined;
   }
 
-  function getBriefingExportSummary(
-    source: KnowledgeSource,
-    form: BriefingForm,
-  ) {
-    return (
-      form.briefingOpinion.trim() ||
-      briefing.value?.summary ||
-      `${source.title} 拟办意见`
-    );
-  }
-
-  function downloadBriefingRecord(item: BriefingExport) {
-    downloadBriefingExportFile(item);
-  }
-
-  async function openExportPanelForSource(source: KnowledgeSource) {
-    await replaceWorkspaceQuery({
-      group: source.collectionId,
-      source: source.id,
-      panel: "exports",
-    });
-  }
-
   const {
-    briefing,
-    briefingHistory,
-    createExportTask,
-    exportBriefing,
+    closeExportTaskDetailModal,
+    closeExportTemplateModal,
+    creatingExportTask,
     exportTasks,
     exportTemplates,
-    loadBriefing,
     loadExportTasks,
     loadExportTemplates,
-    loadingBriefing,
+    loadingExportTaskDetail,
     loadingExportTasks,
-    openBriefing,
-    openExportPanelForSource: openExportPanelForSourceAndLoad,
-    refreshBriefing,
-    resetBriefingState,
-    savingBriefing,
+    openExportTaskDetail,
+    openExportTemplateModal,
+    saveExportTask,
+    savingExportTask,
+    selectedExportSource,
+    selectedTaskDetail,
+    showExportTaskDetailModal,
+    showExportTemplateModal,
+    stopExportTaskPolling,
+    submitExportTask,
   } = useWorkspaceExports({
-    getBriefingExportSummary,
     onError: (message) => {
       error.value = message;
     },
-    onOpenExportsForSource: openExportPanelForSource,
+    onOpenExportsPanel: () =>
+      replaceWorkspaceQuery({
+        panel: "exports",
+      }),
     onSuccess: (message) => {
       showToast(message);
     },
@@ -866,11 +846,6 @@
         });
       }
 
-      if (selectedSource.value?.id === source.id) {
-        resetBriefingState();
-        showBriefingModal.value = false;
-      }
-
       showSourceEditorModal.value = false;
       showToast("资料已删除");
     } catch (cause) {
@@ -922,35 +897,76 @@
     showSourceEditorModal.value = true;
   }
 
-  async function handleOpenExportPanel(source: KnowledgeSource) {
-    await openExportPanelForSourceAndLoad(source);
+  function handleOpenExportModal(source: KnowledgeSource) {
+    openExportTemplateModal(source);
   }
 
-  async function handleOpenBriefing(source: KnowledgeSource) {
-    await openBriefing(source);
-    await loadBriefing(source.id);
-    showBriefingModal.value = true;
+  async function handleOpenExportTaskDetail(taskId: string) {
+    await openExportTaskDetail(taskId);
   }
 
-  async function handleRefreshBriefing() {
-    await refreshBriefing(selectedSource.value);
-  }
+  function handleDownloadExportResult() {
+    const downloadUrl = selectedTaskDetail.value?.exportFile?.downloadUrl;
 
-  async function handleExportBriefing(payload: {
-    citations: BriefingExport["citations"];
-    form: BriefingForm;
-  }) {
-    const exported = await exportBriefing({
-      ...payload,
-      source: selectedSource.value,
-    });
-
-    if (!exported) {
+    if (!downloadUrl) {
       return;
     }
 
-    downloadBriefingRecord(exported);
-    showBriefingModal.value = false;
+    window.open(downloadUrl, "_blank", "noopener,noreferrer");
+  }
+
+  async function restoreWorkspaceState() {
+    bootstrappingWorkspace.value = true;
+
+    try {
+      await initializeAuthSession();
+      await Promise.all([loadCollections(), loadExportTemplates()]);
+
+      const resolvedCollectionId =
+        activeCollectionId.value || collections.value[0]?.id || "";
+
+      if (!resolvedCollectionId) {
+        sources.value = [];
+        sessions.value = [];
+        messages.value = [];
+        return;
+      }
+
+      if (resolvedCollectionId !== activeCollectionId.value) {
+        await replaceWorkspaceQuery({
+          group: resolvedCollectionId,
+          panel: panel.value,
+        });
+      }
+
+      await Promise.all([
+        loadSources(resolvedCollectionId),
+        loadSessions(resolvedCollectionId),
+      ]);
+
+      const resolvedSessionId = sessions.value.some(
+        (item) => item.id === activeSessionId.value,
+      )
+        ? activeSessionId.value
+        : sessions.value[0]?.id || "";
+
+      if (resolvedSessionId && resolvedSessionId !== activeSessionId.value) {
+        suspendedMessageLoadSessionId.value = resolvedSessionId;
+        await replaceWorkspaceQuery({
+          session: resolvedSessionId,
+        });
+      }
+
+      if (resolvedSessionId) {
+        await loadMessages(resolvedSessionId);
+      }
+
+      if (panel.value === "exports") {
+        await loadExportTasks();
+      }
+    } finally {
+      bootstrappingWorkspace.value = false;
+    }
   }
 
   async function logoutCurrentUser() {
@@ -959,6 +975,10 @@
   }
 
   watch(activeCollectionId, (value, previousValue) => {
+    if (bootstrappingWorkspace.value) {
+      return;
+    }
+
     if (value === previousValue) {
       return;
     }
@@ -975,6 +995,10 @@
   });
 
   watch(activeSessionId, (value) => {
+    if (bootstrappingWorkspace.value) {
+      return;
+    }
+
     if (value && value === suspendedMessageLoadSessionId.value) {
       suspendedMessageLoadSessionId.value = "";
       return;
@@ -984,13 +1008,18 @@
   });
 
   watch(
-    [panel, routeSourceId],
-    ([nextPanel, nextSourceId]) => {
-      if (nextPanel !== "exports") {
+    panel,
+    (nextPanel) => {
+      if (bootstrappingWorkspace.value) {
         return;
       }
 
-      void loadExportTasks(nextSourceId || undefined);
+      if (nextPanel !== "exports") {
+        stopExportTaskPolling();
+        return;
+      }
+
+      void loadExportTasks();
     },
     {
       immediate: true,
@@ -998,22 +1027,7 @@
   );
 
   onMounted(async () => {
-    await initializeAuthSession();
-    await Promise.all([loadCollections(), loadExportTemplates()]);
-
-    if (activeCollectionId.value) {
-      await Promise.all([
-        loadSources(activeCollectionId.value),
-        loadSessions(activeCollectionId.value),
-      ]);
-    }
-
-    if (
-      activeSessionId.value &&
-      sessions.value.some((item) => item.id === activeSessionId.value)
-    ) {
-      await loadMessages(activeSessionId.value);
-    }
+    await restoreWorkspaceState();
   });
 </script>
 
@@ -1052,17 +1066,14 @@
     <WorkspaceContextPane
       :active-collection="activeCollection"
       :export-tasks="exportTasks"
-      :export-templates="exportTemplates"
       :filtered-sources="filteredSources"
       :loading-export-tasks="loadingExportTasks"
       :loading-sources="loadingSources"
       :panel="panel"
-      :selected-source="selectedSource"
       :source-action-id="sourceActionId"
       :source-filter="sourceFilter"
-      @open-export-panel="handleOpenExportPanel"
-      @open-briefing="handleOpenBriefing"
-      @create-export-task="createExportTask($event.source, $event.templateId)"
+      @open-export-modal="handleOpenExportModal"
+      @open-task-detail="handleOpenExportTaskDetail"
       @delete-source="deleteSource"
       @download-source="downloadSource"
       @edit-source="openSource"
@@ -1086,16 +1097,21 @@
     @submit:text="submitTextImport"
   />
 
-  <BriefingOpinionModal
-    v-model:open="showBriefingModal"
-    :briefing="briefing"
-    :history="briefingHistory"
-    :loading="loadingBriefing"
-    :pending="savingBriefing"
-    :source="selectedSource"
-    @download-history="downloadBriefingRecord"
-    @refresh="handleRefreshBriefing"
-    @submit="handleExportBriefing"
+  <ExportTemplateModal
+    v-model:open="showExportTemplateModal"
+    :pending="creatingExportTask"
+    :source="selectedExportSource"
+    :templates="exportTemplates"
+    @submit="submitExportTask"
+  />
+
+  <ExportTaskDetailModal
+    v-model:open="showExportTaskDetailModal"
+    :loading="loadingExportTaskDetail"
+    :pending="savingExportTask"
+    :task="selectedTaskDetail"
+    @download="handleDownloadExportResult"
+    @submit="saveExportTask"
   />
 
   <SourceEditorModal

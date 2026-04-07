@@ -13,7 +13,14 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "bun --env-file=.env run api:start",
+      command: "bash ./scripts/start-admin-e2e.sh",
+      url: "http://127.0.0.1:8000/",
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+    {
+      command:
+        "KNOWLEDGE_TEMPLATE_EXPORT_USE_MODEL=false bun --env-file=.env run api:start",
       url: `http://127.0.0.1:${apiPort}/api/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

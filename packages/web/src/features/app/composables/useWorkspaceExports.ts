@@ -1,52 +1,111 @@
 import type {
-  BriefingExport,
-  BriefingForm,
   KnowledgeExportTask,
+  KnowledgeExportTaskDetail,
+  KnowledgeExportTaskParameters,
   KnowledgeSource,
   KnowledgeTemplateSummary,
 } from "@atlas-kb/schema";
-import { ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import {
-  createBriefingExportRequest,
   createKnowledgeExportTaskRequest,
-  fetchBriefingOpinionRequest,
+  fetchKnowledgeExportTaskRequest,
   listKnowledgeExportTasksRequest,
   listKnowledgeTemplatesRequest,
+  updateKnowledgeExportTaskRequest,
 } from "@/lib/api-client";
 
+const EXPORT_POLL_INTERVAL_MS = 4_000;
+
+function isTaskInProgress(task: KnowledgeExportTask): boolean {
+  return task.status === "pending" || task.status === "processing";
+}
+
 export function useWorkspaceExports(args: {
-  getBriefingExportSummary: (
-    source: KnowledgeSource,
-    form: BriefingForm,
-  ) => string;
   onError: (message: string) => void;
-  onOpenExportsForSource: (source: KnowledgeSource) => Promise<void>;
+  onOpenExportsPanel: () => Promise<void>;
   onSuccess: (message: string) => void;
 }) {
-  const briefing = ref<
-    Awaited<ReturnType<typeof fetchBriefingOpinionRequest>>["briefing"] | null
-  >(null);
-  const briefingHistory = ref<BriefingExport[]>([]);
   const exportTasks = ref<KnowledgeExportTask[]>([]);
   const exportTemplates = ref<KnowledgeTemplateSummary[]>([]);
-  const loadingBriefing = ref(false);
+  const selectedExportSource = ref<KnowledgeSource | null>(null);
+  const selectedTaskDetail = ref<KnowledgeExportTaskDetail | null>(null);
+  const loadingExportTaskDetail = ref(false);
   const loadingExportTasks = ref(false);
-  const savingBriefing = ref(false);
+  const savingExportTask = ref(false);
+  const showExportTaskDetailModal = ref(false);
+  const showExportTemplateModal = ref(false);
+  const creatingExportTask = ref(false);
 
-  async function loadBriefing(sourceId: string) {
-    loadingBriefing.value = true;
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+  const inProgressTaskIds = computed(() =>
+    exportTasks.value.filter(isTaskInProgress).map((task) => task.id),
+  );
+
+  function stopExportTaskPolling() {
+    if (!pollTimer) {
+      return;
+    }
+
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
+  function upsertTaskSummary(task: KnowledgeExportTask) {
+    const currentTasks = [...exportTasks.value];
+    const index = currentTasks.findIndex((item) => item.id === task.id);
+
+    if (index >= 0) {
+      currentTasks[index] = task;
+    } else {
+      currentTasks.unshift(task);
+    }
+
+    exportTasks.value = currentTasks.sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt),
+    );
+  }
+
+  async function pollInProgressTasks() {
+    const ids = inProgressTaskIds.value;
+
+    if (ids.length === 0) {
+      stopExportTaskPolling();
+      return;
+    }
 
     try {
-      const data = await fetchBriefingOpinionRequest(sourceId);
-      briefing.value = data.briefing;
-      briefingHistory.value = data.history;
+      const details = await Promise.all(
+        ids.map((taskId) => fetchKnowledgeExportTaskRequest(taskId)),
+      );
+
+      for (const detail of details) {
+        upsertTaskSummary(detail.task);
+
+        if (selectedTaskDetail.value?.id === detail.task.id) {
+          selectedTaskDetail.value = detail.task;
+        }
+      }
     } catch (cause) {
-      briefing.value = null;
-      briefingHistory.value = [];
-      args.onError(cause instanceof Error ? cause.message : "拟办意见生成失败");
-    } finally {
-      loadingBriefing.value = false;
+      stopExportTaskPolling();
+      args.onError(
+        cause instanceof Error ? cause.message : "导出任务状态刷新失败",
+      );
     }
+  }
+
+  function ensureExportTaskPolling() {
+    if (inProgressTaskIds.value.length === 0 || pollTimer) {
+      if (inProgressTaskIds.value.length === 0) {
+        stopExportTaskPolling();
+      }
+
+      return;
+    }
+
+    pollTimer = setInterval(() => {
+      void pollInProgressTasks();
+    }, EXPORT_POLL_INTERVAL_MS);
   }
 
   async function loadExportTemplates() {
@@ -55,123 +114,134 @@ export function useWorkspaceExports(args: {
       exportTemplates.value = data.templates;
     } catch (cause) {
       exportTemplates.value = [];
-      args.onError(cause instanceof Error ? cause.message : "导出模版加载失败");
+      args.onError(cause instanceof Error ? cause.message : "导出模板加载失败");
     }
   }
 
-  async function loadExportTasks(sourceId?: string) {
+  async function loadExportTasks() {
     loadingExportTasks.value = true;
 
     try {
-      const data = await listKnowledgeExportTasksRequest({
-        sourceId,
-      });
+      const data = await listKnowledgeExportTasksRequest();
       exportTasks.value = data.tasks;
+      ensureExportTaskPolling();
     } catch (cause) {
       exportTasks.value = [];
+      stopExportTaskPolling();
       args.onError(cause instanceof Error ? cause.message : "导出任务加载失败");
     } finally {
       loadingExportTasks.value = false;
     }
   }
 
-  async function openExportPanelForSource(source: KnowledgeSource) {
-    await args.onOpenExportsForSource(source);
-    await loadExportTasks(source.id);
+  function openExportTemplateModal(source: KnowledgeSource) {
+    selectedExportSource.value = source;
+    showExportTemplateModal.value = true;
   }
 
-  async function createExportTask(
-    source: KnowledgeSource,
-    templateId?: string,
-  ) {
+  function closeExportTemplateModal() {
+    showExportTemplateModal.value = false;
+  }
+
+  async function submitExportTask(templateId: string) {
+    if (!selectedExportSource.value) {
+      return;
+    }
+
+    creatingExportTask.value = true;
+
     try {
-      await createKnowledgeExportTaskRequest({
-        sourceId: source.id,
+      const data = await createKnowledgeExportTaskRequest({
+        sourceId: selectedExportSource.value.id,
         body: {
-          taskType: templateId ? undefined : "briefing",
           templateId,
         },
       });
-      await openExportPanelForSource(source);
+
+      upsertTaskSummary(data.task);
+      closeExportTemplateModal();
+      await args.onOpenExportsPanel();
+      await loadExportTasks();
+      ensureExportTaskPolling();
       args.onSuccess("导出任务已提交");
     } catch (cause) {
       args.onError(cause instanceof Error ? cause.message : "导出任务提交失败");
+    } finally {
+      creatingExportTask.value = false;
     }
   }
 
-  async function openBriefing(source: KnowledgeSource) {
-    if (source.status !== "ready") {
-      args.onError("当前资料尚未处理完成，暂时无法生成拟办意见");
-      return;
-    }
-
-    await openExportPanelForSource(source);
-  }
-
-  async function refreshBriefing(source: KnowledgeSource | null) {
-    if (!source) {
-      return;
-    }
-
-    await loadBriefing(source.id);
-  }
-
-  async function exportBriefing(argsForExport: {
-    citations: BriefingExport["citations"];
-    form: BriefingForm;
-    source: KnowledgeSource | null;
-  }) {
-    if (!argsForExport.source) {
-      return;
-    }
-
-    savingBriefing.value = true;
+  async function openExportTaskDetail(taskId: string) {
+    loadingExportTaskDetail.value = true;
+    showExportTaskDetailModal.value = true;
 
     try {
-      const data = await createBriefingExportRequest({
-        sourceId: argsForExport.source.id,
+      const data = await fetchKnowledgeExportTaskRequest(taskId);
+      selectedTaskDetail.value = data.task;
+      upsertTaskSummary(data.task);
+      ensureExportTaskPolling();
+    } catch (cause) {
+      selectedTaskDetail.value = null;
+      args.onError(
+        cause instanceof Error ? cause.message : "导出任务详情加载失败",
+      );
+    } finally {
+      loadingExportTaskDetail.value = false;
+    }
+  }
+
+  function closeExportTaskDetailModal() {
+    showExportTaskDetailModal.value = false;
+  }
+
+  async function saveExportTask(parameters: KnowledgeExportTaskParameters) {
+    if (!selectedTaskDetail.value) {
+      return;
+    }
+
+    savingExportTask.value = true;
+
+    try {
+      const data = await updateKnowledgeExportTaskRequest({
+        taskId: selectedTaskDetail.value.id,
         body: {
-          summary: args.getBriefingExportSummary(
-            argsForExport.source,
-            argsForExport.form,
-          ),
-          form: argsForExport.form,
-          citations: argsForExport.citations,
+          parameters,
         },
       });
 
-      briefingHistory.value = [data.export, ...briefingHistory.value];
-      args.onSuccess("拟办意见已导出");
-      return data.export;
+      selectedTaskDetail.value = data.task;
+      upsertTaskSummary(data.task);
+      args.onSuccess("导出任务已保存");
     } catch (cause) {
-      args.onError(cause instanceof Error ? cause.message : "导出拟办意见失败");
-      return undefined;
+      args.onError(cause instanceof Error ? cause.message : "导出任务保存失败");
     } finally {
-      savingBriefing.value = false;
+      savingExportTask.value = false;
     }
   }
 
-  function resetBriefingState() {
-    briefing.value = null;
-    briefingHistory.value = [];
-  }
+  onBeforeUnmount(() => {
+    stopExportTaskPolling();
+  });
 
   return {
-    briefing,
-    briefingHistory,
-    createExportTask,
-    exportBriefing,
+    creatingExportTask,
     exportTasks,
     exportTemplates,
-    loadBriefing,
     loadExportTasks,
     loadExportTemplates,
-    loadingBriefing,
+    loadingExportTaskDetail,
     loadingExportTasks,
-    openBriefing,
-    openExportPanelForSource,
-    refreshBriefing,
-    resetBriefingState,
-    savingBriefing,
+    openExportTaskDetail,
+    openExportTemplateModal,
+    saveExportTask,
+    selectedExportSource,
+    selectedTaskDetail,
+    showExportTaskDetailModal,
+    showExportTemplateModal,
+    stopExportTaskPolling,
+    submitExportTask,
+    closeExportTaskDetailModal,
+    closeExportTemplateModal,
+    savingExportTask,
   };
 }

@@ -4,10 +4,10 @@ import {
   createKnowledgeExportTaskInAdmin,
   deleteKnowledgeCollection,
   deleteKnowledgeSource,
-  generateBriefingOpinion,
   generateKnowledgeTemplateExportPayload,
   getKnowledgeCollectionData,
   getKnowledgeCollectionSourcesData,
+  getKnowledgeExportTaskDetailFromAdmin,
   getKnowledgeSourceData,
   getKnowledgeSourceDownloadUrl,
   getKnowledgeTemplateDetailFromAdmin,
@@ -18,6 +18,7 @@ import {
   listKnowledgeTemplatesFromAdmin,
   requireKnowledgeCollection,
   searchKnowledge,
+  updateKnowledgeExportTaskInAdmin,
   updateKnowledgeCollection,
   updateKnowledgeSource,
   getInternalSecret,
@@ -26,16 +27,18 @@ import { BadRequestError, UnauthorizedError } from "@atlas-kb/errors";
 import {
   AskKnowledgeRequestSchema,
   AskKnowledgeResponseSchema,
-  BriefingOpinionResponseSchema,
   KnowledgeCollectionCreateRequestSchema,
   KnowledgeCollectionIdParamsSchema,
   KnowledgeCollectionResponseSchema,
   KnowledgeCollectionsResponseSchema,
   KnowledgeCollectionUpdateRequestSchema,
   KnowledgeExportTaskCreateRequestSchema,
+  KnowledgeExportTaskDetailResponseSchema,
   KnowledgeExportTaskGenerateRequestSchema,
   KnowledgeExportTaskGenerateResponseSchema,
+  KnowledgeExportTaskIdParamsSchema,
   KnowledgeExportTaskResponseSchema,
+  KnowledgeExportTaskUpdateRequestSchema,
   KnowledgeExportTasksQuerySchema,
   KnowledgeExportTasksResponseSchema,
   KnowledgeImportResponseSchema,
@@ -272,6 +275,40 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
       response: KnowledgeExportTasksResponseSchema,
     },
   )
+  .get(
+    "/export-tasks/:taskId",
+    async ({ headers, params }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success({
+        task: await getKnowledgeExportTaskDetailFromAdmin({
+          userId: session.user.id,
+          taskId: params.taskId,
+        }),
+      });
+    },
+    {
+      params: KnowledgeExportTaskIdParamsSchema,
+      response: KnowledgeExportTaskDetailResponseSchema,
+    },
+  )
+  .patch(
+    "/export-tasks/:taskId",
+    async ({ body, headers, params }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success({
+        task: await updateKnowledgeExportTaskInAdmin({
+          userId: session.user.id,
+          taskId: params.taskId,
+          input: body,
+        }),
+      });
+    },
+    {
+      body: KnowledgeExportTaskUpdateRequestSchema,
+      params: KnowledgeExportTaskIdParamsSchema,
+      response: KnowledgeExportTaskDetailResponseSchema,
+    },
+  )
   .post(
     "/sources/:sourceId/export-tasks",
     async ({ body, headers, params }) => {
@@ -280,7 +317,6 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
         task: await createKnowledgeExportTaskInAdmin({
           userId: session.user.id,
           sourceId: params.sourceId,
-          taskType: body.taskType,
           templateId: body.templateId,
         }),
       });
@@ -343,23 +379,7 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
       params: KnowledgeSourceIdParamsSchema,
     },
   )
-  .get(
-    "/sources/:sourceId/briefing",
-    async ({ params, headers }) => {
-      const session = await requireAuthenticatedSession(headers.authorization);
-      return success(
-        await generateBriefingOpinion({
-          userId: session.user.id,
-          sourceId: params.sourceId,
-        }),
-      );
-    },
-    {
-      params: KnowledgeSourceIdParamsSchema,
-      response: BriefingOpinionResponseSchema,
-    },
-  )
-  .get(
+  .post(
     "/internal/template-export-tasks/generate",
     async ({ body, headers }) => {
       requireInternalSecret(headers);

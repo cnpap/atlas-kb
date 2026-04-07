@@ -1,5 +1,6 @@
 type SourceType = "file" | "text" | "seed";
 type SourceStatus = "ready" | "processing" | "failed" | "archived";
+type ExportTaskStatus = "completed" | "failed" | "pending" | "processing";
 export type KnowledgeFileKind =
   | "generic"
   | "pdf"
@@ -128,6 +129,34 @@ export function getSourceStatusTone(
   status: SourceStatus,
 ): "ready" | "processing" | "failed" | "archived" {
   return status;
+}
+
+export function getExportTaskStatusLabel(status: ExportTaskStatus): string {
+  switch (status) {
+    case "pending":
+      return "待处理";
+    case "processing":
+      return "导出中";
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "失败";
+    default:
+      return "未知";
+  }
+}
+
+export function getExportTaskStatusTone(
+  status: ExportTaskStatus,
+): "ready" | "processing" | "failed" {
+  switch (status) {
+    case "completed":
+      return "ready";
+    case "failed":
+      return "failed";
+    default:
+      return "processing";
+  }
 }
 
 function getFileExtension(filename?: string, mimeType?: string): string {

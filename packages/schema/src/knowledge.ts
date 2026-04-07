@@ -80,6 +80,10 @@ export const KnowledgeTemplateIdParamsSchema = z.object({
   templateId: z.string().trim().min(1),
 });
 
+export const KnowledgeExportTaskIdParamsSchema = z.object({
+  taskId: z.string().trim().min(1),
+});
+
 export const ChatSessionIdParamsSchema = z.object({
   sessionId: z.string().trim().min(1),
 });
@@ -517,6 +521,11 @@ export const KnowledgeTemplateExportFileSchema = z.object({
   createdAt: TimestampSchema,
 });
 
+export const KnowledgeExportTaskParametersSchema = z.record(
+  z.string(),
+  z.string(),
+);
+
 export const KnowledgeExportTaskSchema = z.object({
   id: z.string().trim().min(1),
   ownerUserId: z.string().trim().min(1),
@@ -526,21 +535,23 @@ export const KnowledgeExportTaskSchema = z.object({
   templateId: z.string().trim().min(1),
   templateName: z.string().trim().min(1),
   status: KnowledgeExportTaskStatusSchema,
-  failureMessage: z.string().trim().min(1).optional(),
+  failureMessage: z.string().trim().min(1).nullable().optional(),
   exportFile: KnowledgeTemplateExportFileSchema.optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
-  startedAt: TimestampSchema.optional(),
-  completedAt: TimestampSchema.optional(),
-  failedAt: TimestampSchema.optional(),
+  startedAt: TimestampSchema.nullable().optional(),
+  completedAt: TimestampSchema.nullable().optional(),
+  failedAt: TimestampSchema.nullable().optional(),
 });
 
 export const KnowledgeExportTaskCreateRequestSchema = z.object({
-  taskType: z.string().trim().min(1).optional(),
-  templateId: z.string().trim().min(1).optional(),
+  templateId: z.string().trim().min(1),
 });
 export const KnowledgeExportTasksQuerySchema = z.object({
   sourceId: z.string().trim().min(1).optional(),
+});
+export const KnowledgeExportTaskUpdateRequestSchema = z.object({
+  parameters: KnowledgeExportTaskParametersSchema,
 });
 export const KnowledgeExportTaskGenerateRequestSchema = z.object({
   userId: z.string().trim().min(1),
@@ -578,6 +589,16 @@ export const KnowledgeExportTasksDataSchema = z.object({
 export const KnowledgeExportTaskDataSchema = z.object({
   task: KnowledgeExportTaskSchema,
 });
+export const KnowledgeExportTaskDetailSchema = KnowledgeExportTaskSchema.extend(
+  {
+    template: KnowledgeTemplateDetailSchema,
+    parameters: KnowledgeExportTaskParametersSchema,
+    canEdit: z.boolean(),
+  },
+);
+export const KnowledgeExportTaskDetailDataSchema = z.object({
+  task: KnowledgeExportTaskDetailSchema,
+});
 export const KnowledgeExportTaskGenerateDataSchema = z.object({
   result: KnowledgeExportTaskGenerateResultSchema,
 });
@@ -608,6 +629,8 @@ export const KnowledgeExportTasksResponseSchema =
 export const KnowledgeExportTaskResponseSchema = createApiSuccessResponseSchema(
   KnowledgeExportTaskDataSchema,
 );
+export const KnowledgeExportTaskDetailResponseSchema =
+  createApiSuccessResponseSchema(KnowledgeExportTaskDetailDataSchema);
 export const KnowledgeExportTaskGenerateResponseSchema =
   createApiSuccessResponseSchema(KnowledgeExportTaskGenerateDataSchema);
 export const AskKnowledgeResponseSchema = createApiSuccessResponseSchema(
@@ -709,6 +732,9 @@ export type KnowledgeTemplateLibrary = z.infer<
 export type KnowledgeTemplateDetail = z.infer<
   typeof KnowledgeTemplateDetailSchema
 >;
+export type KnowledgeExportTaskParameters = z.infer<
+  typeof KnowledgeExportTaskParametersSchema
+>;
 export type KnowledgeExportTaskStatus = z.infer<
   typeof KnowledgeExportTaskStatusSchema
 >;
@@ -716,6 +742,9 @@ export type KnowledgeTemplateExportFile = z.infer<
   typeof KnowledgeTemplateExportFileSchema
 >;
 export type KnowledgeExportTask = z.infer<typeof KnowledgeExportTaskSchema>;
+export type KnowledgeExportTaskDetail = z.infer<
+  typeof KnowledgeExportTaskDetailSchema
+>;
 export type KnowledgeExportTasksQuery = z.infer<
   typeof KnowledgeExportTasksQuerySchema
 >;
@@ -732,11 +761,17 @@ export type KnowledgeExportTasksData = z.infer<
 export type KnowledgeExportTaskData = z.infer<
   typeof KnowledgeExportTaskDataSchema
 >;
+export type KnowledgeExportTaskDetailData = z.infer<
+  typeof KnowledgeExportTaskDetailDataSchema
+>;
 export type BriefingExportCreateRequest = z.infer<
   typeof BriefingExportCreateRequestSchema
 >;
 export type KnowledgeExportTaskCreateRequest = z.infer<
   typeof KnowledgeExportTaskCreateRequestSchema
+>;
+export type KnowledgeExportTaskUpdateRequest = z.infer<
+  typeof KnowledgeExportTaskUpdateRequestSchema
 >;
 export type KnowledgeExportTaskGenerateRequest = z.infer<
   typeof KnowledgeExportTaskGenerateRequestSchema

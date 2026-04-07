@@ -71,9 +71,11 @@ export {
 } from "./object-storage";
 export {
   createKnowledgeExportTaskInAdmin,
+  getKnowledgeExportTaskDetailFromAdmin,
   getKnowledgeTemplateDetailFromAdmin,
   listKnowledgeExportTasksFromAdmin,
   listKnowledgeTemplatesFromAdmin,
+  updateKnowledgeExportTaskInAdmin,
 } from "./admin-client";
 export {
   allocateManagedSourceFileName,

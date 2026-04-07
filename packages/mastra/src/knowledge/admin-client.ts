@@ -1,5 +1,7 @@
 import type {
   KnowledgeExportTask,
+  KnowledgeExportTaskDetail,
+  KnowledgeExportTaskUpdateRequest,
   KnowledgeTemplateDetail,
   KnowledgeTemplateSummary,
 } from "@atlas-kb/schema";
@@ -86,8 +88,7 @@ export async function listKnowledgeExportTasksFromAdmin(args: {
 
 export async function createKnowledgeExportTaskInAdmin(args: {
   sourceId: string;
-  taskType?: string;
-  templateId?: string;
+  templateId: string;
   userId: string;
 }): Promise<KnowledgeExportTask> {
   const payload = await requestAdminInternal<{ data: KnowledgeExportTask }>(
@@ -97,8 +98,41 @@ export async function createKnowledgeExportTaskInAdmin(args: {
       body: JSON.stringify({
         user_id: args.userId,
         source_id: args.sourceId,
-        task_type: args.taskType,
         template_id: args.templateId,
+      }),
+    },
+  );
+
+  return payload.data;
+}
+
+export async function getKnowledgeExportTaskDetailFromAdmin(args: {
+  taskId: string;
+  userId: string;
+}): Promise<KnowledgeExportTaskDetail> {
+  const payload = await requestAdminInternal<{
+    data: KnowledgeExportTaskDetail;
+  }>(
+    `/api/internal/knowledge-template-export-tasks/${encodeURIComponent(args.taskId)}?user_id=${encodeURIComponent(args.userId)}`,
+  );
+
+  return payload.data;
+}
+
+export async function updateKnowledgeExportTaskInAdmin(args: {
+  input: KnowledgeExportTaskUpdateRequest;
+  taskId: string;
+  userId: string;
+}): Promise<KnowledgeExportTaskDetail> {
+  const payload = await requestAdminInternal<{
+    data: KnowledgeExportTaskDetail;
+  }>(
+    `/api/internal/knowledge-template-export-tasks/${encodeURIComponent(args.taskId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        user_id: args.userId,
+        parameters: args.input.parameters,
       }),
     },
   );

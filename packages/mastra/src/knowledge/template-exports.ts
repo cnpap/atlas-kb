@@ -17,6 +17,16 @@ type OpenAIChatCompletionResponse = {
   }>;
 };
 
+function shouldUseTemplateExportModel(): boolean {
+  const value = process.env.KNOWLEDGE_TEMPLATE_EXPORT_USE_MODEL?.trim();
+
+  if (!value) {
+    return true;
+  }
+
+  return !["0", "false", "off"].includes(value.toLowerCase());
+}
+
 function normalizeFieldValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -93,6 +103,10 @@ async function generateWithModel(args: {
   source: Awaited<ReturnType<typeof requireKnowledgeSource>>;
   template: KnowledgeTemplateDetail;
 }): Promise<Record<string, string> | undefined> {
+  if (!shouldUseTemplateExportModel()) {
+    return undefined;
+  }
+
   const apiKey = getOpenAIApiKey();
 
   if (!apiKey) {
