@@ -13,6 +13,7 @@
     "dev": "mastra dev",
     "start": "mastra start",
     "build": "mastra build",
+    "db:codegen": "kysely-codegen --env-file ../../.env --url 'env(DATABASE_URL)' --dialect postgres --out-file src/knowledge/db.generated.ts",
     "fixtures:import": "bun run src/scripts/import-department-fixtures.ts",
     "agent:smoke": "bun run src/scripts/run-department-agent-smoke.ts"
   },
@@ -28,6 +29,11 @@
     "@mastra/qdrant": "^1.0.2",
     "@mastra/s3": "^0.3.0",
     "ai": "*",
+    "kysely": "^0.28.15",
+    "kysely-postgres-js": "^3.0.0",
     "postgres": "^3.4.8"
+  },
+  "devDependencies": {
+    "kysely-codegen": "^0.20.0"
   }
 }

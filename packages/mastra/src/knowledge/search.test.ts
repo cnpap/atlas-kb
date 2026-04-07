@@ -141,6 +141,11 @@ function buildResponsesToolCall(args: {
       },
     ],
     output_text: "",
+    usage: {
+      input_tokens: 32,
+      output_tokens: 12,
+      total_tokens: 44,
+    },
   });
 }
 
@@ -476,6 +481,11 @@ function mockProviders() {
           },
         ],
         output_text: answer,
+        usage: {
+          input_tokens: 48,
+          output_tokens: 24,
+          total_tokens: 72,
+        },
       });
     }
 

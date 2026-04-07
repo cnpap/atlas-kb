@@ -20,6 +20,7 @@
     "mastra:dev": "bun --env-file=.env run --filter @atlas-kb/mastra dev",
     "mastra:start": "bun --env-file=.env run --filter @atlas-kb/mastra start",
     "mastra:build": "bun run --filter @atlas-kb/mastra build",
+    "mastra:db:codegen": "bun --env-file=.env run --filter @atlas-kb/mastra db:codegen",
     "dev": "bun --env-file=.env run --parallel --filter @atlas-kb/api --filter @atlas-kb/web dev",
     "dev:local": "bun run compose:up && bun run dev",
     "start": "bun run api:start",

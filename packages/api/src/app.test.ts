@@ -180,6 +180,56 @@ function mockProviders() {
       });
     }
 
+    if (url.includes("/api/internal/knowledge-templates?")) {
+      return jsonResponse({
+        data: [
+          {
+            id: "template-1",
+            name: "拟办意见",
+            templateType: "xlsx",
+            sourceFilename: "文件阅办单.xlsx",
+            fieldCount: 5,
+            referenceLibraryCount: 0,
+            parsedAt: "2026-04-07T15:10:24.000Z",
+            updatedAt: "2026-04-07T15:10:24.000Z",
+          },
+        ],
+      });
+    }
+
+    if (url.includes("/api/internal/knowledge-templates/")) {
+      return jsonResponse({
+        data: {
+          id: "template-1",
+          name: "拟办意见",
+          templateType: "xlsx",
+          sourceFilename: "文件阅办单.xlsx",
+          fieldCount: 5,
+          referenceLibraryCount: 0,
+          parsedAt: "2026-04-07T15:10:24.000Z",
+          updatedAt: "2026-04-07T15:10:24.000Z",
+          systemPrompt: "请提取字段后生成结构化内容。",
+          fields: [
+            {
+              id: "field-1",
+              name: "opinion",
+              label: "拟办意见",
+              description: "",
+              sortOrder: 1,
+              locations: [],
+            },
+          ],
+          referenceLibraries: [],
+        },
+      });
+    }
+
+    if (url.includes("/api/internal/knowledge-template-export-tasks")) {
+      return jsonResponse({
+        data: [],
+      });
+    }
+
     if (body.stream === true) {
       return createSseResponse([
         {
@@ -992,5 +1042,30 @@ describe("@atlas-kb/api knowledge endpoints", () => {
     );
 
     expect(betaSearchResponse.status).toBe(404);
+  });
+
+  it("loads template summaries from admin using the final atlas-kb contract", async () => {
+    const app = createApp();
+    const session = await login(app);
+
+    const response = await app.handle(
+      new Request("http://localhost/api/kb/templates", {
+        headers: authHeaders(session.token),
+      }),
+    );
+    const data = await readJson<{
+      templates: Array<{
+        fieldCount: number;
+        parsedAt?: string;
+        templateType: string;
+        updatedAt: string;
+      }>;
+    }>(response);
+
+    expect(data.templates).toHaveLength(1);
+    expect(data.templates[0]?.templateType).toBe("xlsx");
+    expect(data.templates[0]?.fieldCount).toBe(5);
+    expect(data.templates[0]?.parsedAt).toBe("2026-04-07T15:10:24.000Z");
+    expect(data.templates[0]?.updatedAt).toBe("2026-04-07T15:10:24.000Z");
   });
 });

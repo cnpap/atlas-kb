@@ -4,20 +4,15 @@ import {
   NotFoundError,
 } from "@atlas-kb/errors";
 import type { AuthUser } from "@atlas-kb/schema";
+import type { Selectable } from "kysely";
 import { ensureKnowledgeDatabase } from "./db";
-import { KNOWLEDGE_TABLES } from "./tables";
+import type { Users } from "./db.generated";
 
 const DEFAULT_USERNAME = "admin";
 const DEFAULT_PASSWORD = "atlas-kb-dev";
 const USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{2,63}$/;
 
-type UserRow = {
-  id: number | string;
-  username: string;
-  password: string;
-  created_at: string;
-  updated_at: string;
-};
+type UserRow = Selectable<Users>;
 
 function nowIso() {
   return new Date().toISOString();
@@ -43,28 +38,28 @@ function toAuthUser(row: Pick<UserRow, "id" | "username">): AuthUser {
 }
 
 async function getUserRowById(userId: string): Promise<UserRow | null> {
-  const sql = await ensureKnowledgeDatabase();
-  const [row] = await sql<UserRow[]>`
-    SELECT id, username, password, created_at, updated_at
-    FROM ${sql.unsafe(KNOWLEDGE_TABLES.users)}
-    WHERE id = ${userId}
-      AND username IS NOT NULL
-    LIMIT 1
-  `;
+  const db = await ensureKnowledgeDatabase();
 
-  return row ?? null;
+  return (
+    (await db
+      .selectFrom("users")
+      .select(["id", "username", "password", "created_at", "updated_at"])
+      .where("id", "=", Number(userId))
+      .where("username", "is not", null)
+      .executeTakeFirst()) ?? null
+  );
 }
 
 async function getUserRowByUsername(username: string): Promise<UserRow | null> {
-  const sql = await ensureKnowledgeDatabase();
-  const [row] = await sql<UserRow[]>`
-    SELECT id, username, password, created_at, updated_at
-    FROM ${sql.unsafe(KNOWLEDGE_TABLES.users)}
-    WHERE username = ${normalizeUsername(username)}
-    LIMIT 1
-  `;
+  const db = await ensureKnowledgeDatabase();
 
-  return row ?? null;
+  return (
+    (await db
+      .selectFrom("users")
+      .select(["id", "username", "password", "created_at", "updated_at"])
+      .where("username", "=", normalizeUsername(username))
+      .executeTakeFirst()) ?? null
+  );
 }
 
 export function getDefaultUsername(): string {
@@ -106,7 +101,7 @@ export async function createUser(params: {
   username: string;
   password: string;
 }): Promise<AuthUser> {
-  const sql = await ensureKnowledgeDatabase();
+  const db = await ensureKnowledgeDatabase();
   const username = normalizeUsername(params.username);
   const password = params.password.trim();
 
@@ -124,23 +119,26 @@ export async function createUser(params: {
     updatedAt: nowIso(),
   };
 
-  const [row] = await sql<UserRow[]>`
-    INSERT INTO ${sql.unsafe(KNOWLEDGE_TABLES.users)} (name, username, email, password, created_at, updated_at)
-    VALUES (
-      ${user.username},
-      ${user.username},
-      ${null},
-      ${user.passwordHash},
-      ${user.createdAt},
-      ${user.updatedAt}
+  const row = await db
+    .insertInto("users")
+    .values({
+      name: user.username,
+      username: user.username,
+      email: null,
+      password: user.passwordHash,
+      created_at: user.createdAt,
+      updated_at: user.updatedAt,
+    })
+    .onConflict((oc) =>
+      oc.column("username").doUpdateSet({
+        name: user.username,
+        email: null,
+        password: user.passwordHash,
+        updated_at: user.updatedAt,
+      }),
     )
-    ON CONFLICT (username) DO UPDATE SET
-      name = EXCLUDED.name,
-      email = EXCLUDED.email,
-      password = EXCLUDED.password,
-      updated_at = EXCLUDED.updated_at
-    RETURNING id, username, password, created_at, updated_at
-  `;
+    .returning(["id", "username", "password", "created_at", "updated_at"])
+    .executeTakeFirst();
 
   if (!row) {
     throw new ConflictError(`用户名 "${username}" 保存失败`);

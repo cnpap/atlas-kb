@@ -15,63 +15,35 @@ import type {
   KnowledgeSourceData,
   KnowledgeSourcesData,
 } from "@atlas-kb/schema";
+import { type Selectable, sql } from "kysely";
+import { ensureKnowledgeDatabase, resetKnowledgeDatabase } from "./db";
+import type {
+  KbBriefingExports,
+  KbChatMessages,
+  KbChatSessions,
+  KbCollections,
+  KbSources,
+} from "./db.generated";
+import {
+  getKnowledgeWorkspace,
+  invalidateKnowledgeWorkspace,
+  removeDocumentFromKnowledgeWorkspace,
+} from "./runtime";
 import {
   buildContentPreview,
   buildSummary,
   normalizeWhitespace,
   slugify,
 } from "./search-utils";
-import { ensureKnowledgeDatabase, resetKnowledgeDatabase } from "./db";
-import {
-  getKnowledgeWorkspace,
-  invalidateKnowledgeWorkspace,
-  removeDocumentFromKnowledgeWorkspace,
-} from "./runtime";
 
-type CollectionRow = {
-  id: string;
-  owner_user_id: number | string;
-  name: string;
-  description: string;
-  color: string;
-  icon: string;
-  is_pinned: boolean;
-  created_at: string | Date;
-  updated_at: string | Date;
-  last_activity_at: string | Date;
+type CollectionRow = Selectable<KbCollections> & {
   document_count: number;
-  ready_document_count: number;
-  processing_document_count: number;
   failed_document_count: number;
+  processing_document_count: number;
+  ready_document_count: number;
 };
 
-type SourceRow = {
-  id: string;
-  owner_user_id: number | string;
-  collection_id: string;
-  document_id: string;
-  title: string;
-  summary: string;
-  excerpt: string;
-  content_preview: string;
-  content: string;
-  tags_json: unknown;
-  source_type: KnowledgeSource["sourceType"];
-  status: KnowledgeSource["status"];
-  source_filename: string | null;
-  source_url: string | null;
-  mime_type: string | null;
-  byte_size: number | string | null;
-  latest_version: number;
-  ready_at: string | Date | null;
-  last_processed_at: string | Date | null;
-  snapshot_updated_at: string | Date | null;
-  failure_message: string | null;
-  original_path: string | null;
-  index_path: string;
-  created_at: string | Date;
-  updated_at: string | Date;
-};
+type SourceRow = Selectable<KbSources>;
 
 export type StoredKnowledgeSourceRecord = {
   id: string;
@@ -99,67 +71,62 @@ export type StoredKnowledgeSourceRecord = {
   updatedAt: string;
 };
 
-type ChatSessionRow = {
-  id: string;
-  owner_user_id: number | string;
-  title: string;
-  collection_id: string;
-  preview: string;
-  created_at: string | Date;
-  updated_at: string | Date;
-  last_message_at: string | Date;
-};
+type ChatSessionRow = Selectable<KbChatSessions>;
 
-type ChatMessageRow = {
-  id: string;
-  owner_user_id: number | string;
-  session_id: string;
-  role: ChatMessage["role"];
-  content: string;
-  citations_json: unknown;
-  created_at: string | Date;
+type ChatMessageRow = Selectable<KbChatMessages> & {
+  feedback_created_at: Date | string | null;
   feedback_id: string | null;
-  feedback_rating: ChatMessageFeedback["rating"] | null;
   feedback_note: string | null;
-  feedback_created_at: string | Date | null;
+  feedback_rating: ChatMessageFeedback["rating"] | null;
 };
 
-type BriefingExportRow = {
-  id: string;
-  owner_user_id: number | string;
-  source_id: string;
-  document_id: string;
-  title: string;
-  summary: string;
-  form_json: unknown;
-  citations_json: unknown;
-  created_at: string | Date;
-};
+type BriefingExportRow = Selectable<KbBriefingExports>;
 
-const collectionQuery = `
-  SELECT
-    c.id,
-    c.owner_user_id,
-    c.name,
-    c.description,
-    c.color,
-    c.icon,
-    c.is_pinned,
-    c.created_at,
-    c.updated_at,
-    c.last_activity_at,
-    COUNT(s.id)::int AS document_count,
-    COALESCE(SUM(CASE WHEN s.status = 'ready' THEN 1 ELSE 0 END), 0)::int AS ready_document_count,
-    COALESCE(SUM(CASE WHEN s.status = 'processing' THEN 1 ELSE 0 END), 0)::int AS processing_document_count,
-    COALESCE(SUM(CASE WHEN s.status = 'failed' THEN 1 ELSE 0 END), 0)::int AS failed_document_count
-  FROM kb_collections c
-  LEFT JOIN kb_sources s
-    ON s.collection_id = c.id
-   AND s.owner_user_id = c.owner_user_id
-`;
+const SOURCE_COLUMNS = [
+  "id",
+  "owner_user_id",
+  "collection_id",
+  "document_id",
+  "title",
+  "summary",
+  "excerpt",
+  "content_preview",
+  "content",
+  "tags_json",
+  "source_type",
+  "status",
+  "source_filename",
+  "source_url",
+  "mime_type",
+  "byte_size",
+  "latest_version",
+  "ready_at",
+  "last_processed_at",
+  "snapshot_updated_at",
+  "failure_message",
+  "original_path",
+  "index_path",
+  "created_at",
+  "updated_at",
+] as const;
+
+const CHAT_SESSION_COLUMNS = [
+  "id",
+  "owner_user_id",
+  "title",
+  "collection_id",
+  "preview",
+  "created_at",
+  "updated_at",
+  "last_message_at",
+] as const;
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function toUserId(userId: string): number {
+  return Number.parseInt(userId, 10);
 }
 
 function toIsoTimestamp(value: string | Date): string {
@@ -240,8 +207,8 @@ function toSource(row: SourceRow): KnowledgeSource {
     contentPreview: row.content_preview,
     content: row.content,
     tags: parseJsonArray(row.tags_json),
-    sourceType: row.source_type,
-    status: row.status,
+    sourceType: row.source_type as KnowledgeSource["sourceType"],
+    status: row.status as KnowledgeSource["status"],
     sourceFilename: row.source_filename ?? undefined,
     mimeType: row.mime_type ?? undefined,
     byteSize:
@@ -269,8 +236,8 @@ function toStoredSourceRecord(row: SourceRow): StoredKnowledgeSourceRecord {
     contentPreview: row.content_preview,
     content: row.content,
     tags: parseJsonArray(row.tags_json),
-    sourceType: row.source_type,
-    status: row.status,
+    sourceType: row.source_type as KnowledgeSource["sourceType"],
+    status: row.status as KnowledgeSource["status"],
     sourceFilename: row.source_filename ?? undefined,
     mimeType: row.mime_type ?? undefined,
     byteSize:
@@ -315,7 +282,7 @@ function toChatMessage(row: ChatMessageRow): ChatMessage {
   return {
     id: row.id,
     sessionId: row.session_id,
-    role: row.role,
+    role: row.role as ChatMessage["role"],
     content: row.content,
     citations:
       parseOptionalJson<ChatMessage["citations"]>(row.citations_json) ?? [],
@@ -346,68 +313,140 @@ function toBriefingExport(row: BriefingExportRow): BriefingExport {
 }
 
 async function touchCollection(collectionId: string) {
-  const sql = await ensureKnowledgeDatabase();
-  await sql`
-    UPDATE kb_collections
-    SET last_activity_at = ${nowIso()}, updated_at = ${nowIso()}
-    WHERE id = ${collectionId}
-  `;
+  const db = await ensureKnowledgeDatabase();
+  const now = nowIso();
+
+  await db
+    .updateTable("kb_collections")
+    .set({
+      last_activity_at: now,
+      updated_at: now,
+    })
+    .where("id", "=", collectionId)
+    .execute();
+}
+
+function buildCollectionQuery(userId: string) {
+  return ensureKnowledgeDatabase().then((db) =>
+    db
+      .selectFrom("kb_collections as c")
+      .leftJoin("kb_sources as s", (join) =>
+        join
+          .onRef("s.collection_id", "=", "c.id")
+          .onRef("s.owner_user_id", "=", "c.owner_user_id"),
+      )
+      .select([
+        "c.id as id",
+        "c.owner_user_id as owner_user_id",
+        "c.name as name",
+        "c.description as description",
+        "c.color as color",
+        "c.icon as icon",
+        "c.is_pinned as is_pinned",
+        "c.created_at as created_at",
+        "c.updated_at as updated_at",
+        "c.last_activity_at as last_activity_at",
+      ])
+      .select([
+        sql<number>`cast(count(${sql.ref("s.id")}) as integer)`.as(
+          "document_count",
+        ),
+        sql<number>`cast(count(${sql.ref("s.id")}) filter (where ${sql.ref("s.status")} = 'ready') as integer)`.as(
+          "ready_document_count",
+        ),
+        sql<number>`cast(count(${sql.ref("s.id")}) filter (where ${sql.ref("s.status")} = 'processing') as integer)`.as(
+          "processing_document_count",
+        ),
+        sql<number>`cast(count(${sql.ref("s.id")}) filter (where ${sql.ref("s.status")} = 'failed') as integer)`.as(
+          "failed_document_count",
+        ),
+      ])
+      .where("c.owner_user_id", "=", toUserId(userId))
+      .groupBy([
+        "c.id",
+        "c.owner_user_id",
+        "c.name",
+        "c.description",
+        "c.color",
+        "c.icon",
+        "c.is_pinned",
+        "c.created_at",
+        "c.updated_at",
+        "c.last_activity_at",
+      ]),
+  );
 }
 
 async function getCollectionRow(
   userId: string,
   collectionId: string,
 ): Promise<CollectionRow | null> {
-  const sql = await ensureKnowledgeDatabase();
-  const [row] = await sql<CollectionRow[]>`
-    ${sql.unsafe(collectionQuery)}
-    WHERE c.owner_user_id = ${userId}
-      AND c.id = ${collectionId}
-    GROUP BY c.id
-    LIMIT 1
-  `;
-  return row ?? null;
+  const query = await buildCollectionQuery(userId);
+
+  return (
+    (await query.where("c.id", "=", collectionId).executeTakeFirst()) ?? null
+  );
 }
 
 async function getSourceRow(
   userId: string,
   sourceId: string,
 ): Promise<SourceRow | null> {
-  const sql = await ensureKnowledgeDatabase();
-  const [row] = await sql<SourceRow[]>`
-    SELECT
-      id,
-      owner_user_id,
-      collection_id,
-      document_id,
-      title,
-      summary,
-      excerpt,
-      content_preview,
-      content,
-      tags_json,
-      source_type,
-      status,
-      source_filename,
-      source_url,
-      mime_type,
-      byte_size,
-      latest_version,
-      ready_at,
-      last_processed_at,
-      snapshot_updated_at,
-      failure_message,
-      original_path,
-      index_path,
-      created_at,
-      updated_at
-    FROM kb_sources
-    WHERE owner_user_id = ${userId}
-      AND id = ${sourceId}
-    LIMIT 1
-  `;
+  const db = await ensureKnowledgeDatabase();
 
-  return row ?? null;
+  return (
+    (await db
+      .selectFrom("kb_sources")
+      .select(SOURCE_COLUMNS)
+      .where("owner_user_id", "=", toUserId(userId))
+      .where("id", "=", sourceId)
+      .executeTakeFirst()) ?? null
+  );
+}
+
+async function getChatSessionRow(
+  userId: string,
+  sessionId: string,
+): Promise<ChatSessionRow | null> {
+  const db = await ensureKnowledgeDatabase();
+
+  return (
+    (await db
+      .selectFrom("kb_chat_sessions")
+      .select(CHAT_SESSION_COLUMNS)
+      .where("owner_user_id", "=", toUserId(userId))
+      .where("id", "=", sessionId)
+      .executeTakeFirst()) ?? null
+  );
+}
+
+async function getChatMessageRow(
+  userId: string,
+  messageId: string,
+): Promise<ChatMessageRow | null> {
+  const db = await ensureKnowledgeDatabase();
+
+  return (
+    (await db
+      .selectFrom("kb_chat_messages as m")
+      .leftJoin("kb_chat_feedback as f", "f.message_id", "m.id")
+      .select([
+        "m.id as id",
+        "m.owner_user_id as owner_user_id",
+        "m.session_id as session_id",
+        "m.role as role",
+        "m.content as content",
+        "m.citations_json as citations_json",
+        "m.created_at as created_at",
+        "f.id as feedback_id",
+        "f.rating as feedback_rating",
+        "f.note as feedback_note",
+        "f.created_at as feedback_created_at",
+      ])
+      .where("m.owner_user_id", "=", toUserId(userId))
+      .where("m.id", "=", messageId)
+      .executeTakeFirst()) ?? null
+  );
 }
 
 export async function getStoredSourceRecord(
@@ -417,6 +456,7 @@ export async function getStoredSourceRecord(
   const row = await getSourceRow(userId, sourceId);
   return row ? toStoredSourceRecord(row) : null;
 }
+
 export async function resetKnowledgeRepository(): Promise<void> {
   await resetKnowledgeDatabase();
 }
@@ -424,13 +464,10 @@ export async function resetKnowledgeRepository(): Promise<void> {
 export async function listKnowledgeCollections(
   userId: string,
 ): Promise<KnowledgeCollection[]> {
-  const sql = await ensureKnowledgeDatabase();
-  const rows = await sql<CollectionRow[]>`
-    ${sql.unsafe(collectionQuery)}
-    WHERE c.owner_user_id = ${userId}
-    GROUP BY c.id
-    ORDER BY c.is_pinned DESC, c.updated_at DESC
-  `;
+  const rows = await (await buildCollectionQuery(userId))
+    .orderBy("c.is_pinned", "desc")
+    .orderBy("c.updated_at", "desc")
+    .execute();
 
   return rows.map((row) => toCollection(row));
 }
@@ -439,38 +476,28 @@ export async function createKnowledgeCollection(params: {
   userId: string;
   input: KnowledgeCollectionCreateRequest;
 }): Promise<KnowledgeCollection> {
-  const sql = await ensureKnowledgeDatabase();
+  const db = await ensureKnowledgeDatabase();
   const now = nowIso();
   const id =
     params.input.id?.trim() ||
     `${slugify(params.input.name).slice(0, 40)}-${crypto.randomUUID().slice(0, 8)}`;
 
-  await sql`
-    INSERT INTO kb_collections (
+  await db
+    .insertInto("kb_collections")
+    .values({
       id,
-      owner_user_id,
-      name,
-      description,
-      color,
-      icon,
-      is_pinned,
-      created_at,
-      updated_at,
-      last_activity_at
-    ) VALUES (
-      ${id},
-      ${params.userId},
-      ${params.input.name.trim()},
-      ${params.input.description.trim()},
-      ${params.input.color?.trim() || "#0f766e"},
-      ${params.input.icon?.trim() || "i-lucide-library"},
-      ${false},
-      ${now},
-      ${now},
-      ${now}
-    )
-    ON CONFLICT (id) DO NOTHING
-  `;
+      owner_user_id: toUserId(params.userId),
+      name: params.input.name.trim(),
+      description: params.input.description.trim(),
+      color: params.input.color?.trim() || "#0f766e",
+      icon: params.input.icon?.trim() || "i-lucide-library",
+      is_pinned: false,
+      created_at: now,
+      updated_at: now,
+      last_activity_at: now,
+    })
+    .onConflict((oc) => oc.column("id").doNothing())
+    .execute();
 
   return requireKnowledgeCollection(params.userId, id);
 }
@@ -511,21 +538,38 @@ export async function updateKnowledgeCollection(params: {
   input: KnowledgeCollectionUpdateRequest;
 }): Promise<KnowledgeCollection> {
   await requireKnowledgeCollection(params.userId, params.collectionId);
-  const sql = await ensureKnowledgeDatabase();
-  const now = nowIso();
+  const db = await ensureKnowledgeDatabase();
 
-  await sql`
-    UPDATE kb_collections
-    SET
-      name = COALESCE(${params.input.name?.trim() || null}, name),
-      description = COALESCE(${params.input.description?.trim() || null}, description),
-      color = COALESCE(${params.input.color?.trim() || null}, color),
-      icon = COALESCE(${params.input.icon?.trim() || null}, icon),
-      is_pinned = COALESCE(${params.input.isPinned ?? null}, is_pinned),
-      updated_at = ${now}
-    WHERE owner_user_id = ${params.userId}
-      AND id = ${params.collectionId}
-  `;
+  const updates: Partial<KbCollections> = {
+    updated_at: nowIso(),
+  };
+
+  if (params.input.name?.trim()) {
+    updates.name = params.input.name.trim();
+  }
+
+  if (params.input.description?.trim()) {
+    updates.description = params.input.description.trim();
+  }
+
+  if (params.input.color?.trim()) {
+    updates.color = params.input.color.trim();
+  }
+
+  if (params.input.icon?.trim()) {
+    updates.icon = params.input.icon.trim();
+  }
+
+  if (typeof params.input.isPinned === "boolean") {
+    updates.is_pinned = params.input.isPinned;
+  }
+
+  await db
+    .updateTable("kb_collections")
+    .set(updates)
+    .where("owner_user_id", "=", toUserId(params.userId))
+    .where("id", "=", params.collectionId)
+    .execute();
 
   return requireKnowledgeCollection(params.userId, params.collectionId);
 }
@@ -534,17 +578,17 @@ export async function deleteKnowledgeCollection(
   userId: string,
   collectionId: string,
 ): Promise<void> {
-  const sql = await ensureKnowledgeDatabase();
+  const db = await ensureKnowledgeDatabase();
   const workspace = await getKnowledgeWorkspace({
     userId,
     collectionId,
   }).catch(() => undefined);
 
-  await sql`
-    DELETE FROM kb_collections
-    WHERE owner_user_id = ${userId}
-      AND id = ${collectionId}
-  `;
+  await db
+    .deleteFrom("kb_collections")
+    .where("owner_user_id", "=", toUserId(userId))
+    .where("id", "=", collectionId)
+    .execute();
 
   await workspace?.filesystem
     ?.rmdir("", { recursive: true })
@@ -560,40 +604,17 @@ export async function listKnowledgeSources(
   userId: string,
   collectionId?: string,
 ): Promise<KnowledgeSource[]> {
-  const sql = await ensureKnowledgeDatabase();
-  const rows = await sql<SourceRow[]>`
-    SELECT
-      id,
-      owner_user_id,
-      collection_id,
-      document_id,
-      title,
-      summary,
-      excerpt,
-      content_preview,
-      content,
-      tags_json,
-      source_type,
-      status,
-      source_filename,
-      source_url,
-      mime_type,
-      byte_size,
-      latest_version,
-      ready_at,
-      last_processed_at,
-      snapshot_updated_at,
-      failure_message,
-      original_path,
-      index_path,
-      created_at,
-      updated_at
-    FROM kb_sources
-    WHERE owner_user_id = ${userId}
-      ${collectionId ? sql`AND collection_id = ${collectionId}` : sql``}
-    ORDER BY updated_at DESC
-  `;
+  const db = await ensureKnowledgeDatabase();
+  let query = db
+    .selectFrom("kb_sources")
+    .select(SOURCE_COLUMNS)
+    .where("owner_user_id", "=", toUserId(userId));
 
+  if (collectionId) {
+    query = query.where("collection_id", "=", collectionId);
+  }
+
+  const rows = await query.orderBy("updated_at", "desc").execute();
   return rows.map((row) => toSource(row));
 }
 
@@ -661,7 +682,7 @@ export async function createKnowledgeSourceRecord(params: {
   indexPath: string;
 }): Promise<KnowledgeSource> {
   await requireKnowledgeCollection(params.userId, params.collectionId);
-  const sql = await ensureKnowledgeDatabase();
+  const db = await ensureKnowledgeDatabase();
   const now = nowIso();
   const id = params.sourceId ?? crypto.randomUUID();
   const content = normalizeWhitespace(params.content);
@@ -669,61 +690,36 @@ export async function createKnowledgeSourceRecord(params: {
   const preview = buildContentPreview(content);
   const excerpt = buildSummary(content, 160);
 
-  await sql`
-    INSERT INTO kb_sources (
+  await db
+    .insertInto("kb_sources")
+    .values({
       id,
-      owner_user_id,
-      collection_id,
-      document_id,
-      title,
+      owner_user_id: toUserId(params.userId),
+      collection_id: params.collectionId,
+      document_id: params.documentId,
+      title: params.title.trim(),
       summary,
       excerpt,
-      content_preview,
+      content_preview: preview,
       content,
-      tags_json,
-      source_type,
-      status,
-      source_filename,
-      source_url,
-      mime_type,
-      byte_size,
-      latest_version,
-      ready_at,
-      last_processed_at,
-      snapshot_updated_at,
-      failure_message,
-      original_path,
-      index_path,
-      created_at,
-      updated_at
-    ) VALUES (
-      ${id},
-      ${params.userId},
-      ${params.collectionId},
-      ${params.documentId},
-      ${params.title.trim()},
-      ${summary},
-      ${excerpt},
-      ${preview},
-      ${content},
-      ${JSON.stringify(params.tags)},
-      ${params.sourceType},
-      ${params.status},
-      ${params.sourceFilename ?? null},
-      ${null},
-      ${params.mimeType ?? null},
-      ${params.byteSize ?? null},
-      ${1},
-      ${params.status === "ready" ? now : null},
-      ${now},
-      ${null},
-      ${params.failureMessage ?? null},
-      ${params.originalPath ?? null},
-      ${params.indexPath},
-      ${now},
-      ${now}
-    )
-  `;
+      tags_json: params.tags,
+      source_type: params.sourceType,
+      status: params.status,
+      source_filename: params.sourceFilename ?? null,
+      source_url: null,
+      mime_type: params.mimeType ?? null,
+      byte_size: params.byteSize ?? null,
+      latest_version: 1,
+      ready_at: params.status === "ready" ? now : null,
+      last_processed_at: now,
+      snapshot_updated_at: null,
+      failure_message: params.failureMessage ?? null,
+      original_path: params.originalPath ?? null,
+      index_path: params.indexPath,
+      created_at: now,
+      updated_at: now,
+    })
+    .execute();
 
   await touchCollection(params.collectionId);
   return requireKnowledgeSource(params.userId, id);
@@ -746,7 +742,7 @@ export async function replaceSourceContent(params: {
   indexPath: string;
 }): Promise<KnowledgeSource> {
   const current = await requireKnowledgeSource(params.userId, params.sourceId);
-  const sql = await ensureKnowledgeDatabase();
+  const db = await ensureKnowledgeDatabase();
   const content = normalizeWhitespace(params.content);
   const summary = params.summary?.trim() || buildSummary(content);
   const preview = buildContentPreview(content);
@@ -754,32 +750,33 @@ export async function replaceSourceContent(params: {
   const nextVersion = current.latestVersion + 1;
   const now = nowIso();
 
-  await sql`
-    UPDATE kb_sources
-    SET
-      document_id = ${params.documentId},
-      title = ${params.title.trim()},
-      summary = ${summary},
-      excerpt = ${excerpt},
-      content_preview = ${preview},
-      content = ${content},
-      tags_json = ${JSON.stringify(params.tags)},
-      source_filename = ${params.sourceFilename ?? current.sourceFilename ?? null},
-      source_url = ${null},
-      mime_type = ${params.mimeType ?? current.mimeType ?? null},
-      byte_size = ${params.byteSize ?? current.byteSize ?? null},
-      latest_version = ${nextVersion},
-      status = ${params.status},
-      ready_at = ${params.status === "ready" ? now : null},
-      last_processed_at = ${now},
-      snapshot_updated_at = ${null},
-      failure_message = ${params.failureMessage ?? null},
-      original_path = ${params.originalPath ?? null},
-      index_path = ${params.indexPath},
-      updated_at = ${now}
-    WHERE owner_user_id = ${params.userId}
-      AND id = ${params.sourceId}
-  `;
+  await db
+    .updateTable("kb_sources")
+    .set({
+      document_id: params.documentId,
+      title: params.title.trim(),
+      summary,
+      excerpt,
+      content_preview: preview,
+      content,
+      tags_json: params.tags,
+      source_filename: params.sourceFilename ?? current.sourceFilename ?? null,
+      source_url: null,
+      mime_type: params.mimeType ?? current.mimeType ?? null,
+      byte_size: params.byteSize ?? current.byteSize ?? null,
+      latest_version: nextVersion,
+      status: params.status,
+      ready_at: params.status === "ready" ? now : null,
+      last_processed_at: now,
+      snapshot_updated_at: null,
+      failure_message: params.failureMessage ?? null,
+      original_path: params.originalPath ?? null,
+      index_path: params.indexPath,
+      updated_at: now,
+    })
+    .where("owner_user_id", "=", toUserId(params.userId))
+    .where("id", "=", params.sourceId)
+    .execute();
 
   await touchCollection(current.collectionId);
   return requireKnowledgeSource(params.userId, params.sourceId);
@@ -790,7 +787,7 @@ export async function deleteKnowledgeSource(
   sourceId: string,
 ): Promise<void> {
   const source = await requireKnowledgeSource(userId, sourceId);
-  const sql = await ensureKnowledgeDatabase();
+  const db = await ensureKnowledgeDatabase();
   const documentId = source.documentId || source.sourceFilename;
   const workspace = await getKnowledgeWorkspace({
     userId,
@@ -805,11 +802,11 @@ export async function deleteKnowledgeSource(
     }).catch(() => undefined);
   }
 
-  await sql`
-    DELETE FROM kb_sources
-    WHERE owner_user_id = ${userId}
-      AND id = ${sourceId}
-  `;
+  await db
+    .deleteFrom("kb_sources")
+    .where("owner_user_id", "=", toUserId(userId))
+    .where("id", "=", sourceId)
+    .execute();
 
   if (documentId) {
     await workspace?.filesystem
@@ -820,39 +817,72 @@ export async function deleteKnowledgeSource(
   }
 }
 
+async function countRows(args: {
+  table: "kb_chat_sessions" | "kb_collections" | "kb_sources";
+  userId: string;
+  status?: KnowledgeSource["status"];
+}): Promise<number> {
+  const db = await ensureKnowledgeDatabase();
+  let query = db
+    .selectFrom(args.table)
+    .select((eb) => eb.fn.countAll<number>().as("count"))
+    .where("owner_user_id", "=", toUserId(args.userId));
+
+  if (args.table === "kb_sources" && args.status) {
+    query = query.where("status", "=", args.status);
+  }
+
+  const row = await query.executeTakeFirst();
+  return Number(row?.count ?? 0);
+}
+
 export async function getDashboardSummary(
   userId: string,
 ): Promise<DashboardSummary> {
-  const sql = await ensureKnowledgeDatabase();
-  const [counts] = await sql<
-    Array<{
-      collections_count: number;
-      ready_sources_count: number;
-      processing_sources_count: number;
-      failed_sources_count: number;
-      chat_sessions_count: number;
-    }>
-  >`
-    SELECT
-      (SELECT COUNT(*)::int FROM kb_collections WHERE owner_user_id = ${userId}) AS collections_count,
-      (SELECT COUNT(*)::int FROM kb_sources WHERE owner_user_id = ${userId} AND status = 'ready') AS ready_sources_count,
-      (SELECT COUNT(*)::int FROM kb_sources WHERE owner_user_id = ${userId} AND status = 'processing') AS processing_sources_count,
-      (SELECT COUNT(*)::int FROM kb_sources WHERE owner_user_id = ${userId} AND status = 'failed') AS failed_sources_count,
-      (SELECT COUNT(*)::int FROM kb_chat_sessions WHERE owner_user_id = ${userId}) AS chat_sessions_count
-  `;
-
-  const [recentCollections, recentSources, recentSessions] = await Promise.all([
+  const [
+    collectionsCount,
+    readySourcesCount,
+    processingSourcesCount,
+    failedSourcesCount,
+    chatSessionsCount,
+    recentCollections,
+    recentSources,
+    recentSessions,
+  ] = await Promise.all([
+    countRows({
+      table: "kb_collections",
+      userId,
+    }),
+    countRows({
+      table: "kb_sources",
+      userId,
+      status: "ready",
+    }),
+    countRows({
+      table: "kb_sources",
+      userId,
+      status: "processing",
+    }),
+    countRows({
+      table: "kb_sources",
+      userId,
+      status: "failed",
+    }),
+    countRows({
+      table: "kb_chat_sessions",
+      userId,
+    }),
     listKnowledgeCollections(userId).then((items) => items.slice(0, 6)),
     listKnowledgeSources(userId).then((items) => items.slice(0, 6)),
     listChatSessions(userId).then((items) => items.slice(0, 6)),
   ]);
 
   return {
-    collectionsCount: Number(counts?.collections_count ?? 0),
-    readySourcesCount: Number(counts?.ready_sources_count ?? 0),
-    processingSourcesCount: Number(counts?.processing_sources_count ?? 0),
-    failedSourcesCount: Number(counts?.failed_sources_count ?? 0),
-    chatSessionsCount: Number(counts?.chat_sessions_count ?? 0),
+    collectionsCount,
+    readySourcesCount,
+    processingSourcesCount,
+    failedSourcesCount,
+    chatSessionsCount,
     recentCollections,
     recentSources,
     recentSessions,
@@ -868,7 +898,7 @@ export async function createChatSession(params: {
   title?: string;
   collectionId: string;
 }): Promise<ChatSession> {
-  const sql = await ensureKnowledgeDatabase();
+  const db = await ensureKnowledgeDatabase();
   const now = nowIso();
   const id = crypto.randomUUID();
   const collection = await requireKnowledgeCollection(
@@ -878,27 +908,19 @@ export async function createChatSession(params: {
   const title = params.title?.trim() || `${collection.name} 对话`;
   const preview = "开始提问吧";
 
-  await sql`
-    INSERT INTO kb_chat_sessions (
+  await db
+    .insertInto("kb_chat_sessions")
+    .values({
       id,
-      owner_user_id,
+      owner_user_id: toUserId(params.userId),
       title,
-      collection_id,
+      collection_id: params.collectionId,
       preview,
-      created_at,
-      updated_at,
-      last_message_at
-    ) VALUES (
-      ${id},
-      ${params.userId},
-      ${title},
-      ${params.collectionId},
-      ${preview},
-      ${now},
-      ${now},
-      ${now}
-    )
-  `;
+      created_at: now,
+      updated_at: now,
+      last_message_at: now,
+    })
+    .execute();
 
   return requireChatSession(params.userId, id);
 }
@@ -907,23 +929,17 @@ export async function listChatSessions(
   userId: string,
   collectionId?: string,
 ): Promise<ChatSession[]> {
-  const sql = await ensureKnowledgeDatabase();
-  const rows = await sql<ChatSessionRow[]>`
-    SELECT
-      id,
-      owner_user_id,
-      title,
-      collection_id,
-      preview,
-      created_at,
-      updated_at,
-      last_message_at
-    FROM kb_chat_sessions
-    WHERE owner_user_id = ${userId}
-      ${collectionId ? sql`AND collection_id = ${collectionId}` : sql``}
-    ORDER BY last_message_at DESC
-  `;
+  const db = await ensureKnowledgeDatabase();
+  let query = db
+    .selectFrom("kb_chat_sessions")
+    .select(CHAT_SESSION_COLUMNS)
+    .where("owner_user_id", "=", toUserId(userId));
 
+  if (collectionId) {
+    query = query.where("collection_id", "=", collectionId);
+  }
+
+  const rows = await query.orderBy("last_message_at", "desc").execute();
   return rows.map((row) => toChatSession(row));
 }
 
@@ -931,23 +947,7 @@ export async function getChatSessionById(
   userId: string,
   sessionId: string,
 ): Promise<ChatSession | undefined> {
-  const sql = await ensureKnowledgeDatabase();
-  const [row] = await sql<ChatSessionRow[]>`
-    SELECT
-      id,
-      owner_user_id,
-      title,
-      collection_id,
-      preview,
-      created_at,
-      updated_at,
-      last_message_at
-    FROM kb_chat_sessions
-    WHERE owner_user_id = ${userId}
-      AND id = ${sessionId}
-    LIMIT 1
-  `;
-
+  const row = await getChatSessionRow(userId, sessionId);
   return row ? toChatSession(row) : undefined;
 }
 
@@ -970,14 +970,17 @@ export async function updateChatSession(params: {
   title: string;
 }): Promise<ChatSession> {
   await requireChatSession(params.userId, params.sessionId);
-  const sql = await ensureKnowledgeDatabase();
+  const db = await ensureKnowledgeDatabase();
 
-  await sql`
-    UPDATE kb_chat_sessions
-    SET title = ${params.title.trim()}, updated_at = ${nowIso()}
-    WHERE owner_user_id = ${params.userId}
-      AND id = ${params.sessionId}
-  `;
+  await db
+    .updateTable("kb_chat_sessions")
+    .set({
+      title: params.title.trim(),
+      updated_at: nowIso(),
+    })
+    .where("owner_user_id", "=", toUserId(params.userId))
+    .where("id", "=", params.sessionId)
+    .execute();
 
   return requireChatSession(params.userId, params.sessionId);
 }
@@ -987,13 +990,13 @@ export async function deleteChatSession(
   sessionId: string,
 ): Promise<void> {
   await requireChatSession(userId, sessionId);
-  const sql = await ensureKnowledgeDatabase();
+  const db = await ensureKnowledgeDatabase();
 
-  await sql`
-    DELETE FROM kb_chat_sessions
-    WHERE owner_user_id = ${userId}
-      AND id = ${sessionId}
-  `;
+  await db
+    .deleteFrom("kb_chat_sessions")
+    .where("owner_user_id", "=", toUserId(userId))
+    .where("id", "=", sessionId)
+    .execute();
 }
 
 export async function listChatMessages(
@@ -1001,26 +1004,27 @@ export async function listChatMessages(
   sessionId: string,
 ): Promise<ChatMessage[]> {
   await requireChatSession(userId, sessionId);
-  const sql = await ensureKnowledgeDatabase();
-  const rows = await sql<ChatMessageRow[]>`
-    SELECT
-      m.id,
-      m.owner_user_id,
-      m.session_id,
-      m.role,
-      m.content,
-      m.citations_json,
-      m.created_at,
-      f.id AS feedback_id,
-      f.rating AS feedback_rating,
-      f.note AS feedback_note,
-      f.created_at AS feedback_created_at
-    FROM kb_chat_messages m
-    LEFT JOIN kb_chat_feedback f ON f.message_id = m.id
-    WHERE m.owner_user_id = ${userId}
-      AND m.session_id = ${sessionId}
-    ORDER BY m.created_at ASC
-  `;
+  const db = await ensureKnowledgeDatabase();
+  const rows = await db
+    .selectFrom("kb_chat_messages as m")
+    .leftJoin("kb_chat_feedback as f", "f.message_id", "m.id")
+    .select([
+      "m.id as id",
+      "m.owner_user_id as owner_user_id",
+      "m.session_id as session_id",
+      "m.role as role",
+      "m.content as content",
+      "m.citations_json as citations_json",
+      "m.created_at as created_at",
+      "f.id as feedback_id",
+      "f.rating as feedback_rating",
+      "f.note as feedback_note",
+      "f.created_at as feedback_created_at",
+    ])
+    .where("m.owner_user_id", "=", toUserId(userId))
+    .where("m.session_id", "=", sessionId)
+    .orderBy("m.created_at", "asc")
+    .execute();
 
   return rows.map((row) => toChatMessage(row));
 }
@@ -1033,43 +1037,39 @@ export async function appendChatMessage(params: {
   citations?: ChatMessage["citations"];
 }): Promise<ChatMessage> {
   const session = await requireChatSession(params.userId, params.sessionId);
-  const sql = await ensureKnowledgeDatabase();
+  const db = await ensureKnowledgeDatabase();
   const id = crypto.randomUUID();
   const now = nowIso();
   const preview = params.content.trim().slice(0, 160);
 
-  await sql`
-    INSERT INTO kb_chat_messages (
+  await db
+    .insertInto("kb_chat_messages")
+    .values({
       id,
-      owner_user_id,
-      session_id,
-      role,
-      content,
-      citations_json,
-      created_at
-    ) VALUES (
-      ${id},
-      ${params.userId},
-      ${params.sessionId},
-      ${params.role},
-      ${params.content.trim()},
-      ${JSON.stringify(params.citations ?? [])},
-      ${now}
-    )
-  `;
+      owner_user_id: toUserId(params.userId),
+      session_id: params.sessionId,
+      role: params.role,
+      content: params.content.trim(),
+      citations_json: params.citations ?? [],
+      created_at: now,
+      retrieval_json: null,
+      trace_json: null,
+    })
+    .execute();
 
-  await sql`
-    UPDATE kb_chat_sessions
-    SET
-      preview = ${params.role === "user" ? preview : session.preview},
-      updated_at = ${now},
-      last_message_at = ${now}
-    WHERE owner_user_id = ${params.userId}
-      AND id = ${params.sessionId}
-  `;
+  await db
+    .updateTable("kb_chat_sessions")
+    .set({
+      preview: params.role === "user" ? preview : session.preview,
+      updated_at: now,
+      last_message_at: now,
+    })
+    .where("owner_user_id", "=", toUserId(params.userId))
+    .where("id", "=", params.sessionId)
+    .execute();
 
-  const messages = await listChatMessages(params.userId, params.sessionId);
-  return messages.find((message) => message.id === id)!;
+  const message = await getChatMessageRow(params.userId, id);
+  return toChatMessage(message!);
 }
 
 export async function getChatMessagesData(
@@ -1092,33 +1092,27 @@ export async function saveMessageFeedback(params: {
   messageId: string;
   input: ChatMessageFeedbackRequest;
 }): Promise<ChatMessageFeedback> {
-  const sql = await ensureKnowledgeDatabase();
+  const db = await ensureKnowledgeDatabase();
   const now = nowIso();
   const id = crypto.randomUUID();
 
-  await sql`
-    DELETE FROM kb_chat_feedback
-    WHERE owner_user_id = ${params.userId}
-      AND message_id = ${params.messageId}
-  `;
+  await db
+    .deleteFrom("kb_chat_feedback")
+    .where("owner_user_id", "=", toUserId(params.userId))
+    .where("message_id", "=", params.messageId)
+    .execute();
 
-  await sql`
-    INSERT INTO kb_chat_feedback (
+  await db
+    .insertInto("kb_chat_feedback")
+    .values({
       id,
-      owner_user_id,
-      message_id,
-      rating,
-      note,
-      created_at
-    ) VALUES (
-      ${id},
-      ${params.userId},
-      ${params.messageId},
-      ${params.input.rating},
-      ${params.input.note?.trim() || null},
-      ${now}
-    )
-  `;
+      owner_user_id: toUserId(params.userId),
+      message_id: params.messageId,
+      rating: params.input.rating,
+      note: params.input.note?.trim() || null,
+      created_at: now,
+    })
+    .execute();
 
   return {
     id,
@@ -1133,23 +1127,24 @@ export async function listBriefingExports(
   userId: string,
   sourceId: string,
 ): Promise<BriefingExport[]> {
-  const sql = await ensureKnowledgeDatabase();
-  const rows = await sql<BriefingExportRow[]>`
-    SELECT
-      id,
-      owner_user_id,
-      source_id,
-      document_id,
-      title,
-      summary,
-      form_json,
-      citations_json,
-      created_at
-    FROM kb_briefing_exports
-    WHERE owner_user_id = ${userId}
-      AND source_id = ${sourceId}
-    ORDER BY created_at DESC
-  `;
+  const db = await ensureKnowledgeDatabase();
+  const rows = await db
+    .selectFrom("kb_briefing_exports")
+    .select([
+      "id",
+      "owner_user_id",
+      "source_id",
+      "document_id",
+      "title",
+      "summary",
+      "form_json",
+      "citations_json",
+      "created_at",
+    ])
+    .where("owner_user_id", "=", toUserId(userId))
+    .where("source_id", "=", sourceId)
+    .orderBy("created_at", "desc")
+    .execute();
 
   return rows.map((row) => toBriefingExport(row));
 }
@@ -1163,7 +1158,7 @@ export async function createBriefingExport(params: {
   form: BriefingExport["form"];
   citations: BriefingExport["citations"];
 }): Promise<BriefingExport> {
-  const sql = await ensureKnowledgeDatabase();
+  const db = await ensureKnowledgeDatabase();
   const exportRecord: BriefingExport = {
     id: crypto.randomUUID(),
     sourceId: params.sourceId,
@@ -1175,29 +1170,20 @@ export async function createBriefingExport(params: {
     createdAt: nowIso(),
   };
 
-  await sql`
-    INSERT INTO kb_briefing_exports (
-      id,
-      owner_user_id,
-      source_id,
-      document_id,
-      title,
-      summary,
-      form_json,
-      citations_json,
-      created_at
-    ) VALUES (
-      ${exportRecord.id},
-      ${params.userId},
-      ${params.sourceId},
-      ${params.documentId},
-      ${params.title},
-      ${params.summary},
-      ${JSON.stringify(params.form)},
-      ${JSON.stringify(params.citations)},
-      ${exportRecord.createdAt}
-    )
-  `;
+  await db
+    .insertInto("kb_briefing_exports")
+    .values({
+      id: exportRecord.id,
+      owner_user_id: toUserId(params.userId),
+      source_id: params.sourceId,
+      document_id: params.documentId,
+      title: params.title,
+      summary: params.summary,
+      form_json: params.form,
+      citations_json: params.citations,
+      created_at: exportRecord.createdAt,
+    })
+    .execute();
 
   return exportRecord;
 }
