@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\KnowledgeTemplateExports\KnowledgeTemplateExportSto
 use App\Http\Controllers\Api\KnowledgeTemplates\KnowledgeTemplateIndexController;
 use App\Http\Controllers\Api\KnowledgeTemplates\KnowledgeTemplateShowController;
 use App\Http\Controllers\Api\Internal\KnowledgeTemplateExportTaskIndexController as InternalKnowledgeTemplateExportTaskIndexController;
+use App\Http\Controllers\Api\Internal\KnowledgeTemplateExportTaskDownloadController as InternalKnowledgeTemplateExportTaskDownloadController;
 use App\Http\Controllers\Api\Internal\KnowledgeTemplateExportTaskShowController as InternalKnowledgeTemplateExportTaskShowController;
 use App\Http\Controllers\Api\Internal\KnowledgeTemplateExportTaskStoreController as InternalKnowledgeTemplateExportTaskStoreController;
 use App\Http\Controllers\Api\Internal\KnowledgeTemplateExportTaskUpdateController as InternalKnowledgeTemplateExportTaskUpdateController;
@@ -38,5 +39,6 @@ Route::prefix('internal')
         Route::get('knowledge-template-export-tasks', InternalKnowledgeTemplateExportTaskIndexController::class);
         Route::post('knowledge-template-export-tasks', InternalKnowledgeTemplateExportTaskStoreController::class);
         Route::get('knowledge-template-export-tasks/{taskId}', InternalKnowledgeTemplateExportTaskShowController::class);
+        Route::get('knowledge-template-export-tasks/{taskId}/download', InternalKnowledgeTemplateExportTaskDownloadController::class);
         Route::patch('knowledge-template-export-tasks/{taskId}', InternalKnowledgeTemplateExportTaskUpdateController::class);
     });
