@@ -2,9 +2,14 @@
 
 namespace App\Providers;
 
+use App\Models\KnowledgeTemplate;
 use Carbon\CarbonImmutable;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
 
@@ -24,6 +29,8 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->configureDefaults();
+        $this->configureRateLimiting();
+        $this->configureRouteBindings();
     }
 
     /**
@@ -47,5 +54,42 @@ class AppServiceProvider extends ServiceProvider
                 ->uncompromised()
             : null,
         );
+    }
+
+    protected function configureRateLimiting(): void
+    {
+        RateLimiter::for('knowledge-template-read', function (Request $request): Limit {
+            return Limit::perMinute(120)
+                ->by($request->ip() ?: 'unknown')
+                ->response(fn (Request $request, array $headers) => response()->json([
+                    'message' => '请求过于频繁，请稍后再试。',
+                ], 429, $headers));
+        });
+
+        RateLimiter::for('knowledge-template-export-create', function (Request $request): Limit {
+            return Limit::perMinute(30)
+                ->by($request->ip() ?: 'unknown')
+                ->response(fn (Request $request, array $headers) => response()->json([
+                    'message' => '导出请求过于频繁，请稍后再试。',
+                ], 429, $headers));
+        });
+
+        RateLimiter::for('knowledge-template-export-list', function (Request $request): Limit {
+            return Limit::perMinute(60)
+                ->by($request->ip() ?: 'unknown')
+                ->response(fn (Request $request, array $headers) => response()->json([
+                    'message' => '查询请求过于频繁，请稍后再试。',
+                ], 429, $headers));
+        });
+    }
+
+    protected function configureRouteBindings(): void
+    {
+        Route::bind('availableKnowledgeTemplate', function (string $value): KnowledgeTemplate {
+            return KnowledgeTemplate::query()
+                ->available()
+                ->with('fields')
+                ->findOrFail($value);
+        });
     }
 }

@@ -4,6 +4,11 @@ return [
     'storage_disk' => env('KB_TEMPLATE_STORAGE_DISK', 'kb_templates'),
     'storage_directory' => env('KB_TEMPLATE_STORAGE_DIRECTORY', 'kb/templates'),
     'parser_version' => env('KB_TEMPLATE_PARSER_VERSION', 'ooxml-v1'),
+    'exports' => [
+        'disk' => env('KB_TEMPLATE_EXPORT_STORAGE_DISK', env('KB_TEMPLATE_STORAGE_DISK', 'kb_templates')),
+        'directory' => env('KB_TEMPLATE_EXPORT_STORAGE_DIRECTORY', 'kb/template-exports'),
+        'retention_days' => (int) env('KB_TEMPLATE_EXPORT_RETENTION_DAYS', 30),
+    ],
     'ai' => [
         'enabled' => env('KB_TEMPLATE_AI_ENABLED', true),
         'base_url' => env('KB_TEMPLATE_AI_BASE_URL'),

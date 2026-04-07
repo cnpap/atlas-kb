@@ -193,6 +193,23 @@ test('knowledge base tables are created with the expected contract', function ()
                 'FOREIGN KEY (template_id) REFERENCES kb_templates(id) ON DELETE CASCADE',
             ],
         ],
+        'kb_template_exports' => [
+            'columns' => [
+                'template_id' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+                'owner_user_id' => ['data_type' => 'bigint', 'is_nullable' => 'NO'],
+                'byte_size' => ['data_type' => 'bigint', 'is_nullable' => 'NO'],
+                'expires_at' => ['data_type' => 'timestamp with time zone', 'is_nullable' => 'NO'],
+            ],
+            'indexes' => [
+                'idx_kb_template_exports_expires_at' => 'expires_at',
+                'idx_kb_template_exports_owner' => 'owner_user_id, created_at DESC',
+                'idx_kb_template_exports_template' => 'template_id, created_at DESC',
+            ],
+            'foreign_keys' => [
+                'FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE',
+                'FOREIGN KEY (template_id) REFERENCES kb_templates(id) ON DELETE CASCADE',
+            ],
+        ],
     ];
 
     if (DB::getDriverName() !== 'pgsql') {

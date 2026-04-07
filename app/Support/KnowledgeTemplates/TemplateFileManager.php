@@ -65,10 +65,6 @@ class TemplateFileManager
 
     public function readStoredBytes(KnowledgeTemplate $template): string
     {
-        if (! Storage::disk($template->source_disk)->exists($template->source_path)) {
-            throw new RuntimeException('模板源文件不存在或已经被移除。');
-        }
-
         $contents = Storage::disk($template->source_disk)->get($template->source_path);
 
         if (! is_string($contents) || $contents === '') {
@@ -78,16 +74,8 @@ class TemplateFileManager
         return $contents;
     }
 
-    public function deleteStoredFile(?string $disk, ?string $path): void
+    public function deleteStoredFile(string $disk, string $path): void
     {
-        if (blank($disk) || blank($path)) {
-            return;
-        }
-
-        if (! Storage::disk($disk)->exists($path)) {
-            return;
-        }
-
         Storage::disk($disk)->delete($path);
     }
 

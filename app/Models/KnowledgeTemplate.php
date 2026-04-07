@@ -6,6 +6,7 @@ use App\Support\KnowledgeTemplates\TemplateFileManager;
 use Database\Factories\KnowledgeTemplateFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Table;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -69,6 +70,22 @@ class KnowledgeTemplate extends Model
         return $this->hasMany(KnowledgeTemplateField::class, 'template_id')
             ->orderBy('sort_order')
             ->orderBy('created_at');
+    }
+
+    /**
+     * @return HasMany<KnowledgeTemplateExport, covariant $this>
+     */
+    public function exports(): HasMany
+    {
+        return $this->hasMany(KnowledgeTemplateExport::class, 'template_id')
+            ->orderByDesc('created_at');
+    }
+
+    public function scopeAvailable(Builder $query): Builder
+    {
+        return $query
+            ->where('is_active', true)
+            ->where('parse_status', self::PARSE_STATUS_READY);
     }
 
     /**

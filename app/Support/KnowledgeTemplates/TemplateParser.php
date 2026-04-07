@@ -3,12 +3,10 @@
 namespace App\Support\KnowledgeTemplates;
 
 use App\Models\KnowledgeTemplate;
-use DOMDocument;
 use DOMElement;
 use DOMNode;
 use DOMXPath;
 use RuntimeException;
-use ZipArchive;
 
 class TemplateParser
 {
@@ -27,22 +25,16 @@ class TemplateParser
     public function parse(string $contents, string $sourceFilename): array
     {
         $templateType = strtolower(pathinfo($sourceFilename, PATHINFO_EXTENSION));
-        $temporaryPath = tempnam(sys_get_temp_dir(), 'kb-template-');
-
-        if ($temporaryPath === false) {
-            throw new RuntimeException('无法创建模板解析临时文件。');
-        }
-
-        file_put_contents($temporaryPath, $contents);
+        $archive = OfficeOpenXmlArchive::open($contents, 'kb-template-');
 
         try {
             $fields = match ($templateType) {
-                KnowledgeTemplate::TYPE_DOCX => $this->parseDocx($temporaryPath),
-                KnowledgeTemplate::TYPE_XLSX => $this->parseXlsx($temporaryPath),
+                KnowledgeTemplate::TYPE_DOCX => $this->parseDocx($archive),
+                KnowledgeTemplate::TYPE_XLSX => $this->parseXlsx($archive),
                 default => throw new RuntimeException('当前模板格式不受支持。'),
             };
         } finally {
-            @unlink($temporaryPath);
+            $archive->discard();
         }
 
         if ($fields === []) {
@@ -58,36 +50,18 @@ class TemplateParser
     /**
      * @return array<string, array{name: string, sort_order: int, locations: list<array<string, string>>}>
      */
-    protected function parseDocx(string $temporaryPath): array
+    protected function parseDocx(OfficeOpenXmlArchive $archive): array
     {
-        $zip = $this->openArchive($temporaryPath);
         $fields = [];
-        $entries = [];
 
-        for ($index = 0; $index < $zip->numFiles; $index += 1) {
-            $entryName = $zip->getNameIndex($index);
-
-            if (! is_string($entryName)) {
-                continue;
-            }
-
-            if (! preg_match('#^word/(document|header\d+|footer\d+)\.xml$#', $entryName)) {
-                continue;
-            }
-
-            $entries[] = $entryName;
-        }
-
-        sort($entries);
-
-        foreach ($entries as $entryName) {
-            $document = $this->loadXmlDocument($zip, $entryName);
+        foreach ($archive->entryNamesMatching('#^word/(document|header\d+|footer\d+)\.xml$#') as $entryName) {
+            $document = $archive->loadXmlDocument($entryName);
             $xpath = new DOMXPath($document);
             $xpath->registerNamespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main');
             $paragraphs = $xpath->query('//w:p');
 
             if ($paragraphs === false) {
-                continue;
+                throw new RuntimeException("无法读取模板段落节点 [{$entryName}]。");
             }
 
             foreach ($paragraphs as $offset => $paragraph) {
@@ -97,19 +71,15 @@ class TemplateParser
 
                 $text = $this->extractDocxParagraphText($paragraph);
 
-                if ($text === '') {
-                    continue;
+                if ($text !== '') {
+                    $this->recordPlaceholderMatches($fields, $text, [
+                        'kind' => 'docx',
+                        'part' => $entryName,
+                        'block' => '段落 '.($offset + 1),
+                    ]);
                 }
-
-                $this->recordPlaceholderMatches($fields, $text, [
-                    'kind' => 'docx',
-                    'part' => $entryName,
-                    'block' => '段落 '.($offset + 1),
-                ]);
             }
         }
-
-        $zip->close();
 
         return $fields;
     }
@@ -117,21 +87,20 @@ class TemplateParser
     /**
      * @return array<string, array{name: string, sort_order: int, locations: list<array<string, string>>}>
      */
-    protected function parseXlsx(string $temporaryPath): array
+    protected function parseXlsx(OfficeOpenXmlArchive $archive): array
     {
-        $zip = $this->openArchive($temporaryPath);
         $fields = [];
-        $sharedStrings = $this->readSharedStrings($zip);
-        $sheetMap = $this->readWorkbookSheetMap($zip);
+        $sharedStrings = $this->readSharedStrings($archive);
+        $sheetMap = $this->readWorkbookSheetMap($archive);
 
         foreach ($sheetMap as $sheetName => $entryName) {
-            $document = $this->loadXmlDocument($zip, $entryName);
+            $document = $archive->loadXmlDocument($entryName);
             $xpath = new DOMXPath($document);
             $xpath->registerNamespace('main', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
             $cells = $xpath->query('//main:c');
 
             if ($cells === false) {
-                continue;
+                throw new RuntimeException("无法读取工作表单元格节点 [{$entryName}]。");
             }
 
             foreach ($cells as $cell) {
@@ -141,54 +110,17 @@ class TemplateParser
 
                 $text = $this->extractWorksheetCellText($xpath, $cell, $sharedStrings);
 
-                if ($text === '') {
-                    continue;
+                if ($text !== '') {
+                    $this->recordPlaceholderMatches($fields, $text, [
+                        'kind' => 'xlsx',
+                        'sheet' => $sheetName,
+                        'cell' => (string) $cell->getAttribute('r'),
+                    ]);
                 }
-
-                $this->recordPlaceholderMatches($fields, $text, [
-                    'kind' => 'xlsx',
-                    'sheet' => $sheetName,
-                    'cell' => (string) $cell->getAttribute('r'),
-                ]);
             }
         }
 
-        $zip->close();
-
         return $fields;
-    }
-
-    protected function openArchive(string $temporaryPath): ZipArchive
-    {
-        $zip = new ZipArchive;
-        $opened = $zip->open($temporaryPath);
-
-        if ($opened !== true) {
-            throw new RuntimeException('模板文件不是有效的 Office Open XML 压缩包。');
-        }
-
-        return $zip;
-    }
-
-    protected function loadXmlDocument(ZipArchive $zip, string $entryName): DOMDocument
-    {
-        $contents = $zip->getFromName($entryName);
-
-        if (! is_string($contents) || $contents === '') {
-            throw new RuntimeException("无法读取模板内部文件 [{$entryName}]。");
-        }
-
-        $document = new DOMDocument;
-        $previous = libxml_use_internal_errors(true);
-        $loaded = $document->loadXML($contents, LIBXML_NONET | LIBXML_COMPACT);
-        libxml_clear_errors();
-        libxml_use_internal_errors($previous);
-
-        if (! $loaded) {
-            throw new RuntimeException("模板内部文件 [{$entryName}] 不是有效的 XML。");
-        }
-
-        return $document;
     }
 
     protected function extractDocxParagraphText(DOMElement $paragraph): string
@@ -219,29 +151,27 @@ class TemplateParser
     /**
      * @return array<int, string>
      */
-    protected function readSharedStrings(ZipArchive $zip): array
+    protected function readSharedStrings(OfficeOpenXmlArchive $archive): array
     {
-        if ($zip->locateName('xl/sharedStrings.xml') === false) {
+        if (! $archive->hasEntry('xl/sharedStrings.xml')) {
             return [];
         }
 
-        $document = $this->loadXmlDocument($zip, 'xl/sharedStrings.xml');
+        $document = $archive->loadXmlDocument('xl/sharedStrings.xml');
         $xpath = new DOMXPath($document);
         $xpath->registerNamespace('main', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
         $items = $xpath->query('//main:si');
 
         if ($items === false) {
-            return [];
+            throw new RuntimeException('无法读取共享字符串节点。');
         }
 
         $values = [];
 
         foreach ($items as $item) {
-            if (! $item instanceof DOMElement) {
-                continue;
+            if ($item instanceof DOMElement) {
+                $values[] = $this->normalizeText($this->extractNodeText($item));
             }
-
-            $values[] = $this->normalizeText($this->extractNodeText($item));
         }
 
         return $values;
@@ -250,41 +180,43 @@ class TemplateParser
     /**
      * @return array<string, string>
      */
-    protected function readWorkbookSheetMap(ZipArchive $zip): array
+    protected function readWorkbookSheetMap(OfficeOpenXmlArchive $archive): array
     {
         $relationships = [];
 
-        if ($zip->locateName('xl/_rels/workbook.xml.rels') !== false) {
-            $relationshipsDocument = $this->loadXmlDocument($zip, 'xl/_rels/workbook.xml.rels');
+        if ($archive->hasEntry('xl/_rels/workbook.xml.rels')) {
+            $relationshipsDocument = $archive->loadXmlDocument('xl/_rels/workbook.xml.rels');
             $relationshipsXPath = new DOMXPath($relationshipsDocument);
             $relationshipsXPath->registerNamespace('rel', 'http://schemas.openxmlformats.org/package/2006/relationships');
             $relationshipNodes = $relationshipsXPath->query('//rel:Relationship');
 
-            if ($relationshipNodes !== false) {
-                foreach ($relationshipNodes as $relationshipNode) {
-                    if (! $relationshipNode instanceof DOMElement) {
-                        continue;
-                    }
+            if ($relationshipNodes === false) {
+                throw new RuntimeException('无法读取工作簿关系节点。');
+            }
 
-                    $target = ltrim((string) $relationshipNode->getAttribute('Target'), '/');
-
-                    if ($target !== '' && ! str_starts_with($target, 'xl/')) {
-                        $target = 'xl/'.$target;
-                    }
-
-                    $relationships[(string) $relationshipNode->getAttribute('Id')] = $target;
+            foreach ($relationshipNodes as $relationshipNode) {
+                if (! $relationshipNode instanceof DOMElement) {
+                    continue;
                 }
+
+                $target = ltrim((string) $relationshipNode->getAttribute('Target'), '/');
+
+                if ($target !== '' && ! str_starts_with($target, 'xl/')) {
+                    $target = 'xl/'.$target;
+                }
+
+                $relationships[(string) $relationshipNode->getAttribute('Id')] = $target;
             }
         }
 
-        $document = $this->loadXmlDocument($zip, 'xl/workbook.xml');
+        $document = $archive->loadXmlDocument('xl/workbook.xml');
         $xpath = new DOMXPath($document);
         $xpath->registerNamespace('main', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
         $xpath->registerNamespace('r', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships');
         $sheets = $xpath->query('//main:sheets/main:sheet');
 
         if ($sheets === false) {
-            return [];
+            throw new RuntimeException('无法读取工作簿工作表节点。');
         }
 
         $sheetMap = [];
@@ -358,7 +290,7 @@ class TemplateParser
             }
 
             if ($childNode->nodeType === XML_TEXT_NODE) {
-                $parts[] = $childNode->nodeValue;
+                $parts[] = $childNode->textContent;
             }
         }
 
@@ -367,52 +299,31 @@ class TemplateParser
 
     /**
      * @param  array<string, array{name: string, sort_order: int, locations: list<array<string, string>>}>  $fields
-     * @param  array<string, string>  $baseLocation
+     * @param  array<string, string>  $location
      */
-    protected function recordPlaceholderMatches(array &$fields, string $text, array $baseLocation): void
+    protected function recordPlaceholderMatches(array &$fields, string $text, array $location): void
     {
-        preg_match_all(static::PLACEHOLDER_PATTERN, $text, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+        preg_match_all(static::PLACEHOLDER_PATTERN, $text, $matches);
 
-        foreach ($matches as $match) {
-            $name = $match[1][0] ?? null;
-            $offset = $match[0][1] ?? null;
-            $matchedText = $match[0][0] ?? null;
-
-            if (! is_string($name) || $name === '' || ! is_int($offset) || ! is_string($matchedText)) {
+        foreach ($matches[1] as $placeholderName) {
+            if (! is_string($placeholderName) || $placeholderName === '') {
                 continue;
             }
 
-            if (! array_key_exists($name, $fields)) {
-                $fields[$name] = [
-                    'name' => $name,
+            if (! array_key_exists($placeholderName, $fields)) {
+                $fields[$placeholderName] = [
+                    'name' => $placeholderName,
                     'sort_order' => count($fields) + 1,
                     'locations' => [],
                 ];
             }
 
-            $fields[$name]['locations'][] = [
-                ...$baseLocation,
-                'excerpt' => $this->buildExcerpt($text),
-            ];
+            $fields[$placeholderName]['locations'][] = $location;
         }
     }
 
     protected function normalizeText(string $value): string
     {
-        $value = str_replace("\0", '', $value);
-        $value = preg_replace('/\s+/u', ' ', $value) ?? $value;
-
-        return trim($value);
-    }
-
-    protected function buildExcerpt(string $text): string
-    {
-        $excerpt = $this->normalizeText($text);
-
-        if (mb_strlen($excerpt) > 120) {
-            return mb_substr($excerpt, 0, 117).'...';
-        }
-
-        return $excerpt;
+        return trim(preg_replace('/\s+/u', ' ', $value) ?? '');
     }
 }

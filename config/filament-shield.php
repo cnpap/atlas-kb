@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Filament\Resources\KnowledgeTemplateExports\KnowledgeTemplateExportResource;
 use App\Support\AdminRoles;
 use BezhanSalleh\FilamentShield\Resources\Roles\RoleResource;
 use Filament\Widgets\AccountWidget;
@@ -176,6 +177,10 @@ return [
                 'create',
                 'update',
                 'delete',
+            ],
+            KnowledgeTemplateExportResource::class => [
+                'viewAny',
+                'view',
             ],
         ],
         'exclude' => [
