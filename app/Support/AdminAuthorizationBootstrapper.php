@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Filament\Resources\KnowledgeTemplateExports\KnowledgeTemplateExportResource;
+use App\Filament\Resources\KnowledgeTemplateLibraries\KnowledgeTemplateLibraryResource;
 use App\Filament\Resources\KnowledgeTemplates\KnowledgeTemplateResource;
 use App\Filament\Resources\KnowledgeUsers\KnowledgeUserResource;
 use App\Filament\Resources\Users\UserResource;
@@ -56,6 +57,7 @@ class AdminAuthorizationBootstrapper
             ->merge($this->resourcePermissions([
                 KnowledgeTemplateResource::class,
                 KnowledgeTemplateExportResource::class,
+                KnowledgeTemplateLibraryResource::class,
                 KnowledgeUserResource::class,
                 UserResource::class,
             ]))
@@ -76,6 +78,7 @@ class AdminAuthorizationBootstrapper
                 resources: [
                     KnowledgeTemplateResource::class,
                     KnowledgeTemplateExportResource::class,
+                    KnowledgeTemplateLibraryResource::class,
                     KnowledgeUserResource::class,
                 ],
                 actions: ['viewAny', 'view'],

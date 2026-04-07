@@ -3,7 +3,9 @@
 use App\Models\KnowledgeTemplate;
 use App\Models\KnowledgeTemplateExport;
 use App\Models\KnowledgeTemplateField;
-use App\Models\User;
+use App\Models\KnowledgeTemplateLibrary;
+use App\Models\KnowledgeTemplateLibraryFile;
+use App\Models\KnowledgeUser;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -65,11 +67,19 @@ function configureTemplateApiStorageDisk(string $url = 'https://s3dev.apitype.co
     ]);
 }
 
-test('public template list returns only ready active templates without pagination metadata', function () {
+function assignTemplateToKnowledgeUser(KnowledgeTemplate $template, KnowledgeUser $knowledgeUser): void
+{
+    $knowledgeUser->assignedKnowledgeTemplates()->attach($template->getKey());
+}
+
+test('user scoped template list returns only assigned ready active templates without pagination metadata', function () {
+    $knowledgeUser = KnowledgeUser::factory()->create();
+
     $availableTemplate = createReadyApiTemplate([
         'name' => '公文模板',
         'updated_at' => now()->subMinute(),
     ]);
+    assignTemplateToKnowledgeUser($availableTemplate, $knowledgeUser);
 
     KnowledgeTemplateField::factory()->count(2)->create([
         'template_id' => $availableTemplate->getKey(),
@@ -78,15 +88,19 @@ test('public template list returns only ready active templates without paginatio
     createReadyApiTemplate([
         'name' => '停用模板',
         'is_active' => false,
-    ]);
+    ])->assignedKnowledgeUsers()->attach($knowledgeUser->getKey());
 
     KnowledgeTemplate::factory()->create([
         'name' => '待解析模板',
         'parse_status' => KnowledgeTemplate::PARSE_STATUS_PENDING,
         'parsed_at' => null,
+    ])->assignedKnowledgeUsers()->attach($knowledgeUser->getKey());
+
+    createReadyApiTemplate([
+        'name' => '未分配模板',
     ]);
 
-    $response = $this->getJson('/api/knowledge-templates');
+    $response = $this->getJson("/api/users/{$knowledgeUser->getKey()}/knowledge-templates");
 
     $response->assertSuccessful()
         ->assertJsonCount(1, 'data')
@@ -97,11 +111,13 @@ test('public template list returns only ready active templates without paginatio
         ->assertJsonMissingPath('meta');
 });
 
-test('public template detail returns fields and system prompt for ready templates', function () {
+test('user scoped template detail returns fields system prompt and reference libraries', function () {
+    $knowledgeUser = KnowledgeUser::factory()->create();
     $template = createReadyApiTemplate([
         'name' => '拟办模板',
         'system_prompt' => '请提取字段后生成结构化内容。',
     ]);
+    assignTemplateToKnowledgeUser($template, $knowledgeUser);
 
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
@@ -121,27 +137,37 @@ test('public template detail returns fields and system prompt for ready template
         'locations_json' => [['part' => 'word/document.xml', 'block' => '段落 1']],
     ]);
 
-    $response = $this->getJson("/api/knowledge-templates/{$template->getKey()}");
+    $library = KnowledgeTemplateLibrary::factory()->create([
+        'name' => '规章制度库',
+        'storage_prefix' => 'ops/rules',
+    ]);
+    $template->referenceLibraries()->attach($library->getKey());
+
+    KnowledgeTemplateLibraryFile::factory()->create([
+        'library_id' => $library->getKey(),
+    ]);
+
+    $response = $this->getJson("/api/users/{$knowledgeUser->getKey()}/knowledge-templates/{$template->getKey()}");
 
     $response->assertSuccessful()
         ->assertJsonPath('data.id', $template->getKey())
         ->assertJsonPath('data.system_prompt', '请提取字段后生成结构化内容。')
         ->assertJsonPath('data.fields.0.name', 'customer_name')
-        ->assertJsonPath('data.fields.1.name', 'contract_code');
+        ->assertJsonPath('data.fields.1.name', 'contract_code')
+        ->assertJsonPath('data.reference_libraries.0.name', '规章制度库')
+        ->assertJsonPath('data.reference_libraries.0.storage_prefix', 'ops/rules')
+        ->assertJsonPath('data.reference_libraries.0.file_count', 1);
 });
 
-test('template detail returns not found for unavailable templates', function () {
-    $template = KnowledgeTemplate::factory()->create([
-        'parse_status' => KnowledgeTemplate::PARSE_STATUS_PENDING,
-        'is_active' => true,
-        'parsed_at' => null,
-    ]);
+test('template detail returns not found for unassigned templates', function () {
+    $knowledgeUser = KnowledgeUser::factory()->create();
+    $template = createReadyApiTemplate();
 
-    $this->getJson("/api/knowledge-templates/{$template->getKey()}")
+    $this->getJson("/api/users/{$knowledgeUser->getKey()}/knowledge-templates/{$template->getKey()}")
         ->assertNotFound();
 });
 
-test('public export endpoint stores rendered files and returns owner user details', function () {
+test('user scoped export endpoint stores rendered files and returns owner user details', function () {
     configureTemplateApiStorageDisk();
     config()->set('knowledge-templates.storage_disk', 'kb_templates');
     config()->set('knowledge-templates.exports.disk', 'kb_templates');
@@ -172,6 +198,11 @@ test('public export endpoint stores rendered files and returns owner user detail
         'template_type' => KnowledgeTemplate::TYPE_DOCX,
         'checksum_sha256' => hash('sha256', $templateContents),
     ]);
+    $knowledgeUser = KnowledgeUser::factory()->create([
+        'name' => '张三',
+        'username' => 'zhangsan',
+    ]);
+    assignTemplateToKnowledgeUser($template, $knowledgeUser);
 
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
@@ -189,12 +220,7 @@ test('public export endpoint stores rendered files and returns owner user detail
         'locations_json' => [],
     ]);
 
-    $user = User::factory()->create([
-        'name' => '张三',
-        'username' => 'zhangsan',
-    ]);
-
-    $response = $this->postJson("/api/users/{$user->getKey()}/knowledge-templates/{$template->getKey()}/exports", [
+    $response = $this->postJson("/api/users/{$knowledgeUser->getKey()}/knowledge-templates/{$template->getKey()}/exports", [
         'parameters' => [
             'customer_name' => '研发&测试中心',
             'contract_code' => 'CN-42',
@@ -203,7 +229,7 @@ test('public export endpoint stores rendered files and returns owner user detail
 
     $response->assertCreated()
         ->assertJsonPath('data.template_id', $template->getKey())
-        ->assertJsonPath('data.owner_user.id', $user->getKey())
+        ->assertJsonPath('data.owner_user.id', $knowledgeUser->getKey())
         ->assertJsonPath('data.owner_user.name', '张三')
         ->assertJsonPath('data.owner_user.username', 'zhangsan');
 
@@ -217,7 +243,7 @@ test('public export endpoint stores rendered files and returns owner user detail
     $documentXml = readApiArchiveEntry($renderedContents, 'word/document.xml');
     $decodedDocumentXml = html_entity_decode($documentXml, ENT_QUOTES | ENT_XML1, 'UTF-8');
 
-    expect($export->owner_user_id)->toBe($user->getKey())
+    expect($export->owner_user_id)->toBe($knowledgeUser->getKey())
         ->and($export->template_id)->toBe($template->getKey())
         ->and(Storage::disk('kb_templates')->exists($export->output_path))->toBeTrue()
         ->and($documentXml)->toContain('&amp;')
@@ -227,7 +253,7 @@ test('public export endpoint stores rendered files and returns owner user detail
         ->and($documentXml)->not->toContain('{{contract_code}}');
 });
 
-test('public export endpoint validates required template parameters', function () {
+test('user scoped export endpoint validates required template parameters', function () {
     Storage::fake('kb_templates');
     config()->set('knowledge-templates.storage_disk', 'kb_templates');
     config()->set('knowledge-templates.exports.disk', 'kb_templates');
@@ -252,6 +278,8 @@ test('public export endpoint validates required template parameters', function (
         'source_filename' => 'validation-template.docx',
         'checksum_sha256' => hash('sha256', $templateContents),
     ]);
+    $knowledgeUser = KnowledgeUser::factory()->create();
+    assignTemplateToKnowledgeUser($template, $knowledgeUser);
 
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
@@ -267,9 +295,7 @@ test('public export endpoint validates required template parameters', function (
         'locations_json' => [],
     ]);
 
-    $user = User::factory()->create();
-
-    $this->postJson("/api/users/{$user->getKey()}/knowledge-templates/{$template->getKey()}/exports", [
+    $this->postJson("/api/users/{$knowledgeUser->getKey()}/knowledge-templates/{$template->getKey()}/exports", [
         'parameters' => [
             'customer_name' => '测试用户',
         ],
@@ -277,7 +303,7 @@ test('public export endpoint validates required template parameters', function (
         ->assertJsonValidationErrors(['parameters']);
 });
 
-test('public export endpoint validates unexpected template parameters', function () {
+test('user scoped export endpoint validates unexpected template parameters', function () {
     Storage::fake('kb_templates');
     config()->set('knowledge-templates.storage_disk', 'kb_templates');
     config()->set('knowledge-templates.exports.disk', 'kb_templates');
@@ -301,6 +327,8 @@ test('public export endpoint validates unexpected template parameters', function
         'source_filename' => 'unexpected-field-template.docx',
         'checksum_sha256' => hash('sha256', $templateContents),
     ]);
+    $knowledgeUser = KnowledgeUser::factory()->create();
+    assignTemplateToKnowledgeUser($template, $knowledgeUser);
 
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
@@ -309,9 +337,7 @@ test('public export endpoint validates unexpected template parameters', function
         'locations_json' => [],
     ]);
 
-    $user = User::factory()->create();
-
-    $this->postJson("/api/users/{$user->getKey()}/knowledge-templates/{$template->getKey()}/exports", [
+    $this->postJson("/api/users/{$knowledgeUser->getKey()}/knowledge-templates/{$template->getKey()}/exports", [
         'parameters' => [
             'customer_name' => '测试用户',
             'unexpected_field' => 'ignored',
@@ -323,11 +349,11 @@ test('public export endpoint validates unexpected template parameters', function
 test('export records can be queried by user with pagination and owner name', function () {
     config()->set('filesystems.disks.kb_templates.url', 'https://s3dev.apitype.com/ops-agent-kit');
 
-    $user = User::factory()->create([
+    $user = KnowledgeUser::factory()->create([
         'name' => '李四',
         'username' => 'lisi',
     ]);
-    $otherUser = User::factory()->create([
+    $otherUser = KnowledgeUser::factory()->create([
         'name' => '王五',
         'username' => 'wangwu',
     ]);

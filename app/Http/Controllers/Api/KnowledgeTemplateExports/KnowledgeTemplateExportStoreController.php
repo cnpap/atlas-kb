@@ -6,27 +6,27 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreKnowledgeTemplateExportRequest;
 use App\Http\Resources\KnowledgeTemplateExportResource;
 use App\Models\KnowledgeTemplate;
-use App\Models\User;
+use App\Models\KnowledgeUser;
 use App\Support\KnowledgeTemplates\TemplateExportService;
 use Illuminate\Http\JsonResponse;
 
 class KnowledgeTemplateExportStoreController extends Controller
 {
     public function __invoke(
-        User $user,
-        KnowledgeTemplate $availableKnowledgeTemplate,
+        KnowledgeUser $knowledgeUser,
+        KnowledgeTemplate $assignedKnowledgeTemplate,
         StoreKnowledgeTemplateExportRequest $request,
         TemplateExportService $templateExportService,
     ): JsonResponse {
         $export = $templateExportService->create(
-            $availableKnowledgeTemplate,
-            $user,
-            $request->parameters($availableKnowledgeTemplate),
+            $assignedKnowledgeTemplate,
+            $knowledgeUser,
+            $request->parameters($assignedKnowledgeTemplate),
         );
 
         $export->load([
             'ownerUser',
-            'template' => fn ($query) => $query->withCount('fields'),
+            'template' => fn ($query) => $query->withCount(['fields', 'referenceLibraries']),
         ]);
 
         return KnowledgeTemplateExportResource::make($export)

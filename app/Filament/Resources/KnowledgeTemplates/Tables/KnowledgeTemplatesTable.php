@@ -35,6 +35,14 @@ class KnowledgeTemplatesTable
                     ->label('字段数')
                     ->counts('fields')
                     ->sortable(),
+                TextColumn::make('assigned_knowledge_users_count')
+                    ->label('可用用户数')
+                    ->counts('assignedKnowledgeUsers')
+                    ->sortable(),
+                TextColumn::make('reference_libraries_count')
+                    ->label('资料库数')
+                    ->counts('referenceLibraries')
+                    ->sortable(),
                 IconColumn::make('is_active')
                     ->label('启用')
                     ->boolean()

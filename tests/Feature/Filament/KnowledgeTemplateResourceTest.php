@@ -8,6 +8,8 @@ use App\Filament\Resources\KnowledgeTemplates\RelationManagers\FieldsRelationMan
 use App\Jobs\ParseKnowledgeTemplate;
 use App\Models\KnowledgeTemplate;
 use App\Models\KnowledgeTemplateField;
+use App\Models\KnowledgeTemplateLibrary;
+use App\Models\KnowledgeUser;
 use App\Models\User;
 use App\Support\AdminRoles;
 use Illuminate\Http\UploadedFile;
@@ -61,6 +63,8 @@ test('knowledge template create page is rendered in simplified chinese', functio
     $response->assertSee('模板市场');
     $response->assertSee('模板名称');
     $response->assertSee('系统级提示词');
+    $response->assertSee('可用用户');
+    $response->assertSee('关联资料库');
     $response->assertSee('模板文件');
 });
 
@@ -71,6 +75,14 @@ test('admin users can create a knowledge template from filament', function () {
     config()->set('knowledge-templates.ai.enabled', false);
 
     $admin = createAdminUser();
+    $knowledgeUser = KnowledgeUser::factory()->create([
+        'username' => 'template_user',
+        'name' => 'Template User',
+    ]);
+    $library = KnowledgeTemplateLibrary::factory()->create([
+        'name' => '政策资料库',
+        'storage_prefix' => 'ops/manuals',
+    ]);
     $file = UploadedFile::fake()->createWithContent(
         'briefing-template.docx',
         createFilamentDocxTemplate([
@@ -92,17 +104,21 @@ test('admin users can create a knowledge template from filament', function () {
             'name' => '拟办意见模板',
             'system_prompt' => '请根据模板字段生成结构化表单。',
             'is_active' => true,
+            'assignedKnowledgeUsers' => [$knowledgeUser->getKey()],
+            'referenceLibraries' => [$library->getKey()],
             'template_upload' => $file,
         ])
         ->call('create')
         ->assertHasNoFormErrors()
         ->assertRedirect();
 
-    $template = KnowledgeTemplate::query()->sole();
+    $template = KnowledgeTemplate::query()->with(['assignedKnowledgeUsers', 'referenceLibraries'])->sole();
 
     expect($template->name)->toBe('拟办意见模板')
         ->and($template->template_type)->toBe(KnowledgeTemplate::TYPE_DOCX)
         ->and($template->parse_status)->toBe(KnowledgeTemplate::PARSE_STATUS_PENDING)
+        ->and($template->assignedKnowledgeUsers->modelKeys())->toBe([$knowledgeUser->getKey()])
+        ->and($template->referenceLibraries->modelKeys())->toBe([$library->getKey()])
         ->and(Storage::disk('kb_templates')->exists($template->source_path))->toBeTrue();
 
     Queue::assertPushed(ParseKnowledgeTemplate::class, fn (ParseKnowledgeTemplate $job): bool => $job->templateId === $template->getKey()

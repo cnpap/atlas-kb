@@ -4,6 +4,7 @@ namespace App\Http\Resources;
 
 use App\Models\KnowledgeTemplate;
 use App\Models\KnowledgeTemplateField;
+use App\Models\KnowledgeTemplateLibrary;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -32,6 +33,16 @@ class KnowledgeTemplateDetailResource extends JsonResource
                         'description' => $field->description,
                         'sort_order' => $field->sort_order,
                         'locations' => $field->locations_json,
+                    ];
+                })
+                ->all(),
+            'reference_libraries' => $this->referenceLibraries
+                ->map(function (KnowledgeTemplateLibrary $library): array {
+                    return [
+                        'id' => $library->id,
+                        'name' => $library->name,
+                        'storage_prefix' => $library->storage_prefix,
+                        'file_count' => $library->files->count(),
                     ];
                 })
                 ->all(),

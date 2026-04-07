@@ -45,11 +45,11 @@ class KnowledgeTemplateExport extends Model
     }
 
     /**
-     * @return BelongsTo<User, $this>
+     * @return BelongsTo<KnowledgeUser, $this>
      */
     public function ownerUser(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'owner_user_id');
+        return $this->belongsTo(KnowledgeUser::class, 'owner_user_id');
     }
 
     public function downloadUrl(): string

@@ -3,9 +3,11 @@
 namespace App\Providers;
 
 use App\Models\KnowledgeTemplate;
+use App\Models\KnowledgeUser;
 use Carbon\CarbonImmutable;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
@@ -85,8 +87,13 @@ class AppServiceProvider extends ServiceProvider
 
     protected function configureRouteBindings(): void
     {
-        Route::bind('availableKnowledgeTemplate', function (string $value): KnowledgeTemplate {
-            return KnowledgeTemplate::query()
+        Route::bind('assignedKnowledgeTemplate', function (string $value, RoutingRoute $route): KnowledgeTemplate {
+            $routeKnowledgeUser = $route->parameter('knowledgeUser');
+            $knowledgeUser = $routeKnowledgeUser instanceof KnowledgeUser
+                ? $routeKnowledgeUser
+                : KnowledgeUser::query()->findOrFail((string) $routeKnowledgeUser);
+
+            return $knowledgeUser->assignedKnowledgeTemplates()
                 ->available()
                 ->with('fields')
                 ->findOrFail($value);

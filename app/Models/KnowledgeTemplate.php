@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 
@@ -79,6 +80,32 @@ class KnowledgeTemplate extends Model
     {
         return $this->hasMany(KnowledgeTemplateExport::class, 'template_id')
             ->orderByDesc('created_at');
+    }
+
+    /**
+     * @return BelongsToMany<KnowledgeUser, covariant $this>
+     */
+    public function assignedKnowledgeUsers(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            KnowledgeUser::class,
+            'kb_template_user_assignments',
+            'template_id',
+            'user_id',
+        )->orderBy('username');
+    }
+
+    /**
+     * @return BelongsToMany<KnowledgeTemplateLibrary, covariant $this>
+     */
+    public function referenceLibraries(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            KnowledgeTemplateLibrary::class,
+            'kb_template_library_assignments',
+            'template_id',
+            'library_id',
+        )->orderBy('name');
     }
 
     public function scopeAvailable(Builder $query): Builder

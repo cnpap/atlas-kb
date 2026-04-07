@@ -5,11 +5,13 @@ namespace App\Filament\Resources\KnowledgeTemplates\Schemas;
 use App\Filament\Resources\KnowledgeTemplates\KnowledgeTemplateResource;
 use App\Models\KnowledgeTemplate;
 use Filament\Forms\Components\FileUpload;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use Illuminate\Database\Eloquent\Builder;
 
 class KnowledgeTemplateForm
 {
@@ -35,6 +37,32 @@ class KnowledgeTemplateForm
                         Toggle::make('is_active')
                             ->label('启用模板')
                             ->default(true),
+                    ]),
+                Section::make('分配与资料')
+                    ->columns(2)
+                    ->components([
+                        Select::make('assignedKnowledgeUsers')
+                            ->label('可用用户')
+                            ->multiple()
+                            ->relationship(
+                                titleAttribute: 'username',
+                                modifyQueryUsing: fn (Builder $query): Builder => $query->orderBy('username'),
+                            )
+                            ->searchable()
+                            ->preload()
+                            ->helperText('仅已分配的知识库用户可以通过内部 API 查看和导出该模板。')
+                            ->columnSpanFull(),
+                        Select::make('referenceLibraries')
+                            ->label('关联资料库')
+                            ->multiple()
+                            ->relationship(
+                                titleAttribute: 'name',
+                                modifyQueryUsing: fn (Builder $query): Builder => $query->orderBy('name'),
+                            )
+                            ->searchable()
+                            ->preload()
+                            ->helperText('后续智能体链路会按这里关联的资料库读取参考资料。')
+                            ->columnSpanFull(),
                     ]),
                 Section::make('模板文件')
                     ->columns(2)

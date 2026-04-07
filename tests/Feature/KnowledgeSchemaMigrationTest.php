@@ -109,14 +109,15 @@ test('knowledge base tables are created with the expected contract', function ()
         'kb_chat_sessions' => [
             'columns' => [
                 'owner_user_id' => ['data_type' => 'bigint', 'is_nullable' => 'NO'],
-                'collection_id' => ['data_type' => 'text', 'is_nullable' => 'YES'],
+                'collection_id' => ['data_type' => 'text', 'is_nullable' => 'NO'],
                 'last_message_at' => ['data_type' => 'timestamp with time zone', 'is_nullable' => 'NO'],
             ],
             'indexes' => [
                 'idx_kb_chat_sessions_owner' => 'owner_user_id, last_message_at DESC',
+                'idx_kb_chat_sessions_collection' => 'owner_user_id, collection_id, last_message_at DESC',
             ],
             'foreign_keys' => [
-                'FOREIGN KEY (collection_id) REFERENCES kb_collections(id) ON DELETE SET NULL',
+                'FOREIGN KEY (collection_id) REFERENCES kb_collections(id) ON DELETE CASCADE',
                 'FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE',
             ],
         ],
@@ -207,6 +208,60 @@ test('knowledge base tables are created with the expected contract', function ()
             ],
             'foreign_keys' => [
                 'FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE',
+                'FOREIGN KEY (template_id) REFERENCES kb_templates(id) ON DELETE CASCADE',
+            ],
+        ],
+        'kb_template_libraries' => [
+            'columns' => [
+                'name' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+                'storage_prefix' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+            ],
+            'indexes' => [
+                'idx_kb_template_libraries_updated_at' => 'updated_at DESC',
+                'kb_template_libraries_storage_prefix_unique' => 'UNIQUE',
+            ],
+            'foreign_keys' => [],
+        ],
+        'kb_template_library_files' => [
+            'columns' => [
+                'library_id' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+                'byte_size' => ['data_type' => 'bigint', 'is_nullable' => 'NO'],
+                'checksum_sha256' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+            ],
+            'indexes' => [
+                'idx_kb_template_library_files_library' => 'library_id, created_at DESC',
+            ],
+            'foreign_keys' => [
+                'FOREIGN KEY (library_id) REFERENCES kb_template_libraries(id) ON DELETE CASCADE',
+            ],
+        ],
+        'kb_template_user_assignments' => [
+            'columns' => [
+                'template_id' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+                'user_id' => ['data_type' => 'bigint', 'is_nullable' => 'NO'],
+                'created_at' => ['data_type' => 'timestamp with time zone', 'is_nullable' => 'NO'],
+            ],
+            'indexes' => [
+                'idx_kb_template_user_assignments_user' => 'user_id, template_id',
+                'kb_template_user_assignments_unique' => 'UNIQUE',
+            ],
+            'foreign_keys' => [
+                'FOREIGN KEY (template_id) REFERENCES kb_templates(id) ON DELETE CASCADE',
+                'FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE',
+            ],
+        ],
+        'kb_template_library_assignments' => [
+            'columns' => [
+                'template_id' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+                'library_id' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+                'created_at' => ['data_type' => 'timestamp with time zone', 'is_nullable' => 'NO'],
+            ],
+            'indexes' => [
+                'idx_kb_template_library_assignments_library' => 'library_id, template_id',
+                'kb_template_library_assignments_unique' => 'UNIQUE',
+            ],
+            'foreign_keys' => [
+                'FOREIGN KEY (library_id) REFERENCES kb_template_libraries(id) ON DELETE CASCADE',
                 'FOREIGN KEY (template_id) REFERENCES kb_templates(id) ON DELETE CASCADE',
             ],
         ],

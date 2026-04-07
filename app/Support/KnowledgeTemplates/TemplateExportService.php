@@ -4,7 +4,7 @@ namespace App\Support\KnowledgeTemplates;
 
 use App\Models\KnowledgeTemplate;
 use App\Models\KnowledgeTemplateExport;
-use App\Models\User;
+use App\Models\KnowledgeUser;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -22,7 +22,7 @@ class TemplateExportService
      */
     public function create(
         KnowledgeTemplate $template,
-        User $ownerUser,
+        KnowledgeUser $ownerUser,
         array $parameters,
     ): KnowledgeTemplateExport {
         $sourceContents = $this->fileManager->readStoredBytes($template);

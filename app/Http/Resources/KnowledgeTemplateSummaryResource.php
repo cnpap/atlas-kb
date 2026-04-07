@@ -25,6 +25,7 @@ class KnowledgeTemplateSummaryResource extends JsonResource
             'template_type' => $this->template_type,
             'source_filename' => $this->source_filename,
             'field_count' => (int) $this->fields_count,
+            'reference_library_count' => (int) ($this->reference_libraries_count ?? 0),
             'parsed_at' => $this->parsed_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];

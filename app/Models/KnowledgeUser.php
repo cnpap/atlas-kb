@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Str;
 
 #[Table(name: 'users')]
@@ -44,5 +45,18 @@ class KnowledgeUser extends Model
         return Attribute::make(
             set: fn (string $value): string => static::normalizeUsername($value),
         );
+    }
+
+    /**
+     * @return BelongsToMany<KnowledgeTemplate, covariant $this>
+     */
+    public function assignedKnowledgeTemplates(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            KnowledgeTemplate::class,
+            'kb_template_user_assignments',
+            'user_id',
+            'template_id',
+        )->orderByDesc('updated_at');
     }
 }

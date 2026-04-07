@@ -50,7 +50,7 @@ class StoreKnowledgeTemplateExportRequest extends FormRequest
                     return;
                 }
 
-                $template = $this->route('availableKnowledgeTemplate');
+                $template = $this->route('assignedKnowledgeTemplate');
 
                 if (! $template instanceof KnowledgeTemplate) {
                     return;

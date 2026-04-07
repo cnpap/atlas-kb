@@ -4,7 +4,7 @@ namespace Database\Factories;
 
 use App\Models\KnowledgeTemplate;
 use App\Models\KnowledgeTemplateExport;
-use App\Models\User;
+use App\Models\KnowledgeUser;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Str;
 
@@ -26,7 +26,7 @@ class KnowledgeTemplateExportFactory extends Factory
                 'parse_status' => KnowledgeTemplate::PARSE_STATUS_READY,
                 'parsed_at' => now(),
             ]),
-            'owner_user_id' => User::factory(),
+            'owner_user_id' => KnowledgeUser::factory(),
             'output_disk' => 'kb_templates',
             'output_path' => 'kb/template-exports/'.Str::uuid().'.docx',
             'output_filename' => 'template-export.docx',
