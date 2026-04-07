@@ -15,6 +15,7 @@
     deleteChatSessionRequest,
     deleteKnowledgeCollectionRequest,
     deleteKnowledgeSourceRequest,
+    downloadKnowledgeExportTaskRequest,
     downloadKnowledgeSourceRequest,
     fetchChatMessagesRequest,
     fetchKnowledgeCollectionSources,
@@ -906,13 +907,18 @@
   }
 
   function handleDownloadExportResult() {
-    const downloadUrl = selectedTaskDetail.value?.exportFile?.downloadUrl;
+    const task = selectedTaskDetail.value;
 
-    if (!downloadUrl) {
+    if (!task?.exportFile) {
       return;
     }
 
-    window.open(downloadUrl, "_blank", "noopener,noreferrer");
+    void downloadKnowledgeExportTaskRequest({
+      taskId: task.id,
+      filename: task.exportFile.outputFilename,
+    }).catch((cause) => {
+      error.value = cause instanceof Error ? cause.message : "导出结果下载失败";
+    });
   }
 
   async function restoreWorkspaceState() {

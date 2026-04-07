@@ -86,7 +86,7 @@
     :open="open"
     :close="!pending"
     :title="task ? `${task.templateName} · ${task.sourceTitle}` : '导出任务详情'"
-    description="导出完成后可以在这里查看结果、修改字段并重新保存。"
+    description="导出完成后可以在这里下载结果、修改字段并重新保存。"
     @update:open="updateOpen"
   >
     <template #body>
@@ -147,7 +147,7 @@
               @click="$emit('download', task)"
             >
               <Download class="size-4" />
-              <span class="text-xs">查看结果</span>
+              <span class="text-xs">下载</span>
             </button>
           </div>
 

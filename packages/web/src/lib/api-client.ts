@@ -640,3 +640,43 @@ export async function updateKnowledgeExportTaskRequest(params: {
     },
   );
 }
+
+export async function downloadKnowledgeExportTaskRequest(params: {
+  filename?: string;
+  taskId: string;
+}): Promise<void> {
+  const token = getAuthToken();
+  const response = await fetch(
+    resolveRequestUrl(
+      `/api/kb/export-tasks/${encodeURIComponent(params.taskId)}/download`,
+      token,
+      "GET",
+    ),
+    {
+      headers: {
+        Accept: "*/*",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    },
+  );
+
+  if (response.status === 401) {
+    clearAuthToken();
+    notifyAuthExpired();
+  }
+
+  if (!response.ok) {
+    throw new Error(`导出结果下载失败 (${response.status})`);
+  }
+
+  const blob = await response.blob();
+  const objectUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = params.filename || "export-result";
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(objectUrl);
+}

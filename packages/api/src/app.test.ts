@@ -312,6 +312,16 @@ function mockProviders() {
           );
         }
 
+        if (parsedUrl.pathname.endsWith("/download")) {
+          return new Response("mock export body", {
+            headers: {
+              "Content-Disposition": 'attachment; filename="mock-export.xlsx"',
+              "Content-Type":
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            },
+          });
+        }
+
         if ((init?.method || "GET").toUpperCase() === "PATCH") {
           task.parameters = {
             ...body.parameters,
@@ -1186,6 +1196,31 @@ describe("@atlas-kb/api knowledge endpoints", () => {
     expect(updatedTask.task.exportFile?.outputFilename).toBe(
       "拟办意见-已更新.xlsx",
     );
+  });
+
+  it("downloads export task files through the authenticated atlas-kb route", async () => {
+    const app = createApp();
+    const session = await login(app);
+
+    const response = await app.handle(
+      new Request(
+        "http://localhost/api/kb/export-tasks/task-existing/download",
+        {
+          headers: {
+            Authorization: `Bearer ${session.token}`,
+          },
+        },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    expect(response.headers.get("content-disposition")).toContain(
+      "mock-export.xlsx",
+    );
+    expect(await response.text()).toBe("mock export body");
   });
 
   it("isolates data between authenticated users", async () => {

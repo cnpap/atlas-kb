@@ -46,6 +46,29 @@ async function requestAdminInternal<T>(
   return readJson<T>(response);
 }
 
+async function requestAdminInternalResponse(
+  path: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const response = await fetch(`${getAdminApiBaseUrl()}${path}`, {
+    ...init,
+    headers: {
+      Accept: "*/*",
+      "X-Atlas-Kb-Internal-Secret": requireInternalSecret(),
+      ...(init?.headers ?? {}),
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(
+      `Admin request failed (${response.status}): ${text.trim() || response.statusText}`,
+    );
+  }
+
+  return response;
+}
+
 export async function listKnowledgeTemplatesFromAdmin(
   userId: string,
 ): Promise<KnowledgeTemplateSummary[]> {
@@ -138,4 +161,25 @@ export async function updateKnowledgeExportTaskInAdmin(args: {
   );
 
   return payload.data;
+}
+
+export async function downloadKnowledgeExportTaskFromAdmin(args: {
+  taskId: string;
+  userId: string;
+}): Promise<{
+  contentDisposition?: string;
+  contentType: string;
+  data: ArrayBuffer;
+}> {
+  const response = await requestAdminInternalResponse(
+    `/api/internal/knowledge-template-export-tasks/${encodeURIComponent(args.taskId)}/download?user_id=${encodeURIComponent(args.userId)}`,
+  );
+
+  return {
+    contentDisposition:
+      response.headers.get("content-disposition") ?? undefined,
+    contentType:
+      response.headers.get("content-type") ?? "application/octet-stream",
+    data: await response.arrayBuffer(),
+  };
 }

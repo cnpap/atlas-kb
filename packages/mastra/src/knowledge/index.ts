@@ -71,6 +71,7 @@ export {
 } from "./object-storage";
 export {
   createKnowledgeExportTaskInAdmin,
+  downloadKnowledgeExportTaskFromAdmin,
   getKnowledgeExportTaskDetailFromAdmin,
   getKnowledgeTemplateDetailFromAdmin,
   listKnowledgeExportTasksFromAdmin,

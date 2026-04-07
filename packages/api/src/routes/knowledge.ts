@@ -4,6 +4,7 @@ import {
   createKnowledgeExportTaskInAdmin,
   deleteKnowledgeCollection,
   deleteKnowledgeSource,
+  downloadKnowledgeExportTaskFromAdmin,
   generateKnowledgeTemplateExportPayload,
   getKnowledgeCollectionData,
   getKnowledgeCollectionSourcesData,
@@ -289,6 +290,28 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
     {
       params: KnowledgeExportTaskIdParamsSchema,
       response: KnowledgeExportTaskDetailResponseSchema,
+    },
+  )
+  .get(
+    "/export-tasks/:taskId/download",
+    async ({ headers, params }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      const file = await downloadKnowledgeExportTaskFromAdmin({
+        userId: session.user.id,
+        taskId: params.taskId,
+      });
+
+      return new Response(file.data, {
+        headers: {
+          "Content-Disposition":
+            file.contentDisposition ??
+            `attachment; filename="${params.taskId}.bin"`,
+          "Content-Type": file.contentType,
+        },
+      });
+    },
+    {
+      params: KnowledgeExportTaskIdParamsSchema,
     },
   )
   .patch(
