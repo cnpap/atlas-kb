@@ -30,8 +30,9 @@ class InternalKnowledgeTemplateExportTaskResource extends JsonResource
             'startedAt' => $this->formatAtlasKbTimestamp($this->started_at),
             'completedAt' => $this->formatAtlasKbTimestamp($this->completed_at),
             'failedAt' => $this->formatAtlasKbTimestamp($this->failed_at),
-            'exportFile' => $this->export
-                ? [
+            'exportFile' => $this->when(
+                $this->export !== null,
+                fn (): array => [
                     'id' => $this->export->id,
                     'templateId' => $this->export->template_id,
                     'outputFilename' => $this->export->output_filename,
@@ -40,8 +41,8 @@ class InternalKnowledgeTemplateExportTaskResource extends JsonResource
                     'downloadUrl' => $this->export->downloadUrl(),
                     'expiresAt' => $this->formatAtlasKbTimestamp($this->export->expires_at),
                     'createdAt' => $this->formatAtlasKbTimestamp($this->export->created_at),
-                ]
-                : null,
+                ],
+            ),
         ];
     }
 }

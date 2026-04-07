@@ -16,8 +16,7 @@ class StoreKnowledgeTemplateExportTaskRequest extends FormRequest
         return [
             'user_id' => ['required', 'integer', 'min:1'],
             'source_id' => ['required', 'string'],
-            'task_type' => ['nullable', 'string'],
-            'template_id' => ['nullable', 'string'],
+            'template_id' => ['required', 'string'],
         ];
     }
 
@@ -33,15 +32,11 @@ class StoreKnowledgeTemplateExportTaskRequest extends FormRequest
 
     public function taskType(): string
     {
-        $value = trim((string) $this->input('task_type', 'briefing'));
-
-        return $value !== '' ? $value : 'briefing';
+        return 'template';
     }
 
-    public function templateId(): ?string
+    public function templateId(): string
     {
-        $value = trim((string) $this->input('template_id', ''));
-
-        return $value !== '' ? $value : null;
+        return trim((string) $this->input('template_id'));
     }
 }

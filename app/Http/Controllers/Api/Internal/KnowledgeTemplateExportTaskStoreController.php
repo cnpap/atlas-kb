@@ -26,13 +26,13 @@ class KnowledgeTemplateExportTaskStoreController extends Controller
 
         abort_unless($source !== null, 404, 'Source not found.');
 
-        $template = $this->resolveTemplate($user, $request->templateId(), $request->taskType());
+        $template = $this->resolveTemplate($user, $request->templateId());
 
         $existingTask = KnowledgeTemplateExportTask::query()
             ->with('export')
             ->where('owner_user_id', $user->getKey())
             ->where('source_id', $request->sourceId())
-            ->where('task_type', $request->taskType())
+            ->where('template_id', $template->getKey())
             ->whereIn('status', [
                 KnowledgeTemplateExportTask::STATUS_PENDING,
                 KnowledgeTemplateExportTask::STATUS_PROCESSING,
@@ -41,16 +41,16 @@ class KnowledgeTemplateExportTaskStoreController extends Controller
             ->first();
 
         if ($existingTask) {
-          return InternalKnowledgeTemplateExportTaskResource::make($existingTask)
-              ->response()
-              ->setStatusCode(200);
+            return InternalKnowledgeTemplateExportTaskResource::make($existingTask)
+                ->response()
+                ->setStatusCode(200);
         }
 
         $task = KnowledgeTemplateExportTask::query()->create([
             'owner_user_id' => $user->getKey(),
             'source_id' => $request->sourceId(),
             'source_title' => (string) $source->title,
-            'task_type' => $request->taskType(),
+            'task_type' => 'template',
             'template_id' => $template->getKey(),
             'template_name' => $template->name,
             'status' => KnowledgeTemplateExportTask::STATUS_PENDING,
@@ -67,29 +67,12 @@ class KnowledgeTemplateExportTaskStoreController extends Controller
 
     protected function resolveTemplate(
         KnowledgeUser $user,
-        ?string $templateId,
-        string $taskType,
+        string $templateId,
     ): KnowledgeTemplate {
-        $query = $user->assignedKnowledgeTemplates()
+        return $user->assignedKnowledgeTemplates()
             ->available()
-            ->with(['fields', 'referenceLibraries.files']);
-
-        if ($templateId) {
-            return $query
-                ->where('kb_templates.id', $templateId)
-                ->firstOrFail();
-        }
-
-        if ($taskType === 'briefing') {
-            $matched = (clone $query)
-                ->where('kb_templates.name', 'like', '%拟办%')
-                ->first();
-
-            if ($matched instanceof KnowledgeTemplate) {
-                return $matched;
-            }
-        }
-
-        return $query->firstOrFail();
+            ->with(['fields', 'referenceLibraries.files'])
+            ->where('kb_templates.id', $templateId)
+            ->firstOrFail();
     }
 }

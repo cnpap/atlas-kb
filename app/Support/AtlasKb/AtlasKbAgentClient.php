@@ -5,6 +5,7 @@ namespace App\Support\AtlasKb;
 use App\Models\KnowledgeTemplate;
 use App\Models\KnowledgeTemplateExportTask;
 use App\Models\KnowledgeUser;
+use DateTimeInterface;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use RuntimeException;
 
@@ -40,8 +41,8 @@ class AtlasKbAgentClient
                     'sourceFilename' => $template->source_filename,
                     'fieldCount' => $template->fields->count(),
                     'referenceLibraryCount' => $template->referenceLibraries->count(),
-                    'parsedAt' => $template->parsed_at?->toIso8601String(),
-                    'updatedAt' => $template->updated_at?->toIso8601String(),
+                    'parsedAt' => $this->formatAtlasKbTimestamp($template->parsed_at),
+                    'updatedAt' => $this->formatAtlasKbTimestamp($template->updated_at),
                     'systemPrompt' => (string) $template->system_prompt,
                     'fields' => $template->fields->map(fn ($field): array => [
                         'id' => $field->id,
@@ -77,5 +78,10 @@ class AtlasKbAgentClient
                 ->all(),
             'citations' => is_array($data['citations'] ?? null) ? $data['citations'] : [],
         ];
+    }
+
+    protected function formatAtlasKbTimestamp(?DateTimeInterface $value): ?string
+    {
+        return $value?->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.v\Z');
     }
 }

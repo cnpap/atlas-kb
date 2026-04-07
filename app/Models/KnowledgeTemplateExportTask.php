@@ -17,6 +17,7 @@ use Illuminate\Support\Str;
     'task_type',
     'template_id',
     'template_name',
+    'parameters_json',
     'status',
     'failure_message',
     'export_id',
@@ -58,6 +59,7 @@ class KnowledgeTemplateExportTask extends Model
     protected function casts(): array
     {
         return [
+            'parameters_json' => 'array',
             'created_at' => 'immutable_datetime',
             'updated_at' => 'immutable_datetime',
             'started_at' => 'immutable_datetime',

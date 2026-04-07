@@ -53,6 +53,7 @@ class RunKnowledgeTemplateExportTask implements ShouldQueue
             );
 
             $task->forceFill([
+                'parameters_json' => $payload['parameters'],
                 'status' => KnowledgeTemplateExportTask::STATUS_COMPLETED,
                 'export_id' => $export->id,
                 'completed_at' => now(),

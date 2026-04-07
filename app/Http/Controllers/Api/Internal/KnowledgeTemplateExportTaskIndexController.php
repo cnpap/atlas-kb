@@ -21,6 +21,10 @@ class KnowledgeTemplateExportTaskIndexController extends Controller
             $query->where('source_id', $request->sourceId());
         }
 
+        if ($request->taskIds() !== []) {
+            $query->whereIn('id', $request->taskIds());
+        }
+
         return InternalKnowledgeTemplateExportTaskResource::collection($query->get());
     }
 }
