@@ -9,11 +9,11 @@ import { searchKnowledge } from "../knowledge/search";
 const SEARCH_KNOWLEDGE_TOOL_ID = "search_knowledge";
 
 export function createSearchKnowledgeTool(
-  options: { defaultLimit?: number; lockedSpaceId?: string } = {},
+  options: { defaultLimit?: number; lockedCollectionId?: string } = {},
 ) {
-  const description = options.lockedSpaceId
-    ? `Search the Atlas KB knowledge space "${options.lockedSpaceId}" and return grounded document snippets.`
-    : "Search the Atlas KB knowledge spaces and return grounded document snippets.";
+  const description = options.lockedCollectionId
+    ? `Search the collection "${options.lockedCollectionId}" and return grounded document snippets.`
+    : "Search the collections and return grounded document snippets.";
 
   return createTool({
     id: SEARCH_KNOWLEDGE_TOOL_ID,
@@ -26,7 +26,7 @@ export function createSearchKnowledgeTool(
         {
           ...input,
           limit: input.limit ?? options.defaultLimit,
-          spaceId: options.lockedSpaceId ?? input.spaceId,
+          collectionId: options.lockedCollectionId ?? input.collectionId,
         },
         {
           userId: user.id,

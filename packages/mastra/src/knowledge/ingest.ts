@@ -1,43 +1,57 @@
+import { basename } from "node:path";
 import { BadRequestError } from "@atlas-kb/errors";
 import type {
   KnowledgeBatchFileImportRequest,
   KnowledgeBatchImportData,
   KnowledgeCollection,
-  KnowledgeFileImportRequest,
   KnowledgeImportData,
-  KnowledgeImportJob,
   KnowledgeSource,
   KnowledgeSourceUpdateRequest,
   KnowledgeTextImportRequest,
-  KnowledgeUploadMetadata,
   KnowledgeUrlImportRequest,
 } from "@atlas-kb/schema";
+import { hasEmbeddingConfig } from "./config";
 import {
+  allocateManagedSourceFileName,
+  buildManagedSourceFileName,
   buildTextSourceContent,
+  deleteManagedSourceFiles,
   extractFileContent,
+  overwriteStoredSourceFile,
   storeTextSourceFile,
   storeUploadedSourceFile,
-  writeSourceIndexText,
 } from "./storage";
-import { getKnowledgeServiceForUser } from "./runtime";
+import { getKnowledgeWorkspace, invalidateKnowledgeWorkspace } from "./runtime";
 import {
-  createImportJob,
-  createSourceDraft,
+  createKnowledgeSourceRecord,
   getStoredSourceRecord,
+  listKnowledgeSources,
   replaceSourceContent,
   requireKnowledgeCollection,
   requireKnowledgeSource,
-  updateImportJob,
 } from "./repository";
-import { buildSummary, normalizeWhitespace } from "./search-utils";
+import {
+  buildContentPreview,
+  buildSummary,
+  normalizeWhitespace,
+} from "./search-utils";
 
 type ImportResult = {
   collection: KnowledgeCollection;
   source: KnowledgeSource;
-  job: KnowledgeImportJob;
-  engine: "hybrid";
+  engine: "hybrid" | "lexical";
   indexed: boolean;
 };
+
+type SingleFileImportInput = {
+  summary?: string;
+  tags?: string[];
+  title?: string;
+};
+
+function getImportEngine(): ImportResult["engine"] {
+  return hasEmbeddingConfig() ? "hybrid" : "lexical";
+}
 
 function parseTags(tags?: string[]): string[] {
   return [...new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean))];
@@ -50,68 +64,137 @@ function resolveTitle(input: {
   return input.explicitTitle?.trim() || input.extractedTitle;
 }
 
-async function indexSourceDocument(args: {
-  userId: string;
-  indexPath: string;
+function buildIndexMetadata(args: {
+  collectionId: string;
+  source: Pick<
+    KnowledgeSource,
+    "id" | "sourceType" | "sourceFilename" | "sourceUrl" | "status"
+  >;
+  summary: string;
+  tags: string[];
   title: string;
 }) {
-  const service = await getKnowledgeServiceForUser(args.userId);
-
-  return service.indexKnowledgeDocument({
-    target: args.indexPath,
+  return {
+    collectionId: args.collectionId,
+    sourceFilename: args.source.sourceFilename,
+    sourceId: args.source.id,
+    sourceType: args.source.sourceType,
+    sourceUrl: args.source.sourceUrl,
+    status: args.source.status,
+    summary: args.summary,
+    tags: args.tags,
     title: args.title,
+  };
+}
+
+async function resolveManagedImportFileName(args: {
+  collectionId: string;
+  mimeType?: string;
+  sourceFilename?: string;
+  sourceId?: string;
+  sourceType: KnowledgeSource["sourceType"];
+  sourceUrl?: string;
+  title: string;
+  userId: string;
+}) {
+  const sources = await listKnowledgeSources(args.userId, args.collectionId);
+  const usedNames = new Set(
+    sources
+      .filter((source) => source.id !== args.sourceId)
+      .map(
+        (source) => source.sourceFilename?.trim() || source.documentId?.trim(),
+      )
+      .filter((value): value is string => Boolean(value)),
+  );
+
+  return allocateManagedSourceFileName(
+    buildManagedSourceFileName({
+      mimeType: args.mimeType,
+      sourceFilename: args.sourceFilename,
+      sourceType: args.sourceType,
+      sourceUrl: args.sourceUrl,
+      title: args.title,
+    }),
+    usedNames,
+  );
+}
+
+async function indexSourceDocument(args: {
+  collectionId: string;
+  content: string;
+  documentId: string;
+  mimeType?: string;
+  source: Pick<
+    KnowledgeSource,
+    "id" | "sourceType" | "sourceFilename" | "sourceUrl" | "status"
+  >;
+  summary: string;
+  tags: string[];
+  title: string;
+  userId: string;
+}) {
+  const workspace = await getKnowledgeWorkspace({
+    userId: args.userId,
+    collectionId: args.collectionId,
+  });
+
+  await workspace.index(args.documentId, args.content, {
+    mimeType: args.mimeType,
+    metadata: buildIndexMetadata(args),
   });
 }
 
-async function finalizeImport(args: {
-  userId: string;
-  collectionId: string;
-  source: KnowledgeSource;
-  job: KnowledgeImportJob;
-  title: string;
-  summary?: string;
-  content: string;
-  tags: string[];
-  mimeType?: string;
+async function createSuccessfulImport(args: {
   byteSize?: number;
-  sourceFilename?: string;
-  sourceUrl?: string;
+  collectionId: string;
+  content: string;
+  documentId: string;
+  mimeType?: string;
   originalPath?: string | null;
-  indexPath: string;
-}) {
-  await updateImportJob({
+  sourceFilename?: string;
+  sourceId: string;
+  sourceType: KnowledgeSource["sourceType"];
+  sourceUrl?: string;
+  summary?: string;
+  tags: string[];
+  title: string;
+  userId: string;
+}): Promise<KnowledgeImportData> {
+  await indexSourceDocument({
     userId: args.userId,
-    jobId: args.job.id,
-    stage: "embedding",
-    status: "processing",
-  });
-
-  const indexed = await indexSourceDocument({
-    userId: args.userId,
-    indexPath: args.indexPath,
+    collectionId: args.collectionId,
+    content: args.content,
+    documentId: args.documentId,
+    mimeType: args.mimeType,
+    source: {
+      id: args.sourceId,
+      sourceFilename: args.sourceFilename,
+      sourceType: args.sourceType,
+      sourceUrl: args.sourceUrl,
+      status: "ready",
+    },
+    summary: args.summary?.trim() || buildSummary(args.content),
+    tags: args.tags,
     title: args.title,
   });
-  const source = await replaceSourceContent({
+
+  const source = await createKnowledgeSourceRecord({
+    sourceId: args.sourceId,
     userId: args.userId,
-    sourceId: args.source.id,
-    documentId: indexed.documentId,
+    collectionId: args.collectionId,
+    documentId: args.documentId,
+    sourceType: args.sourceType,
     title: args.title,
     summary: args.summary,
     content: args.content,
     tags: args.tags,
-    mimeType: args.mimeType,
-    byteSize: args.byteSize,
     sourceFilename: args.sourceFilename,
     sourceUrl: args.sourceUrl,
+    mimeType: args.mimeType,
+    byteSize: args.byteSize,
     status: "ready",
     originalPath: args.originalPath,
-    indexPath: args.indexPath,
-  });
-  const job = await updateImportJob({
-    userId: args.userId,
-    jobId: args.job.id,
-    stage: "completed",
-    status: "ready",
+    indexPath: args.documentId,
   });
 
   return {
@@ -120,106 +203,63 @@ async function finalizeImport(args: {
       args.collectionId,
     ),
     source,
-    job,
-    engine: "hybrid" as const,
+    engine: getImportEngine(),
     indexed: true,
-  } satisfies ImportResult;
+  };
 }
 
-async function failImport(args: {
-  userId: string;
-  source: KnowledgeSource;
-  job: KnowledgeImportJob;
-  error: unknown;
-  summary?: string;
-  title: string;
-  tags: string[];
-  content?: string;
-  originalPath?: string | null;
-  indexPath: string;
-}) {
-  const message =
-    args.error instanceof Error ? args.error.message : "Import failed";
-  const source = await replaceSourceContent({
-    userId: args.userId,
-    sourceId: args.source.id,
-    documentId: args.source.documentId || `failed:${args.source.id}`,
-    title: args.title,
-    summary: args.summary,
-    content: args.content ?? args.source.content,
-    tags: args.tags,
-    status: "failed",
-    failureMessage: message,
-    sourceFilename: args.source.sourceFilename,
-    sourceUrl: args.source.sourceUrl,
-    mimeType: args.source.mimeType,
-    byteSize: args.source.byteSize,
-    originalPath: args.originalPath,
-    indexPath: args.indexPath,
-  });
-  const job = await updateImportJob({
-    userId: args.userId,
-    jobId: args.job.id,
-    stage: "completed",
-    status: "failed",
-    errorMessage: message,
-  });
-
-  return {
-    collection: await requireKnowledgeCollection(
-      args.userId,
-      source.collectionId,
-    ),
-    source,
-    job,
-    engine: "hybrid" as const,
-    indexed: false,
-  } satisfies ImportResult;
-}
-
-async function createDraftSource(args: {
-  userId: string;
+async function createFailedImport(args: {
+  byteSize?: number;
   collectionId: string;
+  content?: string;
+  documentId: string;
+  error: unknown;
+  mimeType?: string;
+  sourceFilename?: string;
   sourceId: string;
   sourceType: KnowledgeSource["sourceType"];
-  title: string;
+  sourceUrl?: string;
   summary?: string;
   tags: string[];
-  sourceFilename?: string;
-  sourceUrl?: string;
-  mimeType?: string;
-  byteSize?: number;
-  originalPath?: string | null;
-  indexPath: string;
-}) {
-  const source = await createSourceDraft({
+  title: string;
+  userId: string;
+}): Promise<KnowledgeImportData> {
+  const message = args.error instanceof Error ? args.error.message : "导入失败";
+  const fallbackContent = normalizeWhitespace(
+    args.content ||
+      `资料导入失败\n标题：${args.title.trim()}\n原因：${message}`,
+  );
+  const fallbackSummary = args.summary?.trim() || buildSummary(fallbackContent);
+  const fallbackPreview = buildContentPreview(fallbackContent);
+
+  const source = await createKnowledgeSourceRecord({
     sourceId: args.sourceId,
     userId: args.userId,
     collectionId: args.collectionId,
+    documentId: args.documentId,
     sourceType: args.sourceType,
     title: args.title,
-    summary: args.summary,
+    summary: fallbackSummary,
+    content: fallbackPreview ? fallbackContent : message,
     tags: args.tags,
     sourceFilename: args.sourceFilename,
     sourceUrl: args.sourceUrl,
     mimeType: args.mimeType,
     byteSize: args.byteSize,
-    originalPath: args.originalPath,
-    indexPath: args.indexPath,
-  });
-  const job = await createImportJob({
-    userId: args.userId,
-    sourceId: source.id,
-    collectionId: args.collectionId,
-    sourceType: args.sourceType,
-    stage: "chunking",
-    status: "processing",
-    attempt: 1,
+    status: "failed",
+    failureMessage: message,
+    originalPath: null,
+    indexPath: args.documentId,
   });
 
   return {
+    collection: await requireKnowledgeCollection(
+      args.userId,
+      args.collectionId,
+    ),
     source,
-    job,
+    engine: getImportEngine(),
+    indexed: false,
   };
 }
 
@@ -227,71 +267,83 @@ export async function importKnowledgeFile(args: {
   userId: string;
   collectionId: string;
   file: File;
-  input: KnowledgeFileImportRequest;
+  input: SingleFileImportInput;
 }): Promise<KnowledgeImportData> {
   await requireKnowledgeCollection(args.userId, args.collectionId);
 
   const sourceId = crypto.randomUUID();
-  const fileName = args.file.name || `upload-${sourceId}`;
+  const fileName = args.file.name || `upload-${sourceId}.txt`;
   const bytes = new Uint8Array(await args.file.arrayBuffer());
-  const paths = await storeUploadedSourceFile({
-    sourceId,
-    bytes,
-    fileName,
-  });
-  const extracted = await extractFileContent({
-    bytes,
-    fileName,
-  });
-  const indexedText = await writeSourceIndexText(sourceId, extracted.content);
-  const title = resolveTitle({
-    explicitTitle: args.input.title,
-    extractedTitle: extracted.title,
-  });
-  const tags = parseTags(args.input.tags);
-  const draft = await createDraftSource({
-    userId: args.userId,
-    collectionId: args.collectionId,
-    sourceId,
-    sourceType: "file",
-    title,
-    summary: args.input.summary?.trim() || buildSummary(extracted.content),
-    tags,
-    sourceFilename: fileName,
-    mimeType: extracted.mimeType,
-    byteSize: args.file.size,
-    originalPath: paths.originalPath,
-    indexPath: indexedText.indexPath,
-  });
+  let managedFileName = fileName;
+  let stored: Awaited<ReturnType<typeof storeUploadedSourceFile>> | undefined;
 
   try {
-    return await finalizeImport({
+    const extracted = await extractFileContent({
+      bytes,
+      fileName,
+      mimeType: args.file.type || undefined,
+    });
+    const title = resolveTitle({
+      explicitTitle: args.input.title,
+      extractedTitle: extracted.title,
+    });
+    const tags = parseTags(args.input.tags);
+    const resolvedFileName = await resolveManagedImportFileName({
       userId: args.userId,
       collectionId: args.collectionId,
-      source: draft.source,
-      job: draft.job,
+      sourceType: "file",
+      title,
+      sourceFilename: fileName,
+      mimeType: extracted.mimeType,
+    });
+    managedFileName = resolvedFileName;
+    stored = await storeUploadedSourceFile({
+      userId: args.userId,
+      collectionId: args.collectionId,
+      bytes,
+      fileName: resolvedFileName,
+      mimeType: extracted.mimeType,
+    });
+
+    return await createSuccessfulImport({
+      userId: args.userId,
+      collectionId: args.collectionId,
+      sourceId,
+      sourceType: "file",
+      documentId: stored.documentPath,
+      content: extracted.content,
       title,
       summary: args.input.summary?.trim() || buildSummary(extracted.content),
-      content: extracted.content,
       tags,
       mimeType: extracted.mimeType,
       byteSize: args.file.size,
-      sourceFilename: fileName,
-      originalPath: paths.originalPath,
-      indexPath: indexedText.indexPath,
+      sourceFilename: resolvedFileName,
+      originalPath: stored.originalPath,
     });
   } catch (error) {
-    return failImport({
+    await deleteManagedSourceFiles({
       userId: args.userId,
-      source: draft.source,
-      job: draft.job,
+      collectionId: args.collectionId,
+      originalPath: stored?.originalPath,
+    });
+    await invalidateKnowledgeWorkspace({
+      userId: args.userId,
+      collectionId: args.collectionId,
+    });
+
+    return createFailedImport({
+      userId: args.userId,
+      collectionId: args.collectionId,
+      sourceId,
+      sourceType: "file",
+      documentId: stored?.documentPath ?? managedFileName,
+      title: args.input.title?.trim() || basename(fileName),
+      summary: args.input.summary,
+      tags: parseTags(args.input.tags),
+      mimeType: args.file.type || undefined,
+      byteSize: args.file.size,
+      sourceFilename: managedFileName,
       error,
-      summary: args.input.summary?.trim() || buildSummary(extracted.content),
-      title,
-      tags,
-      content: extracted.content,
-      originalPath: paths.originalPath,
-      indexPath: indexedText.indexPath,
     });
   }
 }
@@ -302,10 +354,7 @@ export async function importKnowledgeFiles(args: {
   files: File[];
   input: KnowledgeBatchFileImportRequest;
 }): Promise<KnowledgeBatchImportData> {
-  const collection = await requireKnowledgeCollection(
-    args.userId,
-    args.collectionId,
-  );
+  await requireKnowledgeCollection(args.userId, args.collectionId);
   const results: KnowledgeBatchImportData["results"] = [];
 
   for (const file of args.files) {
@@ -321,14 +370,23 @@ export async function importKnowledgeFiles(args: {
         },
       });
 
-      results.push({
-        accepted: true,
-        fileName: file.name,
-        mimeType: file.type || undefined,
-        byteSize: file.size,
-        source: result.source,
-        job: result.job,
-      });
+      if (result.indexed && result.source.status === "ready") {
+        results.push({
+          accepted: true,
+          fileName: file.name,
+          mimeType: file.type || undefined,
+          byteSize: file.size,
+          source: result.source,
+        });
+      } else {
+        results.push({
+          accepted: false,
+          fileName: file.name,
+          mimeType: file.type || undefined,
+          byteSize: file.size,
+          errorMessage: result.source.failureMessage || "导入失败",
+        });
+      }
     } catch (error) {
       results.push({
         accepted: false,
@@ -341,7 +399,10 @@ export async function importKnowledgeFiles(args: {
   }
 
   return {
-    collection,
+    collection: await requireKnowledgeCollection(
+      args.userId,
+      args.collectionId,
+    ),
     results,
     totalCount: results.length,
     acceptedCount: results.filter((item) => item.accepted).length,
@@ -368,57 +429,64 @@ export async function importKnowledgeText(args: {
     args.input.title?.trim() ||
     buildTextSourceContent({
       content,
-      fileName: `${sourceId}.md`,
+      fileName: `${sourceId}.txt`,
     }).title;
-  const original = await storeTextSourceFile({
-    sourceId,
-    content,
-    fileName: `${title}.md`,
-  });
-  const indexedText = await writeSourceIndexText(sourceId, content);
-  const draft = await createDraftSource({
+  const managedFileName = await resolveManagedImportFileName({
     userId: args.userId,
     collectionId: args.collectionId,
-    sourceId,
     sourceType: "text",
     title,
-    summary: args.input.summary?.trim() || buildSummary(content),
-    tags,
-    sourceFilename: `${title}.md`,
     mimeType: "text/plain",
-    byteSize: content.length,
-    originalPath: original.originalPath,
-    indexPath: indexedText.indexPath,
+  });
+  const stored = await storeTextSourceFile({
+    userId: args.userId,
+    collectionId: args.collectionId,
+    content,
+    fileName: managedFileName,
+    mimeType: "text/plain; charset=utf-8",
   });
 
   try {
-    return await finalizeImport({
+    return await createSuccessfulImport({
       userId: args.userId,
       collectionId: args.collectionId,
-      source: draft.source,
-      job: draft.job,
+      sourceId,
+      sourceType: "text",
+      documentId: stored.documentPath,
+      content,
       title,
       summary: args.input.summary?.trim() || buildSummary(content),
-      content,
       tags,
       mimeType: "text/plain",
       byteSize: content.length,
-      sourceFilename: `${title}.md`,
-      originalPath: original.originalPath,
-      indexPath: indexedText.indexPath,
+      sourceFilename: managedFileName,
+      originalPath: stored.originalPath,
     });
   } catch (error) {
-    return failImport({
+    await deleteManagedSourceFiles({
       userId: args.userId,
-      source: draft.source,
-      job: draft.job,
-      error,
-      summary: args.input.summary?.trim() || buildSummary(content),
+      collectionId: args.collectionId,
+      originalPath: stored.originalPath,
+    });
+    await invalidateKnowledgeWorkspace({
+      userId: args.userId,
+      collectionId: args.collectionId,
+    });
+
+    return createFailedImport({
+      userId: args.userId,
+      collectionId: args.collectionId,
+      sourceId,
+      sourceType: "text",
+      documentId: stored.documentPath,
       title,
+      summary: args.input.summary?.trim() || buildSummary(content),
       tags,
+      mimeType: "text/plain",
+      byteSize: content.length,
+      sourceFilename: managedFileName,
+      error,
       content,
-      originalPath: original.originalPath,
-      indexPath: indexedText.indexPath,
     });
   }
 }
@@ -436,60 +504,76 @@ export async function importKnowledgeUrl(args: {
     throw new BadRequestError(`URL 拉取失败: ${response.status}`);
   }
 
-  const body = normalizeWhitespace(await response.text());
+  const content = normalizeWhitespace(await response.text());
 
-  return importKnowledgeText({
-    userId: args.userId,
-    collectionId: args.collectionId,
-    input: {
-      title: args.input.title || args.input.url,
-      summary: args.input.summary,
-      tags: args.input.tags,
-      content: body,
-    },
-  });
-}
-
-async function reindexStoredSource(args: {
-  userId: string;
-  source: KnowledgeSource;
-  nextContent: string;
-  nextSummary?: string;
-  nextTags: string[];
-  nextTitle: string;
-}) {
-  const stored = await getStoredSourceRecord(args.userId, args.source.id);
-
-  if (!stored) {
-    throw new BadRequestError(`资料 "${args.source.id}" 不存在`);
+  if (!content) {
+    throw new BadRequestError("URL 内容为空，无法导入");
   }
 
-  const indexedText = await writeSourceIndexText(
-    args.source.id,
-    args.nextContent,
-  );
-  const indexed = await indexSourceDocument({
+  const sourceId = crypto.randomUUID();
+  const title = args.input.title?.trim() || args.input.url;
+  const tags = parseTags(args.input.tags);
+  const managedFileName = await resolveManagedImportFileName({
     userId: args.userId,
-    indexPath: indexedText.indexPath,
-    title: args.nextTitle,
+    collectionId: args.collectionId,
+    sourceType: "url",
+    title,
+    sourceUrl: args.input.url,
+    mimeType: "text/html",
+  });
+  const stored = await storeTextSourceFile({
+    userId: args.userId,
+    collectionId: args.collectionId,
+    content,
+    fileName: managedFileName,
+    mimeType: "text/html; charset=utf-8",
   });
 
-  return replaceSourceContent({
-    userId: args.userId,
-    sourceId: args.source.id,
-    documentId: indexed.documentId,
-    title: args.nextTitle,
-    summary: args.nextSummary,
-    content: args.nextContent,
-    tags: args.nextTags,
-    mimeType: args.source.mimeType,
-    byteSize: args.source.byteSize,
-    sourceFilename: args.source.sourceFilename,
-    sourceUrl: args.source.sourceUrl,
-    status: "ready",
-    indexPath: indexedText.indexPath,
-    originalPath: stored.original_path,
-  });
+  try {
+    return await createSuccessfulImport({
+      userId: args.userId,
+      collectionId: args.collectionId,
+      sourceId,
+      sourceType: "url",
+      documentId: stored.documentPath,
+      content,
+      title,
+      summary: args.input.summary?.trim() || buildSummary(content),
+      tags,
+      mimeType: "text/html",
+      byteSize: content.length,
+      sourceFilename: managedFileName,
+      originalPath: stored.originalPath,
+      sourceUrl: args.input.url,
+    });
+  } catch (error) {
+    await deleteManagedSourceFiles({
+      userId: args.userId,
+      collectionId: args.collectionId,
+      originalPath: stored.originalPath,
+    });
+    await invalidateKnowledgeWorkspace({
+      userId: args.userId,
+      collectionId: args.collectionId,
+    });
+
+    return createFailedImport({
+      userId: args.userId,
+      collectionId: args.collectionId,
+      sourceId,
+      sourceType: "url",
+      documentId: stored.documentPath,
+      title,
+      summary: args.input.summary?.trim() || buildSummary(content),
+      tags,
+      mimeType: "text/html",
+      byteSize: content.length,
+      sourceFilename: managedFileName,
+      sourceUrl: args.input.url,
+      error,
+      content,
+    });
+  }
 }
 
 export async function updateKnowledgeSource(
@@ -509,127 +593,137 @@ export async function updateKnowledgeSource(
   const nextSummary = input.summary?.trim() || source.summary;
   const nextTags = parseTags(input.tags ?? source.tags);
   const contentChanged = nextContent !== source.content;
-  const titleChanged = nextTitle !== source.title;
-
-  if (contentChanged || titleChanged) {
-    return reindexStoredSource({
-      userId,
-      source,
-      nextContent,
-      nextSummary,
-      nextTags,
-      nextTitle,
-    });
-  }
-
-  return replaceSourceContent({
+  const nextSourceFilename = await resolveManagedImportFileName({
     userId,
-    sourceId,
-    documentId: source.documentId || `draft:${source.id}`,
+    collectionId: source.collectionId,
+    sourceId: source.id,
+    sourceType: source.sourceType,
     title: nextTitle,
-    summary: nextSummary,
-    content: nextContent,
-    tags: nextTags,
-    mimeType: source.mimeType,
-    byteSize: source.byteSize,
     sourceFilename: source.sourceFilename,
     sourceUrl: source.sourceUrl,
-    status: input.status ?? source.status,
-    indexPath: stored.index_path,
-    originalPath: stored.original_path,
+    mimeType: source.mimeType,
   });
-}
+  const currentDocumentId = stored.documentId || stored.indexPath;
+  const pathChanged = currentDocumentId !== nextSourceFilename;
 
-export async function refreshKnowledgeSource(
-  userId: string,
-  sourceId: string,
-): Promise<KnowledgeImportData> {
-  const source = await requireKnowledgeSource(userId, sourceId);
-  const stored = await getStoredSourceRecord(userId, sourceId);
-
-  if (!stored) {
-    throw new BadRequestError(`资料 "${sourceId}" 不存在`);
+  if (!contentChanged && !pathChanged) {
+    return replaceSourceContent({
+      userId,
+      sourceId,
+      documentId: currentDocumentId,
+      title: nextTitle,
+      summary: nextSummary,
+      content: nextContent,
+      tags: nextTags,
+      mimeType: source.mimeType,
+      byteSize: source.byteSize,
+      sourceFilename: nextSourceFilename,
+      sourceUrl: source.sourceUrl,
+      status: source.status,
+      failureMessage: undefined,
+      originalPath: stored.originalPath,
+      indexPath: stored.indexPath,
+    });
   }
-  const job = await createImportJob({
-    userId,
-    sourceId,
-    collectionId: source.collectionId,
-    sourceType: source.sourceType,
-    stage: "embedding",
-    status: "processing",
-    attempt: source.latestVersion + 1,
-  });
+
+  const nextPaths =
+    stored.originalPath && stored.indexPath && !pathChanged
+      ? {
+          documentId: currentDocumentId,
+          indexPath: stored.indexPath,
+          originalPath: stored.originalPath,
+        }
+      : (() => undefined)();
+
+  const resolvedPaths =
+    nextPaths ??
+    (await storeTextSourceFile({
+      userId,
+      collectionId: source.collectionId,
+      content: nextContent,
+      fileName: nextSourceFilename,
+      mimeType: source.mimeType,
+    }).then((paths) => ({
+      documentId: paths.documentPath,
+      indexPath: paths.indexPath,
+      originalPath: paths.originalPath,
+    })));
 
   try {
-    const refreshed = await reindexStoredSource({
+    await overwriteStoredSourceFile({
       userId,
-      source,
-      nextContent: source.content,
-      nextSummary: source.summary,
-      nextTags: source.tags,
-      nextTitle: source.title,
+      collectionId: source.collectionId,
+      originalPath: resolvedPaths.originalPath,
+      content: nextContent,
+      mimeType: source.mimeType,
     });
-    const completedJob = await updateImportJob({
+
+    if (
+      pathChanged &&
+      stored.originalPath &&
+      stored.originalPath !== resolvedPaths.originalPath
+    ) {
+      await deleteManagedSourceFiles({
+        userId,
+        collectionId: source.collectionId,
+        originalPath: stored.originalPath,
+      });
+      await invalidateKnowledgeWorkspace({
+        userId,
+        collectionId: source.collectionId,
+      });
+    }
+
+    await indexSourceDocument({
       userId,
-      jobId: job.id,
-      stage: "completed",
+      collectionId: source.collectionId,
+      content: nextContent,
+      documentId: resolvedPaths.documentId,
+      mimeType: source.mimeType,
+      source: {
+        id: source.id,
+        sourceFilename: nextSourceFilename,
+        sourceType: source.sourceType,
+        sourceUrl: source.sourceUrl,
+        status: "ready",
+      },
+      summary: nextSummary,
+      tags: nextTags,
+      title: nextTitle,
+    });
+
+    return replaceSourceContent({
+      userId,
+      sourceId,
+      documentId: resolvedPaths.documentId,
+      title: nextTitle,
+      summary: nextSummary,
+      content: nextContent,
+      tags: nextTags,
+      mimeType: source.mimeType,
+      byteSize: source.byteSize,
+      sourceFilename: nextSourceFilename,
+      sourceUrl: source.sourceUrl,
       status: "ready",
+      failureMessage: undefined,
+      originalPath: resolvedPaths.originalPath,
+      indexPath: resolvedPaths.indexPath,
     });
-
-    return {
-      collection: await requireKnowledgeCollection(userId, source.collectionId),
-      source: refreshed,
-      job: completedJob,
-      engine: "hybrid",
-      indexed: true,
-    };
   } catch (error) {
-    return failImport({
+    await overwriteStoredSourceFile({
       userId,
-      source,
-      job,
-      error,
-      summary: source.summary,
-      title: source.title,
-      tags: source.tags,
+      collectionId: source.collectionId,
+      originalPath: resolvedPaths.originalPath,
       content: source.content,
-      originalPath: stored.original_path,
-      indexPath: stored.index_path,
+      mimeType: source.mimeType,
+    }).catch(() => undefined);
+    await invalidateKnowledgeWorkspace({
+      userId,
+      collectionId: source.collectionId,
     });
+
+    throw error;
   }
-}
-
-export async function retryKnowledgeSource(
-  userId: string,
-  sourceId: string,
-): Promise<KnowledgeImportData> {
-  return refreshKnowledgeSource(userId, sourceId);
-}
-
-export async function uploadKnowledgeDocument(args: {
-  userId: string;
-  spaceId: string;
-  file: File;
-  metadata: KnowledgeUploadMetadata;
-}) {
-  const result = await importKnowledgeFile({
-    userId: args.userId,
-    collectionId: args.spaceId,
-    file: args.file,
-    input: {
-      title: args.metadata.title,
-      summary: args.metadata.summary,
-      tags: args.metadata.tags,
-      fileName: args.file.name,
-    },
-  });
-
-  return {
-    space: result.collection,
-    document: result.source,
-    indexed: result.indexed,
-    engine: result.engine,
-  };
 }
 
 export async function waitForPendingKnowledgeImports(): Promise<void> {

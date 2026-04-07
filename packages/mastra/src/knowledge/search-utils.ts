@@ -1,5 +1,3 @@
-import type { KnowledgeSource } from "@atlas-kb/schema";
-
 const HAN_SEGMENT_PATTERN = /\p{Script=Han}+/gu;
 const WORD_PATTERN = /[\p{L}\p{N}_-]+/gu;
 
@@ -237,28 +235,4 @@ export function chunkKnowledgeContent(params: {
           title: params.title,
         },
       ];
-}
-
-export function buildKnowledgeSourceDownloadPath(sourceId: string): string {
-  return `/api/kb/sources/${encodeURIComponent(sourceId)}/download`;
-}
-
-export function getKnowledgeSourceMetadata(
-  source: Pick<
-    KnowledgeSource,
-    "id" | "sourceFilename" | "sourceUrl" | "sourceType"
-  >,
-): {
-  downloadUrl?: string;
-  sourceFilename?: string;
-  sourceUrl?: string;
-} {
-  return {
-    downloadUrl:
-      source.sourceType === "file" || source.sourceType === "seed"
-        ? buildKnowledgeSourceDownloadPath(source.id)
-        : undefined,
-    sourceFilename: source.sourceFilename,
-    sourceUrl: source.sourceUrl,
-  };
 }

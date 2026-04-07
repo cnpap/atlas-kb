@@ -1,13 +1,7 @@
 <script setup lang="ts">
   import type { KnowledgeSource } from "@atlas-kb/schema";
   import { ref, watch } from "vue";
-  import {
-    Download,
-    LoaderCircle,
-    RefreshCw,
-    Save,
-    Trash2,
-  } from "lucide-vue-next";
+  import { Download, LoaderCircle, Save, Trash2 } from "lucide-vue-next";
   import {
     getSourceStatusLabel,
     getSourceStatusTone,
@@ -23,7 +17,6 @@
   const emit = defineEmits<{
     delete: [source: KnowledgeSource];
     download: [source: KnowledgeSource];
-    reprocess: [source: KnowledgeSource];
     "update:open": [value: boolean];
     submit: [
       payload: {
@@ -73,7 +66,7 @@
   <UModal
     :open="open"
     title="资料编辑器"
-    description="编辑标题、摘要、标签和正文内容，保存后会重建资料索引。"
+    description="编辑标题、摘要、标签和正文内容，保存后会立即更新检索。"
     :close="!saving"
     @update:open="updateOpen"
   >
@@ -129,18 +122,6 @@
           >
             <Download class="size-4" />
             <span>下载</span>
-          </button>
-          <button
-            class="soft-button"
-            type="button"
-            :disabled="sourceActionPending"
-            @click="emit('reprocess', source)"
-          >
-            <RefreshCw
-              class="size-4"
-              :class="sourceActionPending ? 'animate-spin' : ''"
-            />
-            <span>重处理</span>
           </button>
         </div>
 

@@ -1,15 +1,18 @@
 # Atlas KB
 
-Atlas KB is a Bun workspace for a multi-user knowledge-base project with auth,
-file upload, chat retrieval, and briefing-opinion generation backed by
-`@cnpap/ops-agent-kit`.
+Atlas KB is a Bun workspace for a multi-user knowledge base with auth, file
+upload, workspace search, chat retrieval, and briefing-opinion generation.
+
+The knowledge runtime now uses Mastra `Workspace + LocalFilesystem + Workspace Search`
+with BM25 plus Qdrant vector search. There is no `@cnpap/ops-agent-kit`, no
+Tika, and no import job pipeline.
 
 ## Packages
 
 - `@atlas-kb/schema`: shared Zod contracts
 - `@atlas-kb/errors`: shared API errors
-- `@atlas-kb/mastra`: Mastra runtime, `ops-agent-kit` integration, ingestion, retrieval, chat, and briefing export logic
-- `@atlas-kb/api`: Elysia API for auth, spaces, uploads, search, and ask
+- `@atlas-kb/mastra`: Mastra runtime, workspace indexing, retrieval, chat, briefing export logic
+- `@atlas-kb/api`: Elysia API for auth, collections, sources, search, and ask
 - `@atlas-kb/web`: Vue web console for login and knowledge management
 
 ## Quick Start
@@ -27,63 +30,50 @@ If you need the Mastra runtime separately:
 bun run mastra:dev
 ```
 
-To bring up the shared TimescaleDB + RustFS + Tika stack and the app in one command:
-
-```bash
-bun run dev:local
-```
-
 ## Runtime Dependencies
 
 - API: `http://localhost:6112`
 - Web: `http://localhost:6111`
-- Tika: `http://localhost:9998`
-- RustFS S3: `http://localhost:9000`
-- TimescaleDB: `postgresql://127.0.0.1:5432/ops_agent_kit`
-
-If `own209.test` resolves to your machine locally, the dev web server also accepts
-`http://own209.test:6111`. By default, Vite proxies `/api/*` to the local API, so
-the browser stays on one origin during development. Set `VITE_API_BASE_URL` only
-when you intentionally want the web app to call a different API origin directly.
-
-## Deployment
-
-- `Jenkinsfile` lives in the repository root and is the single source of truth for CI/CD.
-- The runtime image contains the backend only; the web build is published separately to RustFS.
-- Caddy serves `atlas-kb.apitype.com` as a single-domain entrypoint:
-  `/api/*` is proxied to the `atlas-kb` container and all other paths are served from the public `atlas-kb-web` bucket in RustFS.
-- `atlas-kb-api.apitype.com` is no longer required for normal traffic.
+- Mastra: `http://localhost:4111`
+- Postgres: `postgresql://127.0.0.1:5432/ops_agent_kit`
+- Qdrant: `http://127.0.0.1:6333`
 
 ## Default Login
-
-The shared Laravel migration and seed flow in `atlas-kb-admin` is responsible for
-initializing the default knowledge login in the shared database.
 
 - Username: `admin`
 - Password: `atlas-kb-dev`
 
 Override them in `.env` with `ATLAS_KB_DEFAULT_USERNAME` and
-`ATLAS_KB_DEFAULT_PASSWORD` for anything beyond local development.
-
-Atlas KB reads infrastructure values from `.env` and expects the shared services in
-`/root/docker/compose.yml`.
-
-Use a dedicated `LANCEDB_URI` scope for Atlas, for example
-`s3://ops-agent-kit/lancedb/atlas-kb`, instead of pointing at a shared root that
-already contains other knowledge indexes. This keeps the two `ops-agent-kit`
-tables isolated while still using the same Lance/S3 backend.
+`ATLAS_KB_DEFAULT_PASSWORD`.
 
 ## Model Config
 
-- `OPENAI_BASE_URL`: OpenAI-compatible base URL, default `https://api.openai.com/v1`
-- `OPENAI_API_KEY`: provider key used for chat and task generation
+- `OPENAI_BASE_URL`: OpenAI-compatible base URL for chat and briefing generation
+- `OPENAI_API_KEY`: provider key for chat and briefing generation
 - `OPENAI_MODEL`: defaults to `gpt-5.4`
-- `EMBEDDING_*`: embedding model configuration consumed by `ops-agent-kit`
-- `RERANK_*`: rerank model configuration consumed by `ops-agent-kit`
-- `VISION_*`: multimodal model configuration for rich document tasks
+- `EMBEDDING_BASE_URL`: OpenAI-compatible base URL for embeddings
+- `EMBEDDING_API_KEY`: provider key for embeddings
+- `EMBEDDING_MODEL`: embedding model id
+- `EMBEDDING_DIMENSIONS`: optional fixed embedding dimension
+- `QDRANT_URL`: Qdrant endpoint
+- `QDRANT_API_KEY`: optional Qdrant API key
+- `QDRANT_COLLECTION_PREFIX`: optional prefix for workspace vector collections
+- `ATLAS_KB_S3_ENDPOINT`: required S3-compatible endpoint such as RustFS
+- `ATLAS_KB_S3_REGION`: required S3 region
+- `ATLAS_KB_S3_BUCKET`: required bucket for source files
+- `ATLAS_KB_S3_ACCESS_KEY_ID`: required access key used for source mirroring
+- `ATLAS_KB_S3_SECRET_ACCESS_KEY`: required secret key used for source mirroring
+- `ATLAS_KB_S3_PREFIX`: optional object key prefix, defaults to `knowledge-sources`
+- `ATLAS_KB_S3_FORCE_PATH_STYLE`: defaults to `true` for S3-compatible local deployments
+
+Atlas KB now reads these values only from the runtime environment loaded from
+project `.env`. If you run RustFS locally, copy its endpoint, bucket, and
+credentials into this repo's `.env` before starting API or Mastra.
 
 ## Upload Support
 
-The current ingestion path accepts file and text uploads. File parsing is handled
-through Tika, and the indexed knowledge core lives in LanceDB + S3 via
-`@cnpap/ops-agent-kit`.
+The current ingestion path assumes uploaded files are text or code-like files.
+Atlas KB stores each source inside its Mastra workspace, indexes it immediately,
+and makes it searchable without a background import queue. Manually entered text
+sources are also written to
+`<prefix>/<userId>/<collectionId>/<sourceId>/content.txt`.

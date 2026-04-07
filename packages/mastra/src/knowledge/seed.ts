@@ -24,7 +24,6 @@ export const DEMO_SOURCES: KnowledgeSource[] = [
   {
     id: "onboarding-guide",
     collectionId: "personal-notes",
-    spaceId: "personal-notes",
     title: "知识库启用清单",
     summary: "把新资料接入个人知识库时的推荐步骤。",
     excerpt:
@@ -45,7 +44,6 @@ export const DEMO_SOURCES: KnowledgeSource[] = [
   {
     id: "citation-style-notes",
     collectionId: "personal-notes",
-    spaceId: "personal-notes",
     title: "引用回答规则",
     summary: "回答时如何引用证据、如何处理证据不足。",
     excerpt: "优先引用短片段，明确资料标题，超出证据范围的内容不要编造。",

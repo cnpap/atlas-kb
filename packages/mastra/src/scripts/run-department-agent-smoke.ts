@@ -27,13 +27,13 @@ const importResult = await importDepartmentFixtures();
 const user = await ensureDefaultUser();
 
 console.log(
-  `[atlas-kb/mastra] department fixtures ready in "${importResult.spaceId}" (imported=${importResult.imported.length}, skipped=${importResult.skipped.length})`,
+  `[mastra] department fixtures ready in "${importResult.collectionId}" (imported=${importResult.imported.length}, skipped=${importResult.skipped.length})`,
 );
 
 for (const testCase of TEST_CASES) {
   const result = await runKnowledgeAgentQuestion({
     question: testCase.question,
-    spaceId: DEPARTMENT_FIXTURE_SPACE.id,
+    collectionId: DEPARTMENT_FIXTURE_SPACE.id,
     userId: user.id,
   });
 
@@ -67,4 +67,4 @@ for (const testCase of TEST_CASES) {
   }
 }
 
-console.log("\n[atlas-kb/mastra] department agent smoke test passed");
+console.log("\n[mastra] department agent smoke test passed");

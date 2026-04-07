@@ -1,26 +1,26 @@
 import {
-  createKnowledgeSpace,
-  getKnowledgeSpaceDocuments,
-  getKnowledgeSpace,
+  createKnowledgeCollection,
+  getKnowledgeCollection,
+  getKnowledgeCollectionSourcesData,
 } from "../repository";
-import { uploadKnowledgeDocument } from "../ingest";
+import { importKnowledgeFile } from "../ingest";
 import { ensureDefaultUser } from "../users";
 import { DEPARTMENT_FIXTURE_SPACE, loadDepartmentFixtures } from ".";
 
 export async function importDepartmentFixtures(): Promise<{
-  createdSpace: boolean;
+  collectionId: string;
+  createdCollection: boolean;
   imported: string[];
   skipped: string[];
-  spaceId: string;
 }> {
   const user = await ensureDefaultUser();
-  const existingSpace = await getKnowledgeSpace(
+  const existingCollection = await getKnowledgeCollection(
     user.id,
     DEPARTMENT_FIXTURE_SPACE.id,
   );
 
-  if (!existingSpace) {
-    await createKnowledgeSpace({
+  if (!existingCollection) {
+    await createKnowledgeCollection({
       userId: user.id,
       input: {
         description: DEPARTMENT_FIXTURE_SPACE.description,
@@ -32,8 +32,11 @@ export async function importDepartmentFixtures(): Promise<{
 
   const existingDocuments = new Set(
     (
-      await getKnowledgeSpaceDocuments(user.id, DEPARTMENT_FIXTURE_SPACE.id)
-    ).documents
+      await getKnowledgeCollectionSourcesData(
+        user.id,
+        DEPARTMENT_FIXTURE_SPACE.id,
+      )
+    ).sources
       .map((document) => document.sourceFilename)
       .filter((filename): filename is string => Boolean(filename)),
   );
@@ -47,23 +50,23 @@ export async function importDepartmentFixtures(): Promise<{
       continue;
     }
 
-    await uploadKnowledgeDocument({
+    await importKnowledgeFile({
       userId: user.id,
+      collectionId: DEPARTMENT_FIXTURE_SPACE.id,
       file: new File([fixture.content], fixture.filename, {
         type: "text/markdown",
       }),
-      metadata: {
+      input: {
         title: fixture.title,
       },
-      spaceId: DEPARTMENT_FIXTURE_SPACE.id,
     });
     imported.push(fixture.filename);
   }
 
   return {
-    createdSpace: !existingSpace,
+    collectionId: DEPARTMENT_FIXTURE_SPACE.id,
+    createdCollection: !existingCollection,
     imported,
     skipped,
-    spaceId: DEPARTMENT_FIXTURE_SPACE.id,
   };
 }

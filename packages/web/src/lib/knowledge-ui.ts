@@ -10,37 +10,29 @@ export type KnowledgeFileKind =
   | "text";
 
 const SUPPORTED_UPLOAD_EXTENSIONS = new Set([
+  ".cjs",
   ".csv",
-  ".docx",
   ".htm",
   ".html",
+  ".js",
   ".json",
+  ".jsx",
   ".markdown",
   ".md",
-  ".pdf",
+  ".mjs",
+  ".py",
+  ".sh",
+  ".sql",
+  ".ts",
+  ".tsx",
   ".txt",
+  ".vue",
   ".xml",
   ".yaml",
   ".yml",
 ]);
 
 const MIME_EXTENSION_FALLBACKS = new Map<string, string>([
-  ["application/pdf", ".pdf"],
-  [
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".docx",
-  ],
-  [
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ".xlsx",
-  ],
-  [
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    ".pptx",
-  ],
-  ["application/msword", ".doc"],
-  ["application/vnd.ms-excel", ".xls"],
-  ["application/vnd.ms-powerpoint", ".ppt"],
   ["text/html", ".html"],
   ["text/markdown", ".md"],
   ["text/plain", ".txt"],

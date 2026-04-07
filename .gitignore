@@ -24,3 +24,5 @@ dist-ssr
 openapi*
 
 demo*
+
+.codex

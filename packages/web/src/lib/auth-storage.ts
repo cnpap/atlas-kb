@@ -1,5 +1,5 @@
-const AUTH_TOKEN_STORAGE_KEY = "atlas-kb.auth.token";
-export const AUTH_EXPIRED_EVENT = "atlas-kb:auth-expired";
+const AUTH_TOKEN_STORAGE_KEY = "knowledge.auth.token";
+export const AUTH_EXPIRED_EVENT = "knowledge:auth-expired";
 
 export function getAuthToken(): string {
   if (typeof window === "undefined") {

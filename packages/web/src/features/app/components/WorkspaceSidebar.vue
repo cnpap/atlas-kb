@@ -40,6 +40,7 @@
         <button
           class="soft-button primary flex-1"
           type="button"
+          :disabled="!activeCollectionId"
           @click="$emit('createSession')"
         >
           <MessageSquare class="size-4" />

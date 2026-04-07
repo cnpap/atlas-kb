@@ -1,11 +1,7 @@
 import { NotFoundError } from "@atlas-kb/errors";
-import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
-import {
-  getDocumentById,
-  getStoredSourceRecord,
-  requireKnowledgeSource,
-} from "./repository";
+import { getPresignedGetUrl } from "./object-storage";
+import { getStoredSourceRecord, requireKnowledgeSource } from "./repository";
 
 function buildDownloadFilename(params: {
   sourceFilename?: string;
@@ -23,11 +19,11 @@ function buildDownloadFilename(params: {
   return `${params.title}.txt`;
 }
 
-export async function getKnowledgeSourceDownload(params: {
+export async function getKnowledgeSourceDownloadUrl(params: {
   userId: string;
   sourceId: string;
 }): Promise<{
-  body: Uint8Array;
+  url: string;
   filename: string;
   mimeType: string;
 }> {
@@ -38,48 +34,27 @@ export async function getKnowledgeSourceDownload(params: {
     throw new NotFoundError(`Knowledge source "${params.sourceId}" not found`);
   }
 
-  if (stored.original_path) {
-    return {
-      body: new Uint8Array(await readFile(stored.original_path)),
-      filename: buildDownloadFilename({
-        sourceFilename: source.sourceFilename,
-        title: source.title,
-        sourceType: source.sourceType,
-      }),
-      mimeType: source.mimeType || "application/octet-stream",
-    };
+  const relativePath = stored.originalPath || stored.documentId;
+
+  if (!relativePath) {
+    throw new NotFoundError(
+      `Knowledge source "${params.sourceId}" has no stored file`,
+    );
   }
 
+  const url = await getPresignedGetUrl({
+    userId: params.userId,
+    collectionId: source.collectionId,
+    relativePath,
+  });
+
   return {
-    body: new TextEncoder().encode(source.content),
+    url,
     filename: buildDownloadFilename({
       sourceFilename: source.sourceFilename,
       title: source.title,
       sourceType: source.sourceType,
     }),
-    mimeType: source.mimeType || "text/plain; charset=utf-8",
+    mimeType: source.mimeType || "application/octet-stream",
   };
-}
-
-export async function getKnowledgeDocumentDownload(params: {
-  userId: string;
-  documentId: string;
-  spaceId: string;
-}): Promise<{
-  body: Uint8Array;
-  filename: string;
-  mimeType: string;
-}> {
-  const source = await getDocumentById(params.userId, params.documentId);
-
-  if (!source || source.collectionId !== params.spaceId) {
-    throw new NotFoundError(
-      `Knowledge document "${params.documentId}" not found`,
-    );
-  }
-
-  return getKnowledgeSourceDownload({
-    userId: params.userId,
-    sourceId: source.id,
-  });
 }

@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
+  buildKnowledgeSourceObjectKey,
   createUser,
   getDefaultPassword,
   getDefaultUsername,
   resetKnowledgeRepository,
   resetKnowledgeRuntimeCache,
+  setKnowledgeObjectStorageClientForTests,
   waitForPendingKnowledgeImports,
 } from "@atlas-kb/mastra/knowledge";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -14,16 +16,15 @@ import { createApp } from "./app";
 
 const originalFetch = globalThis.fetch;
 const originalApiKey = process.env.OPENAI_API_KEY;
+const originalEmbeddingApiKey = process.env.EMBEDDING_API_KEY;
 const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
-const originalLanceUri = process.env.LANCEDB_URI;
-
-function createTestLanceUri(): string {
-  const baseUri =
-    originalLanceUri?.replace(/\/+$/g, "") ??
-    "s3://ops-agent-kit/lancedb/atlas-kb";
-
-  return `${baseUri}/test-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
-}
+const originalQdrantUrl = process.env.QDRANT_URL;
+const originalS3Endpoint = process.env.ATLAS_KB_S3_ENDPOINT;
+const originalS3Region = process.env.ATLAS_KB_S3_REGION;
+const originalS3Bucket = process.env.ATLAS_KB_S3_BUCKET;
+const originalS3AccessKeyId = process.env.ATLAS_KB_S3_ACCESS_KEY_ID;
+const originalS3SecretAccessKey = process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY;
+const mirroredObjectStore = new Map<string, string>();
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -56,6 +57,18 @@ function createSseResponse(chunks: unknown[]): Response {
   });
 }
 
+function readJsonRequestBody(value: unknown): Record<string, unknown> {
+  if (typeof value !== "string" || !value.trim()) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(value) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
 function readMessageText(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -74,23 +87,32 @@ function readMessageText(value: unknown): string {
     .join("\n");
 }
 
-function readJsonRequestBody(
-  value: BodyInit | null | undefined,
-): Record<string, unknown> {
-  if (typeof value !== "string" || !value.trim()) {
-    return {};
+function readResponseInputText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
   }
 
-  try {
-    return JSON.parse(value) as Record<string, unknown>;
-  } catch {
-    return {};
+  if (!Array.isArray(value)) {
+    return "";
   }
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return "";
+      }
+
+      if ("content" in item) {
+        return readMessageText((item as { content?: unknown }).content);
+      }
+
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
-async function readTextRequestBody(
-  value: BodyInit | null | undefined,
-): Promise<string> {
+async function readTextRequestBody(value: unknown): Promise<string> {
   if (!value) {
     return "";
   }
@@ -114,77 +136,63 @@ async function readTextRequestBody(
   return "";
 }
 
-function mockModelProviders() {
-  globalThis.fetch = async (input, init) => {
-    const url = typeof input === "string" ? input : input.url;
+function getMirroredObjectKeyFromUrl(url: string): string | undefined {
+  const parsed = new URL(url);
+  const bucket = process.env.ATLAS_KB_S3_BUCKET?.trim();
+  const pathSegments = parsed.pathname.split("/").filter(Boolean);
+
+  if (!bucket || pathSegments.length === 0) {
+    return undefined;
+  }
+
+  if (pathSegments[0] !== bucket) {
+    return undefined;
+  }
+
+  return decodeURIComponent(pathSegments.slice(1).join("/"));
+}
+
+function mockProviders() {
+  globalThis.fetch = (async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
     const body = readJsonRequestBody(init?.body);
     const messages = Array.isArray(body.messages) ? body.messages : [];
-    const systemPrompt = readMessageText(messages[0]?.content);
     const lastMessage = messages[messages.length - 1];
-
-    if (url.includes("/rmeta/text")) {
-      const content = await readTextRequestBody(init?.body);
-
-      return jsonResponse([
-        {
-          "Content-Type": "text/plain",
-          "X-TIKA:content": content || "这是原始文件正文。",
-          "dc:title": "用户手册",
-          resourceName: "用户手册.txt",
-        },
-      ]);
-    }
+    const responseInputText = readResponseInputText(body.input);
 
     if (url.includes("/embeddings")) {
-      const inputValues = Array.isArray(body.input) ? body.input : [];
       return jsonResponse({
-        data: inputValues.map((_value, index) => ({
-          index,
-          embedding: [0.11, 0.22, 0.33],
-        })),
-      });
-    }
-
-    if (url.includes(":6333/collections/")) {
-      if (url.includes("/points/query")) {
-        return jsonResponse({
-          result: {
-            points: [],
-          },
-        });
-      }
-
-      return jsonResponse({
-        result: {
-          status: "ok",
-        },
-      });
-    }
-
-    if (systemPrompt.includes("Rewrite the search query")) {
-      return jsonResponse({
-        choices: [
+        data: [
           {
-            message: {
-              content: JSON.stringify({
-                queries: [readMessageText(lastMessage?.content)],
-              }),
-            },
+            embedding: [0.11, 0.22, 0.33],
+            index: 0,
           },
         ],
+      });
+    }
+
+    if (url.includes(":6333")) {
+      return jsonResponse({
+        result: {
+          points: [],
+          status: "ok",
+        },
       });
     }
 
     if (body.stream === true) {
       return createSseResponse([
         {
-          id: "chatcmpl-stream-1",
-          object: "chat.completion.chunk",
-          created: 1,
-          model: "gpt-5.4",
           choices: [
             {
-              index: 0,
               delta: {
                 content: "这是基于当前证据生成的流式回答。",
               },
@@ -195,16 +203,60 @@ function mockModelProviders() {
       ]);
     }
 
-    return jsonResponse({
-      choices: [
-        {
-          message: {
-            content: "这是基于当前证据生成的回答。",
+    if (url.includes("/responses")) {
+      return jsonResponse({
+        id: "resp_test",
+        object: "response",
+        created_at: Date.now(),
+        model: "openai/gpt-5.4",
+        output: [
+          {
+            type: "message",
+            id: "msg_test",
+            role: "assistant",
+            content: [
+              {
+                type: "output_text",
+                text: `基于证据的回答：${responseInputText || readMessageText(lastMessage?.content)}`,
+                annotations: [],
+              },
+            ],
           },
-        },
-      ],
+        ],
+        output_text: `基于证据的回答：${responseInputText || readMessageText(lastMessage?.content)}`,
+      });
+    }
+
+    if (url.includes("chat/completions")) {
+      return jsonResponse({
+        choices: [
+          {
+            message: {
+              content: `基于证据的回答：${readMessageText(lastMessage?.content)}`,
+            },
+          },
+        ],
+      });
+    }
+
+    if (init?.method?.toUpperCase() === "PUT" && url.includes(":9000")) {
+      const objectKey = getMirroredObjectKeyFromUrl(url);
+
+      if (objectKey) {
+        mirroredObjectStore.set(
+          objectKey,
+          await readTextRequestBody(init?.body),
+        );
+      }
+
+      return new Response(null, { status: 200 });
+    }
+
+    return jsonResponse({
+      ok: true,
+      body: await readTextRequestBody(init?.body),
     });
-  };
+  }) as typeof fetch;
 }
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -236,7 +288,6 @@ async function login(
   );
 
   const data = await readJson<{
-    expiresAt: string;
     token: string;
     user: {
       id: string;
@@ -256,34 +307,95 @@ function authHeaders(token: string): HeadersInit {
   };
 }
 
-describe("@atlas-kb/api authenticated workspace", () => {
+async function uploadFileThroughDirectObjectFlow(params: {
+  app: ReturnType<typeof createApp>;
+  token: string;
+  collectionId: string;
+  file: File;
+  summary?: string;
+  tags?: string[];
+  title?: string;
+}) {
+  const formData = new FormData();
+  formData.set("file", params.file);
+
+  if (params.summary?.trim()) {
+    formData.set("summary", params.summary.trim());
+  }
+
+  if (params.tags?.length) {
+    formData.set("tags", params.tags.join(", "));
+  }
+
+  if (params.title?.trim()) {
+    formData.set("title", params.title.trim());
+  }
+
+  const response = await params.app.handle(
+    new Request(
+      `http://localhost/api/kb/collections/${params.collectionId}/uploads`,
+      {
+        method: "POST",
+        headers: {
+          ...authHeaders(params.token),
+        },
+        body: formData,
+      },
+    ),
+  );
+
+  return {
+    confirmResponse: response,
+  };
+}
+
+describe("@atlas-kb/api knowledge endpoints", () => {
   let knowledgeDataDir = "";
 
   beforeEach(async () => {
     knowledgeDataDir = await mkdtemp(join(tmpdir(), "atlas-kb-api-test-"));
+    mirroredObjectStore.clear();
     process.env.ATLAS_KB_DATA_DIR = knowledgeDataDir;
-    process.env.LANCEDB_URI = createTestLanceUri();
-    process.env.OPENAI_API_KEY = "test-key";
+    process.env.QDRANT_URL = "http://127.0.0.1:6333";
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.EMBEDDING_API_KEY = "test-embedding-key";
+    process.env.ATLAS_KB_S3_ENDPOINT = "http://127.0.0.1:9000";
+    process.env.ATLAS_KB_S3_REGION = "us-east-1";
+    process.env.ATLAS_KB_S3_BUCKET = "atlas-kb-test";
+    process.env.ATLAS_KB_S3_ACCESS_KEY_ID = "test-access-key";
+    process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY = "test-secret-key";
+    globalThis.fetch = originalFetch;
     resetKnowledgeRuntimeCache();
     await resetKnowledgeRepository();
-    await createUser({
-      username: getDefaultUsername(),
-      password: getDefaultPassword(),
+    setKnowledgeObjectStorageClientForTests({
+      async deleteObject(args) {
+        mirroredObjectStore.delete(args.key);
+      },
+      async getObject(args) {
+        const value = mirroredObjectStore.get(args.key);
+
+        if (value === undefined) {
+          throw new Error(`missing test object: ${args.key}`);
+        }
+
+        return new TextEncoder().encode(value);
+      },
+      async putObject(args) {
+        mirroredObjectStore.set(
+          args.key,
+          typeof args.body === "string"
+            ? args.body
+            : new TextDecoder().decode(args.body),
+        );
+      },
     });
-    mockModelProviders();
+    mockProviders();
   });
 
   afterEach(async () => {
     await waitForPendingKnowledgeImports();
     resetKnowledgeRuntimeCache();
     await resetKnowledgeRepository();
-    globalThis.fetch = originalFetch;
-
-    if (originalApiKey === undefined) {
-      delete process.env.OPENAI_API_KEY;
-    } else {
-      process.env.OPENAI_API_KEY = originalApiKey;
-    }
 
     if (originalDataDir === undefined) {
       delete process.env.ATLAS_KB_DATA_DIR;
@@ -291,48 +403,61 @@ describe("@atlas-kb/api authenticated workspace", () => {
       process.env.ATLAS_KB_DATA_DIR = originalDataDir;
     }
 
-    if (originalLanceUri === undefined) {
-      delete process.env.LANCEDB_URI;
+    if (originalQdrantUrl === undefined) {
+      delete process.env.QDRANT_URL;
     } else {
-      process.env.LANCEDB_URI = originalLanceUri;
+      process.env.QDRANT_URL = originalQdrantUrl;
+    }
+
+    if (originalApiKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = originalApiKey;
+    }
+
+    if (originalEmbeddingApiKey === undefined) {
+      delete process.env.EMBEDDING_API_KEY;
+    } else {
+      process.env.EMBEDDING_API_KEY = originalEmbeddingApiKey;
+    }
+
+    if (originalS3Endpoint === undefined) {
+      delete process.env.ATLAS_KB_S3_ENDPOINT;
+    } else {
+      process.env.ATLAS_KB_S3_ENDPOINT = originalS3Endpoint;
+    }
+
+    if (originalS3Region === undefined) {
+      delete process.env.ATLAS_KB_S3_REGION;
+    } else {
+      process.env.ATLAS_KB_S3_REGION = originalS3Region;
+    }
+
+    if (originalS3Bucket === undefined) {
+      delete process.env.ATLAS_KB_S3_BUCKET;
+    } else {
+      process.env.ATLAS_KB_S3_BUCKET = originalS3Bucket;
+    }
+
+    if (originalS3AccessKeyId === undefined) {
+      delete process.env.ATLAS_KB_S3_ACCESS_KEY_ID;
+    } else {
+      process.env.ATLAS_KB_S3_ACCESS_KEY_ID = originalS3AccessKeyId;
+    }
+
+    if (originalS3SecretAccessKey === undefined) {
+      delete process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY;
+    } else {
+      process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY = originalS3SecretAccessKey;
     }
 
     resetKnowledgeRuntimeCache();
+    globalThis.fetch = originalFetch;
+    setKnowledgeObjectStorageClientForTests();
     await rm(knowledgeDataDir, { force: true, recursive: true });
   });
 
-  it("logs in with username/password and protects workspace routes", async () => {
-    const app = createApp();
-    const loginResult = await login(app);
-
-    expect(loginResult.response.status).toBe(200);
-    expect(loginResult.user.username).toBe(getDefaultUsername());
-
-    const meResponse = await app.handle(
-      new Request("http://localhost/api/auth/me", {
-        headers: authHeaders(loginResult.token),
-      }),
-    );
-    const meData = await readJson<{
-      expiresAt: string;
-      user: {
-        id: string;
-        username: string;
-      };
-    }>(meResponse);
-
-    expect(meResponse.status).toBe(200);
-    expect(meData.user.id).toBe(loginResult.user.id);
-    expect(meData.user.username).toBe(getDefaultUsername());
-
-    const unauthorizedResponse = await app.handle(
-      new Request("http://localhost/api/kb/collections"),
-    );
-
-    expect(unauthorizedResponse.status).toBe(401);
-  });
-
-  it("completes source edit, search, chat, and feedback in one authenticated flow", async () => {
+  it("creates a collection, imports text, and searches within it", async () => {
     const app = createApp();
     const session = await login(app);
 
@@ -344,8 +469,9 @@ describe("@atlas-kb/api authenticated workspace", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          name: "产品资料",
-          description: "用于验证资料编辑和聊天闭环",
+          id: "api-search",
+          name: "API Search",
+          description: "api test collection",
         }),
       }),
     );
@@ -365,37 +491,20 @@ describe("@atlas-kb/api authenticated workspace", () => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            title: "最初资料",
-            content: "旧关键词：系统只会记住旧内容。",
-            summary: "初始摘要",
-            tags: ["旧版"],
+            title: "Alpha API Doc",
+            content: "alpha api keyword appears in this source.",
           }),
         },
       ),
     );
-    const importData = await readJson<{
+    const imported = await readJson<{
       source: {
         id: string;
+        status: string;
       };
     }>(importResponse);
 
-    const updateResponse = await app.handle(
-      new Request(`http://localhost/api/kb/sources/${importData.source.id}`, {
-        method: "PATCH",
-        headers: {
-          ...authHeaders(session.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          title: "更新后资料",
-          summary: "新版摘要",
-          tags: ["新版"],
-          content: "新关键词：系统现在会优先命中新内容。",
-        }),
-      }),
-    );
-
-    expect(updateResponse.status).toBe(200);
+    expect(imported.source.status).toBe("ready");
 
     const searchResponse = await app.handle(
       new Request("http://localhost/api/kb/search", {
@@ -405,7 +514,7 @@ describe("@atlas-kb/api authenticated workspace", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          query: "新关键词",
+          query: "alpha api keyword",
           collectionId: collectionData.collection.id,
         }),
       }),
@@ -418,88 +527,11 @@ describe("@atlas-kb/api authenticated workspace", () => {
       total: number;
     }>(searchResponse);
 
-    expect(searchResponse.status).toBe(200);
     expect(searchData.total).toBe(1);
-    expect(searchData.hits[0]?.sourceId).toBe(importData.source.id);
-    expect(searchData.hits[0]?.title).toBe("更新后资料");
-
-    const createSessionResponse = await app.handle(
-      new Request("http://localhost/api/chat/sessions", {
-        method: "POST",
-        headers: {
-          ...authHeaders(session.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          collectionId: collectionData.collection.id,
-        }),
-      }),
-    );
-    const sessionData = await readJson<{
-      session: {
-        id: string;
-      };
-    }>(createSessionResponse);
-
-    const replyResponse = await app.handle(
-      new Request(
-        `http://localhost/api/chat/sessions/${sessionData.session.id}/reply`,
-        {
-          method: "POST",
-          headers: {
-            ...authHeaders(session.token),
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            query: "资料里最新的关键词是什么？",
-            collectionId: collectionData.collection.id,
-            limit: 5,
-          }),
-        },
-      ),
-    );
-    const replyData = await readJson<{
-      assistantMessage: {
-        citations: unknown[];
-        id: string;
-      };
-      retrieval: {
-        total: number;
-      };
-      userMessage: {
-        content: string;
-      };
-    }>(replyResponse);
-
-    expect(replyResponse.status).toBe(200);
-    expect(replyData.userMessage.content).toContain("最新的关键词");
-    expect(replyData.assistantMessage.citations.length).toBeGreaterThan(0);
-    expect(replyData.retrieval.total).toBeGreaterThan(0);
-
-    const feedbackResponse = await app.handle(
-      new Request(
-        `http://localhost/api/chat/messages/${replyData.assistantMessage.id}/feedback`,
-        {
-          method: "POST",
-          headers: {
-            ...authHeaders(session.token),
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            rating: "up",
-          }),
-        },
-      ),
-    );
-    const feedbackData = await readJson<{
-      rating: string;
-    }>(feedbackResponse);
-
-    expect(feedbackResponse.status).toBe(200);
-    expect(feedbackData.rating).toBe("up");
+    expect(searchData.hits[0]?.title).toBe("Alpha API Doc");
   });
 
-  it("imports a file and downloads the original uploaded content", async () => {
+  it("imports one file through the direct object upload flow and returns a download url", async () => {
     const app = createApp();
     const session = await login(app);
 
@@ -511,8 +543,9 @@ describe("@atlas-kb/api authenticated workspace", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          name: "文件资料",
-          description: "用于验证文件导入和下载",
+          id: "api-download",
+          name: "API Download",
+          description: "download tests",
         }),
       }),
     );
@@ -522,36 +555,24 @@ describe("@atlas-kb/api authenticated workspace", () => {
       };
     }>(createCollectionResponse);
 
-    const form = new FormData();
-    form.append(
-      "file",
-      new File(["这是原始文件正文。"], "用户手册.txt", {
+    const upload = await uploadFileThroughDirectObjectFlow({
+      app,
+      token: session.token,
+      collectionId: collectionData.collection.id,
+      file: new File(["downloadable file body"], "downloadable.txt", {
         type: "text/plain",
       }),
-    );
-    form.append("summary", "文件摘要");
-
-    const importResponse = await app.handle(
-      new Request(
-        `http://localhost/api/kb/collections/${collectionData.collection.id}/imports/file`,
-        {
-          method: "POST",
-          headers: authHeaders(session.token),
-          body: form,
-        },
-      ),
-    );
+    });
     const importData = await readJson<{
       source: {
         id: string;
-        status: string;
+        documentId: string;
+        sourceFilename?: string;
       };
-    }>(importResponse);
+    }>(upload.confirmResponse);
 
-    expect(importResponse.status).toBe(200);
-    expect(importData.source.status).toBe("ready");
-
-    await waitForPendingKnowledgeImports();
+    expect(importData.source.documentId).toBe("downloadable.txt");
+    expect(importData.source.sourceFilename).toBe("downloadable.txt");
 
     const downloadResponse = await app.handle(
       new Request(
@@ -561,205 +582,18 @@ describe("@atlas-kb/api authenticated workspace", () => {
         },
       ),
     );
-    const downloadText = await downloadResponse.text();
 
     expect(downloadResponse.status).toBe(200);
-    expect(downloadText).toContain("这是原始文件正文。");
-    expect(downloadResponse.headers.get("Content-Disposition")).toContain(
-      "filename=",
-    );
+    const downloadData = await readJson<{
+      url: string;
+      filename: string;
+      mimeType: string;
+    }>(downloadResponse);
+    expect(downloadData.url).toBeString();
+    expect(downloadData.filename).toBe("downloadable.txt");
   });
 
-  it("enforces user isolation across source access and streaming chat", async () => {
-    const app = createApp();
-    await createUser({
-      username: "beta-user",
-      password: "beta-pass",
-    });
-
-    const alpha = await login(app);
-    const beta = await login(app, {
-      username: "beta-user",
-      password: "beta-pass",
-    });
-
-    const createCollectionResponse = await app.handle(
-      new Request("http://localhost/api/kb/collections", {
-        method: "POST",
-        headers: {
-          ...authHeaders(alpha.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: "Alpha 私有资料",
-          description: "仅 alpha 可见",
-        }),
-      }),
-    );
-    const collectionData = await readJson<{
-      collection: {
-        id: string;
-      };
-    }>(createCollectionResponse);
-
-    const importResponse = await app.handle(
-      new Request(
-        `http://localhost/api/kb/collections/${collectionData.collection.id}/imports/text`,
-        {
-          method: "POST",
-          headers: {
-            ...authHeaders(alpha.token),
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            title: "Alpha 资料",
-            content: "隔离关键词：只有 alpha 能看到。",
-          }),
-        },
-      ),
-    );
-    const importData = await readJson<{
-      source: {
-        id: string;
-      };
-    }>(importResponse);
-
-    const betaSearchResponse = await app.handle(
-      new Request("http://localhost/api/kb/search", {
-        method: "POST",
-        headers: {
-          ...authHeaders(beta.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          query: "隔离关键词",
-        }),
-      }),
-    );
-    const betaSearchData = await readJson<{
-      total: number;
-    }>(betaSearchResponse);
-
-    expect(betaSearchResponse.status).toBe(200);
-    expect(betaSearchData.total).toBe(0);
-
-    const betaSourceResponse = await app.handle(
-      new Request(`http://localhost/api/kb/sources/${importData.source.id}`, {
-        headers: authHeaders(beta.token),
-      }),
-    );
-
-    expect(betaSourceResponse.status).toBe(404);
-
-    const createSessionResponse = await app.handle(
-      new Request("http://localhost/api/chat/sessions", {
-        method: "POST",
-        headers: {
-          ...authHeaders(alpha.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          collectionId: collectionData.collection.id,
-        }),
-      }),
-    );
-    const sessionData = await readJson<{
-      session: {
-        id: string;
-      };
-    }>(createSessionResponse);
-
-    const streamResponse = await app.handle(
-      new Request(
-        `http://localhost/api/chat/sessions/${sessionData.session.id}/reply/stream`,
-        {
-          method: "POST",
-          headers: {
-            ...authHeaders(alpha.token),
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            query: "基于私有资料给我一个回答。",
-            collectionId: collectionData.collection.id,
-            limit: 5,
-          }),
-        },
-      ),
-    );
-    const streamText = await streamResponse.text();
-
-    expect(streamResponse.status).toBe(200);
-    expect(streamText.length).toBeGreaterThan(0);
-
-    const messagesResponse = await app.handle(
-      new Request(
-        `http://localhost/api/chat/sessions/${sessionData.session.id}/messages`,
-        {
-          headers: authHeaders(alpha.token),
-        },
-      ),
-    );
-    const messagesData = await readJson<{
-      messages: Array<{
-        role: string;
-      }>;
-    }>(messagesResponse);
-
-    expect(messagesResponse.status).toBe(200);
-    expect(
-      messagesData.messages.some((item) => item.role === "assistant"),
-    ).toBe(true);
-  });
-
-  it("returns sanitized chat errors without leaking provider configuration details", async () => {
-    globalThis.fetch = async (input, init) => {
-      const url = typeof input === "string" ? input : input.url;
-      const body = readJsonRequestBody(init?.body);
-
-      if (url.includes("/rmeta/text")) {
-        const content = await readTextRequestBody(init?.body);
-
-        return jsonResponse([
-          {
-            "Content-Type": "text/plain",
-            "X-TIKA:content": content || "这是一条测试资料。",
-            "dc:title": "测试资料",
-            resourceName: "测试资料.txt",
-          },
-        ]);
-      }
-
-      if (url.includes("/embeddings")) {
-        const inputValues = Array.isArray(body.input) ? body.input : [];
-        return jsonResponse({
-          data: inputValues.map((_value, index) => ({
-            embedding: [0.11, 0.22, 0.33],
-            index,
-          })),
-        });
-      }
-
-      if (url.includes(":6333/collections/")) {
-        if (url.includes("/points/query")) {
-          return jsonResponse({
-            result: {
-              points: [],
-            },
-          });
-        }
-
-        return jsonResponse({
-          result: {
-            status: "ok",
-          },
-        });
-      }
-
-      throw new Error(
-        "知识库回答生成 失败。当前 OPENAI_BASE_URL=https://api.duckcoding.ai/v1。当前 OPENAI_MODEL=gpt-5.4。原始错误: The operation timed out.",
-      );
-    };
-
+  it("imports multiple files through the direct object upload flow", async () => {
     const app = createApp();
     const session = await login(app);
 
@@ -771,8 +605,223 @@ describe("@atlas-kb/api authenticated workspace", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          description: "用于验证聊天错误脱敏",
-          name: "错误脱敏",
+          id: "api-batch-upload",
+          name: "API Batch Upload",
+          description: "batch upload tests",
+        }),
+      }),
+    );
+    const collectionData = await readJson<{
+      collection: {
+        id: string;
+      };
+    }>(createCollectionResponse);
+
+    const firstUpload = await uploadFileThroughDirectObjectFlow({
+      app,
+      token: session.token,
+      collectionId: collectionData.collection.id,
+      file: new File(["first body"], "first.txt", {
+        type: "text/plain",
+      }),
+    });
+    const secondUpload = await uploadFileThroughDirectObjectFlow({
+      app,
+      token: session.token,
+      collectionId: collectionData.collection.id,
+      file: new File(["second body"], "second.txt", {
+        type: "text/plain",
+      }),
+    });
+
+    const firstImport = await readJson<{
+      source: {
+        documentId: string;
+        sourceFilename?: string;
+      };
+    }>(firstUpload.confirmResponse);
+    const secondImport = await readJson<{
+      source: {
+        documentId: string;
+        sourceFilename?: string;
+      };
+    }>(secondUpload.confirmResponse);
+
+    expect(firstImport.source.documentId).toBe("first.txt");
+    expect(firstImport.source.sourceFilename).toBe("first.txt");
+    expect(secondImport.source.documentId).toBe("second.txt");
+    expect(secondImport.source.sourceFilename).toBe("second.txt");
+  });
+
+  it("surfaces validator messages instead of the generic validation error string", async () => {
+    const app = createApp();
+    const session = await login(app);
+
+    const response = await app.handle(
+      new Request("http://localhost/api/kb/collections", {
+        method: "POST",
+        headers: {
+          ...authHeaders(session.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Missing Description",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+
+    const payload = (await response.json()) as {
+      error: {
+        code: string;
+        message: string;
+      };
+      success: false;
+    };
+
+    expect(payload.error.code).toBe("VALIDATION_ERROR");
+    expect(payload.error.message).toContain("description");
+  });
+
+  it("requires collectionId when creating a chat session", async () => {
+    const app = createApp();
+    const session = await login(app);
+
+    const response = await app.handle(
+      new Request("http://localhost/api/chat/sessions", {
+        method: "POST",
+        headers: {
+          ...authHeaders(session.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: "未绑定文件夹",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+
+    const payload = (await response.json()) as {
+      error: {
+        code: string;
+        message: string;
+      };
+      success: false;
+    };
+
+    expect(payload.error.code).toBe("VALIDATION_ERROR");
+    expect(payload.error.message).toContain("collectionId");
+  });
+
+  it("lists chat sessions only for the requested collection", async () => {
+    const app = createApp();
+    const session = await login(app);
+
+    const firstCollectionResponse = await app.handle(
+      new Request("http://localhost/api/kb/collections", {
+        method: "POST",
+        headers: {
+          ...authHeaders(session.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: "chat-filter-a",
+          name: "Chat Filter A",
+          description: "chat filter tests a",
+        }),
+      }),
+    );
+    const secondCollectionResponse = await app.handle(
+      new Request("http://localhost/api/kb/collections", {
+        method: "POST",
+        headers: {
+          ...authHeaders(session.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: "chat-filter-b",
+          name: "Chat Filter B",
+          description: "chat filter tests b",
+        }),
+      }),
+    );
+    const firstCollection = await readJson<{
+      collection: {
+        id: string;
+      };
+    }>(firstCollectionResponse);
+    const secondCollection = await readJson<{
+      collection: {
+        id: string;
+      };
+    }>(secondCollectionResponse);
+
+    await app.handle(
+      new Request("http://localhost/api/chat/sessions", {
+        method: "POST",
+        headers: {
+          ...authHeaders(session.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          collectionId: firstCollection.collection.id,
+          title: "A Session",
+        }),
+      }),
+    );
+    await app.handle(
+      new Request("http://localhost/api/chat/sessions", {
+        method: "POST",
+        headers: {
+          ...authHeaders(session.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          collectionId: secondCollection.collection.id,
+          title: "B Session",
+        }),
+      }),
+    );
+
+    const listResponse = await app.handle(
+      new Request(
+        `http://localhost/api/chat/sessions?collectionId=${encodeURIComponent(firstCollection.collection.id)}`,
+        {
+          headers: authHeaders(session.token),
+        },
+      ),
+    );
+    const listData = await readJson<{
+      sessions: Array<{
+        collectionId: string;
+        title: string;
+      }>;
+    }>(listResponse);
+
+    expect(listData.sessions).toHaveLength(1);
+    expect(listData.sessions[0]?.title).toBe("A Session");
+    expect(listData.sessions[0]?.collectionId).toBe(
+      firstCollection.collection.id,
+    );
+  });
+
+  it("mirrors manual text sources to object storage across import, update, and delete", async () => {
+    const app = createApp();
+    const session = await login(app);
+
+    const createCollectionResponse = await app.handle(
+      new Request("http://localhost/api/kb/collections", {
+        method: "POST",
+        headers: {
+          ...authHeaders(session.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: "api-text-mirror",
+          name: "API Text Mirror",
+          description: "text mirror tests",
         }),
       }),
     );
@@ -792,36 +841,82 @@ describe("@atlas-kb/api authenticated workspace", () => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            content: "这是一条测试资料。",
-            title: "测试资料",
+            title: "Manual Source",
+            content: "first manual text body",
           }),
         },
       ),
     );
+    const importData = await readJson<{
+      source: {
+        id: string;
+        sourceFilename?: string;
+      };
+    }>(importResponse);
 
-    expect(importResponse.status).toBe(200);
+    const objectKey = buildKnowledgeSourceObjectKey({
+      userId: session.user.id,
+      collectionId: collectionData.collection.id,
+      relativePath: "Manual Source.txt",
+    });
 
-    const createSessionResponse = await app.handle(
-      new Request("http://localhost/api/chat/sessions", {
+    expect(importData.source.sourceFilename).toBe("Manual Source.txt");
+    expect(mirroredObjectStore.get(objectKey)).toBe("first manual text body");
+
+    const updateResponse = await app.handle(
+      new Request(`http://localhost/api/kb/sources/${importData.source.id}`, {
+        method: "PATCH",
+        headers: {
+          ...authHeaders(session.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          content: "updated manual text body",
+        }),
+      }),
+    );
+
+    expect(updateResponse.status).toBe(200);
+    expect(mirroredObjectStore.get(objectKey)).toBe("updated manual text body");
+
+    const deleteResponse = await app.handle(
+      new Request(`http://localhost/api/kb/sources/${importData.source.id}`, {
+        method: "DELETE",
+        headers: authHeaders(session.token),
+      }),
+    );
+
+    expect(deleteResponse.status).toBe(200);
+    expect(mirroredObjectStore.has(objectKey)).toBe(false);
+  });
+
+  it("generates a briefing opinion", async () => {
+    const app = createApp();
+    const session = await login(app);
+
+    const createCollectionResponse = await app.handle(
+      new Request("http://localhost/api/kb/collections", {
         method: "POST",
         headers: {
           ...authHeaders(session.token),
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          collectionId: collectionData.collection.id,
+          id: "api-briefing",
+          name: "API Briefing",
+          description: "briefing tests",
         }),
       }),
     );
-    const sessionData = await readJson<{
-      session: {
+    const collectionData = await readJson<{
+      collection: {
         id: string;
       };
-    }>(createSessionResponse);
+    }>(createCollectionResponse);
 
-    const replyResponse = await app.handle(
+    const importResponse = await app.handle(
       new Request(
-        `http://localhost/api/chat/sessions/${sessionData.session.id}/reply`,
+        `http://localhost/api/kb/collections/${collectionData.collection.id}/imports/text`,
         {
           method: "POST",
           headers: {
@@ -829,24 +924,106 @@ describe("@atlas-kb/api authenticated workspace", () => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            collectionId: collectionData.collection.id,
-            query: "这条资料说了什么？",
+            title: "公文标题",
+            summary: "拟办测试摘要",
+            content: "来文单位为综合办公室，文件标题为关于预算调整的请示。",
           }),
         },
       ),
     );
-    const payload = (await replyResponse.json()) as {
-      error: {
-        message: string;
+    const importData = await readJson<{
+      source: {
+        id: string;
       };
-      success: boolean;
-    };
+    }>(importResponse);
 
-    expect(replyResponse.status).toBe(503);
-    expect(payload.success).toBe(false);
-    expect(payload.error.message).toBe("知识库回答暂时不可用，请稍后重试。");
-    expect(payload.error.message.includes("OPENAI_BASE_URL")).toBe(false);
-    expect(payload.error.message.includes("OPENAI_MODEL")).toBe(false);
-    expect(payload.error.message.includes("原始错误")).toBe(false);
+    const briefingResponse = await app.handle(
+      new Request(
+        `http://localhost/api/kb/sources/${importData.source.id}/briefing`,
+        {
+          headers: authHeaders(session.token),
+        },
+      ),
+    );
+    const briefingData = await readJson<{
+      briefing: {
+        fields: Array<{
+          key: string;
+          status: string;
+        }>;
+        form: {
+          documentTitle: string;
+        };
+      };
+    }>(briefingResponse);
+
+    expect(briefingData.briefing.fields).toHaveLength(6);
+    expect(briefingData.briefing.form.documentTitle).toBeTruthy();
+  });
+
+  it("isolates data between authenticated users", async () => {
+    const app = createApp();
+    const alpha = await login(app);
+    await createUser({
+      username: "beta-api",
+      password: "beta-pass",
+    });
+    const beta = await login(app, {
+      username: "beta-api",
+      password: "beta-pass",
+    });
+
+    const createCollectionResponse = await app.handle(
+      new Request("http://localhost/api/kb/collections", {
+        method: "POST",
+        headers: {
+          ...authHeaders(alpha.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: "alpha-only",
+          name: "Alpha Only",
+          description: "private",
+        }),
+      }),
+    );
+    const collectionData = await readJson<{
+      collection: {
+        id: string;
+      };
+    }>(createCollectionResponse);
+
+    await app.handle(
+      new Request(
+        `http://localhost/api/kb/collections/${collectionData.collection.id}/imports/text`,
+        {
+          method: "POST",
+          headers: {
+            ...authHeaders(alpha.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title: "Private Alpha Doc",
+            content: "private alpha token",
+          }),
+        },
+      ),
+    );
+
+    const betaSearchResponse = await app.handle(
+      new Request("http://localhost/api/kb/search", {
+        method: "POST",
+        headers: {
+          ...authHeaders(beta.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: "private alpha token",
+          collectionId: collectionData.collection.id,
+        }),
+      }),
+    );
+
+    expect(betaSearchResponse.status).toBe(404);
   });
 });

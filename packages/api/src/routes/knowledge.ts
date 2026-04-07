@@ -1,134 +1,103 @@
 import {
+  allocateManagedSourceFileName,
   answerKnowledgeQuestion,
+  buildManagedSourceFileName,
   createKnowledgeCollection,
-  createKnowledgeSpace,
+  createKnowledgeExportTaskInAdmin,
+  createKnowledgeSourceRecord,
   deleteKnowledgeCollection,
   deleteKnowledgeSource,
+  extractFileContent,
   generateBriefingOpinion,
-  getBriefingExportHistory,
+  generateKnowledgeTemplateExportPayload,
   getKnowledgeCollectionData,
   getKnowledgeCollectionSourcesData,
-  getKnowledgeDocumentDownload,
+  getManagedSourcePaths,
   getKnowledgeSourceData,
-  getKnowledgeSourceDownload,
-  getKnowledgeSpaceDocuments,
-  importKnowledgeFile,
-  importKnowledgeFiles,
+  getKnowledgeSourceDownloadUrl,
+  getKnowledgeTemplateDetailFromAdmin,
+  getKnowledgeWorkspace,
   importKnowledgeText,
-  listImportJobs,
+  listKnowledgeExportTasksFromAdmin,
   listKnowledgeCollections,
-  listKnowledgeSpaces,
-  refreshKnowledgeSource,
-  retryKnowledgeSource,
-  saveBriefingExport,
+  listKnowledgeSources,
+  listKnowledgeTemplatesFromAdmin,
+  putKnowledgeSourceObject,
+  requireKnowledgeCollection,
   searchKnowledge,
   updateKnowledgeCollection,
   updateKnowledgeSource,
-  uploadKnowledgeDocument,
+  getInternalSecret,
 } from "@atlas-kb/mastra/knowledge";
-import { BadRequestError } from "@atlas-kb/errors";
+import { BadRequestError, UnauthorizedError } from "@atlas-kb/errors";
 import {
   AskKnowledgeRequestSchema,
   AskKnowledgeResponseSchema,
-  BriefingExportCreateRequestSchema,
-  BriefingExportResponseSchema,
-  BriefingExportsResponseSchema,
   BriefingOpinionResponseSchema,
-  KnowledgeBatchFileImportRequestSchema,
-  KnowledgeBatchImportResponseSchema,
   KnowledgeCollectionCreateRequestSchema,
   KnowledgeCollectionIdParamsSchema,
   KnowledgeCollectionResponseSchema,
   KnowledgeCollectionsResponseSchema,
   KnowledgeCollectionUpdateRequestSchema,
-  KnowledgeDocumentDownloadParamsSchema,
-  KnowledgeDocumentsResponseSchema,
-  KnowledgeFileImportRequestSchema,
-  KnowledgeImportJobsResponseSchema,
+  KnowledgeExportTaskCreateRequestSchema,
+  KnowledgeExportTaskGenerateRequestSchema,
+  KnowledgeExportTaskGenerateResponseSchema,
+  KnowledgeExportTaskResponseSchema,
+  KnowledgeExportTasksQuerySchema,
+  KnowledgeExportTasksResponseSchema,
   KnowledgeImportResponseSchema,
   KnowledgeSourceIdParamsSchema,
   KnowledgeSourceResponseSchema,
   KnowledgeSourceUpdateRequestSchema,
   KnowledgeSourcesResponseSchema,
-  KnowledgeSpaceCreateRequestSchema,
-  KnowledgeSpaceIdParamsSchema,
-  KnowledgeSpaceMutationResponseSchema,
-  KnowledgeSpacesResponseSchema,
+  KnowledgeTemplateIdParamsSchema,
+  KnowledgeTemplateResponseSchema,
+  KnowledgeTemplatesResponseSchema,
   KnowledgeTextImportRequestSchema,
-  KnowledgeUploadMetadataSchema,
-  KnowledgeUploadResponseSchema,
   SearchKnowledgeRequestSchema,
   SearchKnowledgeResponseSchema,
   success,
 } from "@atlas-kb/schema";
-import { Elysia, t } from "elysia";
-import { basename, extname } from "node:path";
+import { Elysia } from "elysia";
 import { requireAuthenticatedSession } from "../auth";
 
-function parseTagString(input?: string): string[] | undefined {
-  const value = input?.trim();
+function parseTags(tags?: string[]): string[] {
+  return [...new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean))];
+}
 
-  if (!value) {
+function requireInternalSecret(headers: Record<string, string | undefined>) {
+  const configuredSecret = getInternalSecret();
+  const providedSecret = headers["x-atlas-kb-internal-secret"]?.trim();
+
+  if (
+    !configuredSecret ||
+    !providedSecret ||
+    providedSecret !== configuredSecret
+  ) {
+    throw new UnauthorizedError("内部接口认证失败");
+  }
+}
+
+function readOptionalFormValue(
+  formData: FormData,
+  key: string,
+): string | undefined {
+  const value = formData.get(key);
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function parseTagInput(value?: string): string[] | undefined {
+  if (!value?.trim()) {
     return undefined;
   }
 
-  const tags = value
-    .split(/[,\n]/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-
-  return tags.length > 0 ? [...new Set(tags)] : undefined;
+  return parseTags(
+    value
+      .split(/[,\n]/)
+      .map((item) => item.trim())
+      .filter(Boolean),
+  );
 }
-
-function readOptionalString(form: FormData, key: string): string | undefined {
-  const value = form.get(key);
-  return typeof value === "string" ? value : undefined;
-}
-
-function getHeaderSafeFilename(filename: string): string {
-  const trimmed = basename(filename || "download").trim();
-  const extension = extname(trimmed);
-  const safeExtension = extension.replace(/[^a-zA-Z0-9.]+/g, "");
-  const stem =
-    trimmed.slice(0, trimmed.length - extension.length) || "download";
-  const visibleStem = Array.from(stem)
-    .filter((character) => {
-      const codePoint = character.charCodeAt(0);
-      return codePoint >= 32 && !(codePoint >= 127 && codePoint <= 159);
-    })
-    .join("");
-  const asciiStem = visibleStem
-    .replace(/[^a-zA-Z0-9._-]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-
-  return `${asciiStem || "download"}${safeExtension}`;
-}
-
-function toDownloadResponse(download: {
-  body: Uint8Array;
-  filename: string;
-  mimeType: string;
-}): Response {
-  const encodedFilename = encodeURIComponent(download.filename);
-  const fallbackFilename = getHeaderSafeFilename(download.filename);
-
-  return new Response(new Blob([download.body], { type: download.mimeType }), {
-    headers: {
-      "Content-Disposition": `attachment; filename="${fallbackFilename}"; filename*=UTF-8''${encodedFilename}`,
-      "Content-Length": String(download.body.byteLength),
-      "Content-Type": download.mimeType,
-    },
-  });
-}
-
-const uploadBody = t.Object({
-  file: t.File({
-    maxSize: "30m",
-  }),
-  summary: t.Optional(t.String()),
-  tags: t.Optional(t.String()),
-  title: t.Optional(t.String()),
-});
 
 export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
   .get(
@@ -214,59 +183,6 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
     },
   )
   .post(
-    "/collections/:collectionId/imports/file",
-    async ({ body, params, headers }) => {
-      const session = await requireAuthenticatedSession(headers.authorization);
-      return success(
-        await importKnowledgeFile({
-          userId: session.user.id,
-          collectionId: params.collectionId,
-          file: body.file,
-          input: KnowledgeFileImportRequestSchema.parse({
-            title: body.title?.trim() || undefined,
-            summary: body.summary?.trim() || undefined,
-            tags: parseTagString(body.tags),
-          }),
-        }),
-      );
-    },
-    {
-      body: uploadBody,
-      params: KnowledgeCollectionIdParamsSchema,
-      response: KnowledgeImportResponseSchema,
-    },
-  )
-  .post(
-    "/collections/:collectionId/imports/files",
-    async ({ params, request, headers }) => {
-      const session = await requireAuthenticatedSession(headers.authorization);
-      const form = await request.formData();
-      const files = form
-        .getAll("files")
-        .filter((entry): entry is File => entry instanceof File);
-
-      if (files.length === 0) {
-        throw new BadRequestError("请至少选择一个文件");
-      }
-
-      return success(
-        await importKnowledgeFiles({
-          userId: session.user.id,
-          collectionId: params.collectionId,
-          files,
-          input: KnowledgeBatchFileImportRequestSchema.parse({
-            summary: readOptionalString(form, "summary")?.trim() || undefined,
-            tags: parseTagString(readOptionalString(form, "tags")),
-          }),
-        }),
-      );
-    },
-    {
-      params: KnowledgeCollectionIdParamsSchema,
-      response: KnowledgeBatchImportResponseSchema,
-    },
-  )
-  .post(
     "/collections/:collectionId/imports/text",
     async ({ body, params, headers }) => {
       const session = await requireAuthenticatedSession(headers.authorization);
@@ -284,16 +200,171 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
       response: KnowledgeImportResponseSchema,
     },
   )
-  .get(
-    "/imports",
-    async ({ headers }) => {
+  .post(
+    "/collections/:collectionId/uploads",
+    async ({ request, params, headers }) => {
       const session = await requireAuthenticatedSession(headers.authorization);
+      const userId = session.user.id;
+      const collectionId = params.collectionId;
+      await requireKnowledgeCollection(userId, collectionId);
+      const formData = await request.formData();
+      const file = formData.get("file");
+
+      if (!(file instanceof File)) {
+        throw new BadRequestError("请上传文件");
+      }
+
+      const title = readOptionalFormValue(formData, "title");
+      const summary = readOptionalFormValue(formData, "summary");
+      const tags = parseTagInput(readOptionalFormValue(formData, "tags"));
+
+      const sources = await listKnowledgeSources(userId, collectionId);
+      const usedNames = new Set(
+        sources
+          .map((s) => s.sourceFilename?.trim() || s.documentId?.trim())
+          .filter((v): v is string => Boolean(v)),
+      );
+      const resolvedFileName = allocateManagedSourceFileName(
+        buildManagedSourceFileName({
+          sourceType: "file",
+          title: file.name,
+          sourceFilename: file.name,
+          mimeType: file.type || undefined,
+        }),
+        usedNames,
+      );
+      const paths = getManagedSourcePaths({
+        userId,
+        collectionId,
+        fileName: resolvedFileName,
+      });
+      const collection = await requireKnowledgeCollection(userId, collectionId);
+      const objectBytes = new Uint8Array(await file.arrayBuffer());
+
+      await putKnowledgeSourceObject({
+        userId,
+        collectionId,
+        relativePath: paths.documentPath,
+        body: objectBytes,
+        contentType: file.type || undefined,
+      });
+
+      const extracted = await extractFileContent({
+        bytes: objectBytes,
+        fileName: resolvedFileName,
+        mimeType: file.type || undefined,
+      });
+
+      const workspace = await getKnowledgeWorkspace({ userId, collectionId });
+      const documentId = paths.documentPath;
+      const normalizedTags = tags ?? [];
+      const resolvedSummary = summary || extracted.excerpt;
+      const resolvedTitle = title || extracted.title;
+
+      await workspace.index(documentId, extracted.content, {
+        mimeType: extracted.mimeType,
+        metadata: {
+          collectionId,
+          sourceFilename: resolvedFileName,
+          sourceType: "file",
+          summary: resolvedSummary,
+          tags: normalizedTags,
+          title: resolvedTitle,
+        },
+      });
+
+      const sourceId = crypto.randomUUID();
+      const source = await createKnowledgeSourceRecord({
+        sourceId,
+        userId,
+        collectionId,
+        documentId,
+        sourceType: "file",
+        title: resolvedTitle,
+        summary: resolvedSummary,
+        content: extracted.content,
+        tags: normalizedTags,
+        sourceFilename: resolvedFileName,
+        mimeType: extracted.mimeType,
+        byteSize: file.size,
+        status: "ready",
+        originalPath: paths.documentPath,
+        indexPath: documentId,
+      });
+
       return success({
-        jobs: await listImportJobs(session.user.id),
+        collection,
+        source,
+        engine: "lexical" as const,
+        indexed: true,
       });
     },
     {
-      response: KnowledgeImportJobsResponseSchema,
+      params: KnowledgeCollectionIdParamsSchema,
+      response: KnowledgeImportResponseSchema,
+    },
+  )
+  .get(
+    "/templates",
+    async ({ headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success({
+        templates: await listKnowledgeTemplatesFromAdmin(session.user.id),
+      });
+    },
+    {
+      response: KnowledgeTemplatesResponseSchema,
+    },
+  )
+  .get(
+    "/templates/:templateId",
+    async ({ headers, params }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success({
+        template: await getKnowledgeTemplateDetailFromAdmin({
+          userId: session.user.id,
+          templateId: params.templateId,
+        }),
+      });
+    },
+    {
+      params: KnowledgeTemplateIdParamsSchema,
+      response: KnowledgeTemplateResponseSchema,
+    },
+  )
+  .get(
+    "/export-tasks",
+    async ({ headers, query }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success({
+        tasks: await listKnowledgeExportTasksFromAdmin({
+          userId: session.user.id,
+          sourceId: query.sourceId,
+        }),
+      });
+    },
+    {
+      query: KnowledgeExportTasksQuerySchema,
+      response: KnowledgeExportTasksResponseSchema,
+    },
+  )
+  .post(
+    "/sources/:sourceId/export-tasks",
+    async ({ body, headers, params }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success({
+        task: await createKnowledgeExportTaskInAdmin({
+          userId: session.user.id,
+          sourceId: params.sourceId,
+          taskType: body.taskType,
+          templateId: body.templateId,
+        }),
+      });
+    },
+    {
+      body: KnowledgeExportTaskCreateRequestSchema,
+      params: KnowledgeSourceIdParamsSchema,
+      response: KnowledgeExportTaskResponseSchema,
     },
   )
   .get(
@@ -334,42 +405,15 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
       ok: true as const,
     });
   })
-  .post(
-    "/sources/:sourceId/refresh",
-    async ({ params, headers }) => {
-      const session = await requireAuthenticatedSession(headers.authorization);
-      return success(
-        await refreshKnowledgeSource(session.user.id, params.sourceId),
-      );
-    },
-    {
-      params: KnowledgeSourceIdParamsSchema,
-      response: KnowledgeImportResponseSchema,
-    },
-  )
-  .post(
-    "/sources/:sourceId/reprocess",
-    async ({ params, headers }) => {
-      const session = await requireAuthenticatedSession(headers.authorization);
-      return success(
-        await retryKnowledgeSource(session.user.id, params.sourceId),
-      );
-    },
-    {
-      params: KnowledgeSourceIdParamsSchema,
-      response: KnowledgeImportResponseSchema,
-    },
-  )
   .get(
     "/sources/:sourceId/download",
     async ({ params, headers }) => {
       const session = await requireAuthenticatedSession(headers.authorization);
-      return toDownloadResponse(
-        await getKnowledgeSourceDownload({
-          userId: session.user.id,
-          sourceId: params.sourceId,
-        }),
-      );
+      const download = await getKnowledgeSourceDownloadUrl({
+        userId: session.user.id,
+        sourceId: params.sourceId,
+      });
+      return success(download);
     },
     {
       params: KnowledgeSourceIdParamsSchema,
@@ -392,37 +436,20 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
     },
   )
   .get(
-    "/sources/:sourceId/exports",
-    async ({ params, headers }) => {
-      const session = await requireAuthenticatedSession(headers.authorization);
-      return success(
-        await getBriefingExportHistory({
-          userId: session.user.id,
-          sourceId: params.sourceId,
+    "/internal/template-export-tasks/generate",
+    async ({ body, headers }) => {
+      requireInternalSecret(headers);
+      return success({
+        result: await generateKnowledgeTemplateExportPayload({
+          userId: body.userId,
+          sourceId: body.sourceId,
+          template: body.template,
         }),
-      );
+      });
     },
     {
-      params: KnowledgeSourceIdParamsSchema,
-      response: BriefingExportsResponseSchema,
-    },
-  )
-  .post(
-    "/sources/:sourceId/exports",
-    async ({ body, params, headers }) => {
-      const session = await requireAuthenticatedSession(headers.authorization);
-      return success(
-        await saveBriefingExport({
-          userId: session.user.id,
-          sourceId: params.sourceId,
-          input: body,
-        }),
-      );
-    },
-    {
-      body: BriefingExportCreateRequestSchema,
-      params: KnowledgeSourceIdParamsSchema,
-      response: BriefingExportResponseSchema,
+      body: KnowledgeExportTaskGenerateRequestSchema,
+      response: KnowledgeExportTaskGenerateResponseSchema,
     },
   )
   .post(
@@ -436,85 +463,6 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
       response: SearchKnowledgeResponseSchema,
     },
   )
-  .get(
-    "/spaces",
-    async ({ headers }) => {
-      const session = await requireAuthenticatedSession(headers.authorization);
-      return success({
-        spaces: await listKnowledgeSpaces(session.user.id),
-      });
-    },
-    {
-      response: KnowledgeSpacesResponseSchema,
-    },
-  )
-  .post(
-    "/spaces",
-    async ({ body, headers }) => {
-      const session = await requireAuthenticatedSession(headers.authorization);
-      return success({
-        space: await createKnowledgeSpace({
-          userId: session.user.id,
-          input: body,
-        }),
-      });
-    },
-    {
-      body: KnowledgeSpaceCreateRequestSchema,
-      response: KnowledgeSpaceMutationResponseSchema,
-    },
-  )
-  .get(
-    "/spaces/:spaceId/documents",
-    async ({ params, headers }) => {
-      const session = await requireAuthenticatedSession(headers.authorization);
-      return success(
-        await getKnowledgeSpaceDocuments(session.user.id, params.spaceId),
-      );
-    },
-    {
-      params: KnowledgeSpaceIdParamsSchema,
-      response: KnowledgeDocumentsResponseSchema,
-    },
-  )
-  .post(
-    "/spaces/:spaceId/documents/upload",
-    async ({ body, params, headers }) => {
-      const session = await requireAuthenticatedSession(headers.authorization);
-      return success(
-        await uploadKnowledgeDocument({
-          userId: session.user.id,
-          file: body.file,
-          metadata: KnowledgeUploadMetadataSchema.parse({
-            title: body.title?.trim() || undefined,
-            summary: body.summary?.trim() || undefined,
-            tags: parseTagString(body.tags),
-          }),
-          spaceId: params.spaceId,
-        }),
-      );
-    },
-    {
-      body: uploadBody,
-      params: KnowledgeSpaceIdParamsSchema,
-      response: KnowledgeUploadResponseSchema,
-    },
-  )
-  .get(
-    "/spaces/:spaceId/documents/:documentId/download",
-    async ({ params, headers }) => {
-      const session = await requireAuthenticatedSession(headers.authorization);
-      return toDownloadResponse(
-        await getKnowledgeDocumentDownload({
-          userId: session.user.id,
-          ...params,
-        }),
-      );
-    },
-    {
-      params: KnowledgeDocumentDownloadParamsSchema,
-    },
-  )
   .post(
     "/ask",
     async ({ body, headers }) => {
@@ -522,7 +470,6 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
       return success(
         await answerKnowledgeQuestion(body, {
           userId: session.user.id,
-          fetchImpl: fetch,
         }),
       );
     },

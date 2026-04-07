@@ -119,7 +119,7 @@
   <UModal
     :open="open"
     title="添加文件到当前分组"
-    description="支持批量上传文件，也支持直接录入文本资料。"
+    description="支持批量上传文本或代码文件，也支持直接录入文本资料。"
     :close="!pending"
     @update:open="updateOpen"
   >
@@ -153,7 +153,8 @@
               {{ queuedFiles.length > 0 ? `已选择 ${queuedFiles.length} 个文件，可继续添加` : '点击选择多个文件' }}
             </p>
             <p class="text-[10px] text-[var(--text-dim)]">
-              支持 PDF、DOCX、Markdown、文本、HTML、JSON、CSV、XML、YAML。
+              支持
+              Markdown、文本、HTML、JSON、CSV、XML、YAML，以及常见代码文件。
             </p>
             <input
               type="file"

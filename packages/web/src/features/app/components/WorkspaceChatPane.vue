@@ -7,6 +7,7 @@
   import {
     ArrowUp,
     Check,
+    ChevronDown,
     Copy,
     FileText,
     LoaderCircle,
@@ -41,6 +42,7 @@
   const scrollerRef = ref<HTMLDivElement | null>(null);
   const stickToBottom = ref(true);
   const copiedItemId = ref("");
+  const expandedTraceKeys = ref<Record<string, boolean>>({});
   const markdownCache = new Map<string, { content: string; html: string }>();
 
   let copiedResetTimer: number | undefined;
@@ -170,6 +172,22 @@
     return event.detail ? `${event.title}\n\n${event.detail}` : event.title;
   }
 
+  function buildTraceKey(turnId: string, traceId: string): string {
+    return `${turnId}:trace:${traceId}`;
+  }
+
+  function isTraceExpanded(turnId: string, traceId: string): boolean {
+    return expandedTraceKeys.value[buildTraceKey(turnId, traceId)] === true;
+  }
+
+  function toggleTraceExpanded(turnId: string, traceId: string) {
+    const key = buildTraceKey(turnId, traceId);
+    expandedTraceKeys.value = {
+      ...expandedTraceKeys.value,
+      [key]: !expandedTraceKeys.value[key],
+    };
+  }
+
   function clearCopiedStateTimer() {
     if (copiedResetTimer) {
       window.clearTimeout(copiedResetTimer);
@@ -230,6 +248,7 @@
     () => {
       markdownCache.clear();
       copiedItemId.value = "";
+      expandedTraceKeys.value = {};
       stickToBottom.value = true;
       void scrollToBottom(true);
     },
@@ -358,9 +377,26 @@
                 </span>
               </div>
             </div>
-            <p class="trace-title">{{ event.title }}</p>
+            <div class="trace-summary-row">
+              <p class="trace-title">{{ event.title }}</p>
+              <button
+                v-if="event.detail"
+                class="trace-toggle"
+                type="button"
+                :aria-expanded="isTraceExpanded(turn.id, event.id)"
+                @click.stop="toggleTraceExpanded(turn.id, event.id)"
+              >
+                <span
+                  >{{ isTraceExpanded(turn.id, event.id) ? "收起详情" : "查看详情" }}</span
+                >
+                <ChevronDown
+                  class="size-3.5 transition-transform"
+                  :class="isTraceExpanded(turn.id, event.id) ? 'rotate-180' : ''"
+                />
+              </button>
+            </div>
             <p
-              v-if="event.detail"
+              v-if="event.detail && isTraceExpanded(turn.id, event.id)"
               class="trace-detail whitespace-pre-wrap text-[12px] leading-6 text-[var(--text-muted)]"
             >
               {{ event.detail }}
@@ -596,9 +632,37 @@
     margin: 0.55rem 0 0;
   }
 
+  .trace-summary-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 0.55rem;
+  }
+
   .trace-title {
+    min-width: 0;
+    flex: 1;
     font-size: 0.92rem;
     font-weight: 600;
+    color: var(--text-strong);
+  }
+
+  .trace-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    font-size: 11px;
+    line-height: 1.2;
+    color: var(--text-dim);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .trace-toggle:hover {
     color: var(--text-strong);
   }
 

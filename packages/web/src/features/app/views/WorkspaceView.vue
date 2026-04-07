@@ -6,16 +6,19 @@
     ChatTraceEvent,
     ChatSession,
     KnowledgeCollection,
+    KnowledgeExportTask,
     KnowledgeSource,
     KnowledgeSourcesData,
+    KnowledgeTemplateSummary,
     SearchKnowledgeHit,
   } from "@atlas-kb/schema";
   import { useToast } from "@nuxt/ui/composables";
-  import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+  import { computed, onMounted, ref, watch } from "vue";
   import { useRoute, useRouter } from "vue-router";
   import {
     createBriefingExportRequest,
     createChatSessionRequest,
+    createKnowledgeExportTaskRequest,
     createKnowledgeCollectionRequest,
     deleteChatSessionRequest,
     deleteKnowledgeCollectionRequest,
@@ -25,14 +28,15 @@
     fetchBriefingOpinionRequest,
     fetchChatMessagesRequest,
     fetchKnowledgeCollectionSources,
+    listKnowledgeExportTasksRequest,
+    listKnowledgeTemplatesRequest,
     getErrorMessage,
-    importKnowledgeFilesRequest,
     importKnowledgeTextRequest,
     listChatSessionsRequest,
     listKnowledgeCollections,
-    reprocessKnowledgeSourceRequest,
     sendChatFeedbackRequest,
     streamChatReplyRequest,
+    uploadKnowledgeFileRequest,
     updateChatSessionRequest,
     updateKnowledgeCollectionRequest,
     updateKnowledgeSourceRequest,
@@ -53,7 +57,7 @@
   import WorkspaceSidebar from "@/features/app/components/WorkspaceSidebar.vue";
   import { buildWorkspaceChatTurns } from "@/features/app/lib/workspace-chat-turns";
 
-  type PanelMode = "citations" | "library";
+  type PanelMode = "citations" | "library" | "exports";
 
   const route = useRoute();
   const router = useRouter();
@@ -69,12 +73,15 @@
   const sources = ref<KnowledgeSource[]>([]);
   const messages = ref<ChatMessage[]>([]);
   const briefingHistory = ref<BriefingExport[]>([]);
+  const exportTasks = ref<KnowledgeExportTask[]>([]);
+  const exportTemplates = ref<KnowledgeTemplateSummary[]>([]);
 
   const loadingCollections = ref(true);
   const loadingSessions = ref(true);
   const loadingMessages = ref(false);
   const loadingSources = ref(false);
   const loadingBriefing = ref(false);
+  const loadingExportTasks = ref(false);
   const replying = ref(false);
   const creatingCollection = ref(false);
   const savingCollection = ref(false);
@@ -96,8 +103,6 @@
   const showImportModal = ref(false);
   const showSourceEditorModal = ref(false);
   const showCollectionSettingsModal = ref(false);
-
-  let sourcePollingTimer: number | undefined;
 
   function readQueryValue(value: unknown): string {
     return typeof value === "string" ? value : "";
@@ -122,7 +127,11 @@
   });
 
   const panel = computed<PanelMode>(() =>
-    route.query.panel === "citations" ? "citations" : "library",
+    route.query.panel === "citations"
+      ? "citations"
+      : route.query.panel === "exports"
+        ? "exports"
+        : "library",
   );
   const activeCollectionId = computed(() => readQueryValue(route.query.group));
   const activeSessionId = computed(() => readQueryValue(route.query.session));
@@ -185,7 +194,7 @@
     () => sources.value.find((item) => item.id === routeSourceId.value) || null,
   );
   const activeSessionCollectionLabel = computed(() => {
-    if (activeSession.value?.collectionId) {
+    if (activeSession.value) {
       return getCollectionName(activeSession.value.collectionId, "未选择分组");
     }
 
@@ -339,27 +348,8 @@
     );
   }
 
-  function clearSourcePolling() {
-    if (sourcePollingTimer) {
-      window.clearTimeout(sourcePollingTimer);
-      sourcePollingTimer = undefined;
-    }
-  }
-
   function syncSourceCollection(data: KnowledgeSourcesData) {
     sources.value = data.sources;
-    clearSourcePolling();
-
-    if (
-      data.collection.id === activeCollectionId.value &&
-      data.sources.some((item) => item.status === "processing")
-    ) {
-      sourcePollingTimer = window.setTimeout(() => {
-        void loadSources(data.collection.id, {
-          silent: true,
-        });
-      }, 2000);
-    }
   }
 
   async function loadCollections() {
@@ -389,11 +379,18 @@
     }
   }
 
-  async function loadSessions() {
+  async function loadSessions(collectionId: string) {
+    if (!collectionId) {
+      sessions.value = [];
+      messages.value = [];
+      selectedAssistantMessageId.value = "";
+      return;
+    }
+
     loadingSessions.value = true;
 
     try {
-      const data = await listChatSessionsRequest();
+      const data = await listChatSessionsRequest(collectionId);
       sessions.value = data.sessions;
 
       const preferredSessionId = data.sessions.some(
@@ -402,10 +399,15 @@
         ? activeSessionId.value
         : data.sessions[0]?.id || "";
 
-      if (!activeSessionId.value && preferredSessionId) {
+      if (preferredSessionId !== activeSessionId.value) {
         await replaceWorkspaceQuery({
-          session: preferredSessionId,
+          session: preferredSessionId || undefined,
         });
+      } else if (preferredSessionId) {
+        await loadMessages(preferredSessionId);
+      } else {
+        messages.value = [];
+        selectedAssistantMessageId.value = "";
       }
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : "会话加载失败";
@@ -420,8 +422,6 @@
       silent?: boolean;
     } = {},
   ) {
-    clearSourcePolling();
-
     if (!collectionId) {
       sources.value = [];
       return;
@@ -450,6 +450,12 @@
       return;
     }
 
+    if (!sessions.value.some((item) => item.id === sessionId)) {
+      messages.value = [];
+      selectedAssistantMessageId.value = "";
+      return;
+    }
+
     loadingMessages.value = true;
 
     try {
@@ -458,12 +464,6 @@
       selectedAssistantMessageId.value =
         [...data.messages].reverse().find((item) => item.role === "assistant")
           ?.id || "";
-
-      if (!activeCollectionId.value && data.session.collectionId) {
-        await replaceWorkspaceQuery({
-          group: data.session.collectionId,
-        });
-      }
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : "消息加载失败";
     } finally {
@@ -472,16 +472,20 @@
   }
 
   async function ensureSession(): Promise<string> {
-    if (activeSessionId.value) {
+    if (activeSession.value) {
       return activeSessionId.value;
     }
 
+    if (!activeCollectionId.value) {
+      throw new Error("请先选择一个资料文件夹");
+    }
+
     const created = await createChatSessionRequest({
-      collectionId: activeCollectionId.value || undefined,
+      collectionId: activeCollectionId.value,
       title: undefined,
     });
 
-    await loadSessions();
+    await loadSessions(activeCollectionId.value);
     suspendedMessageLoadSessionId.value = created.session.id;
     await replaceWorkspaceQuery({
       session: created.session.id,
@@ -570,20 +574,26 @@
 
     try {
       await deleteKnowledgeCollectionRequest(activeCollection.value.id);
-      await Promise.all([loadCollections(), loadSessions()]);
+      await loadCollections();
 
       const nextCollectionId = collections.value[0]?.id || "";
 
       await replaceWorkspaceQuery({
         group: nextCollectionId || undefined,
+        session: undefined,
         source: undefined,
         panel: nextCollectionId ? "library" : undefined,
       });
 
       if (nextCollectionId) {
-        await loadSources(nextCollectionId);
+        await Promise.all([
+          loadSources(nextCollectionId),
+          loadSessions(nextCollectionId),
+        ]);
       } else {
         sources.value = [];
+        sessions.value = [];
+        messages.value = [];
       }
       showCollectionSettingsModal.value = false;
     } catch (cause) {
@@ -593,13 +603,18 @@
   }
 
   async function startNewSession() {
+    if (!activeCollectionId.value) {
+      error.value = "请先选择一个资料文件夹";
+      return;
+    }
+
     error.value = "";
 
     try {
       const created = await createChatSessionRequest({
-        collectionId: activeCollectionId.value || undefined,
+        collectionId: activeCollectionId.value,
       });
-      await loadSessions();
+      await loadSessions(activeCollectionId.value);
       suspendedMessageLoadSessionId.value = created.session.id;
       messages.value = [];
       selectedAssistantMessageId.value = "";
@@ -632,7 +647,7 @@
           title: nextTitle.trim(),
         },
       });
-      await loadSessions();
+      await loadSessions(activeSession.value.collectionId);
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : "会话重命名失败";
     }
@@ -647,16 +662,10 @@
 
     try {
       await deleteChatSessionRequest(sessionId);
-      await loadSessions();
-
-      const nextSessionId =
-        sessions.value.find((item) => item.id !== sessionId)?.id || "";
-
-      await replaceWorkspaceQuery({
-        session: nextSessionId || undefined,
-      });
-
-      if (!nextSessionId) {
+      if (activeCollectionId.value) {
+        await loadSessions(activeCollectionId.value);
+      } else {
+        sessions.value = [];
         messages.value = [];
       }
     } catch (cause) {
@@ -728,7 +737,6 @@
         sessionId,
         body: {
           query: trimmed,
-          collectionId: activeCollectionId.value || undefined,
           limit: 6,
         },
         onUpdate: ({ content, events }) => {
@@ -768,7 +776,7 @@
       }
 
       composer.value = "";
-      await loadSessions();
+      await loadSessions(activeCollectionId.value);
 
       const firstCitation = completedReplyState.assistantMessage.citations[0];
 
@@ -837,22 +845,29 @@
     importPending.value = true;
     error.value = "";
 
+    const collectionId = activeCollection.value.id;
+    let acceptedCount = 0;
+
     try {
-      const result = await importKnowledgeFilesRequest({
-        collectionId: activeCollection.value.id,
-        files: payload.files,
-        summary: payload.summary,
-        tags: payload.tags,
-      });
+      for (const file of payload.files) {
+        await uploadKnowledgeFileRequest({
+          collectionId,
+          file,
+          summary: payload.summary,
+          tags: payload.tags,
+        });
+
+        acceptedCount += 1;
+      }
 
       await loadCollections();
-      await loadSources(activeCollection.value.id);
+      await loadSources(collectionId);
       showImportModal.value = false;
 
-      if (result.acceptedCount > 0) {
-        showToast("文件已提交导入");
+      if (acceptedCount > 0) {
+        showToast("文件已加入知识库");
       } else {
-        showToast("没有文件进入处理队列", "warning");
+        showToast("没有成功导入的文件", "warning");
       }
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : "导入资料失败";
@@ -943,6 +958,55 @@
     }
   }
 
+  async function loadExportTemplates() {
+    try {
+      const data = await listKnowledgeTemplatesRequest();
+      exportTemplates.value = data.templates;
+    } catch (cause) {
+      exportTemplates.value = [];
+      error.value = cause instanceof Error ? cause.message : "导出模版加载失败";
+    }
+  }
+
+  async function loadExportTasks(sourceId?: string) {
+    loadingExportTasks.value = true;
+
+    try {
+      const data = await listKnowledgeExportTasksRequest({
+        sourceId,
+      });
+      exportTasks.value = data.tasks;
+    } catch (cause) {
+      exportTasks.value = [];
+      error.value = cause instanceof Error ? cause.message : "导出任务加载失败";
+    } finally {
+      loadingExportTasks.value = false;
+    }
+  }
+
+  async function createExportTask(
+    source: KnowledgeSource,
+    templateId?: string,
+  ) {
+    try {
+      await createKnowledgeExportTaskRequest({
+        sourceId: source.id,
+        body: {
+          taskType: templateId ? undefined : "briefing",
+          templateId,
+        },
+      });
+      await replaceWorkspaceQuery({
+        source: source.id,
+        panel: "exports",
+      });
+      await loadExportTasks(source.id);
+      showToast("导出任务已提交");
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : "导出任务提交失败";
+    }
+  }
+
   async function openBriefing(source: KnowledgeSource) {
     if (source.status !== "ready") {
       error.value = "当前资料尚未处理完成，暂时无法生成拟办意见";
@@ -952,10 +1016,9 @@
     await replaceWorkspaceQuery({
       group: source.collectionId,
       source: source.id,
-      panel: "library",
+      panel: "exports",
     });
-    showBriefingModal.value = true;
-    await loadBriefing(source.id);
+    await loadExportTasks(source.id);
   }
 
   async function refreshBriefing() {
@@ -995,21 +1058,6 @@
       error.value = cause instanceof Error ? cause.message : "导出拟办意见失败";
     } finally {
       savingBriefing.value = false;
-    }
-  }
-
-  async function reprocessSource(source: KnowledgeSource) {
-    sourceActionId.value = source.id;
-    error.value = "";
-
-    try {
-      await reprocessKnowledgeSourceRequest(source.id);
-      await loadSources(source.collectionId);
-      await loadCollections();
-    } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : "重新处理失败";
-    } finally {
-      sourceActionId.value = "";
     }
   }
 
@@ -1063,6 +1111,7 @@
   async function selectCollection(collectionId: string) {
     await replaceWorkspaceQuery({
       group: collectionId,
+      session: undefined,
       source: undefined,
       panel: "library",
     });
@@ -1077,7 +1126,7 @@
   async function openSession(session: ChatSession) {
     await replaceWorkspaceQuery({
       session: session.id,
-      group: session.collectionId || activeCollectionId.value || undefined,
+      group: session.collectionId,
     });
   }
 
@@ -1104,8 +1153,20 @@
     await router.replace("/login");
   }
 
-  watch(activeCollectionId, (value) => {
-    void loadSources(value);
+  watch(activeCollectionId, (value, previousValue) => {
+    if (value === previousValue) {
+      return;
+    }
+
+    if (!value) {
+      sources.value = [];
+      sessions.value = [];
+      messages.value = [];
+      selectedAssistantMessageId.value = "";
+      return;
+    }
+
+    void Promise.all([loadSources(value), loadSessions(value)]);
   });
 
   watch(activeSessionId, (value) => {
@@ -1117,21 +1178,37 @@
     void loadMessages(value);
   });
 
+  watch(
+    [panel, routeSourceId],
+    ([nextPanel, nextSourceId]) => {
+      if (nextPanel !== "exports") {
+        return;
+      }
+
+      void loadExportTasks(nextSourceId || undefined);
+    },
+    {
+      immediate: true,
+    },
+  );
+
   onMounted(async () => {
     await initializeAuthSession();
-    await Promise.all([loadCollections(), loadSessions()]);
+    await Promise.all([loadCollections(), loadExportTemplates()]);
 
     if (activeCollectionId.value) {
-      await loadSources(activeCollectionId.value);
+      await Promise.all([
+        loadSources(activeCollectionId.value),
+        loadSessions(activeCollectionId.value),
+      ]);
     }
 
-    if (activeSessionId.value) {
+    if (
+      activeSessionId.value &&
+      sessions.value.some((item) => item.id === activeSessionId.value)
+    ) {
       await loadMessages(activeSessionId.value);
     }
-  });
-
-  onBeforeUnmount(() => {
-    clearSourcePolling();
   });
 </script>
 
@@ -1169,15 +1246,20 @@
 
     <WorkspaceContextPane
       :active-collection="activeCollection"
+      :export-tasks="exportTasks"
+      :export-templates="exportTemplates"
       :extra-hits="extraHits"
       :filtered-sources="filteredSources"
+      :loading-export-tasks="loadingExportTasks"
       :loading-sources="loadingSources"
       :panel="panel"
       :retrieval="retrieval"
+      :selected-source="selectedSource"
       :source-action-id="sourceActionId"
       :source-filter="sourceFilter"
       :used-hits="usedHits"
       @open-briefing="openBriefing"
+      @create-export-task="createExportTask($event.source, $event.templateId)"
       @delete-source="deleteSource"
       @download-source="downloadSource"
       @edit-source="openSource"
@@ -1185,7 +1267,6 @@
       @open-import="showImportModal = true"
       @open-panel="openPanel"
       @open-settings="showCollectionSettingsModal = true"
-      @reprocess-source="reprocessSource"
       @update:source-filter="sourceFilter = $event"
     />
   </section>
@@ -1222,7 +1303,6 @@
     :source-action-pending="sourceActionId === selectedSource?.id"
     @delete="deleteSource"
     @download="downloadSource"
-    @reprocess="reprocessSource"
     @submit="saveSource"
   />
 

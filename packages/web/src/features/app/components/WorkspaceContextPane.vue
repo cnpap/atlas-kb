@@ -1,17 +1,19 @@
 <script setup lang="ts">
   import type {
     KnowledgeCollection,
+    KnowledgeExportTask,
     KnowledgeSource,
+    KnowledgeTemplateSummary,
     SearchKnowledgeHit,
     SearchKnowledgeResult,
   } from "@atlas-kb/schema";
   import {
     Download,
+    FileCog,
     FileText,
     FolderPlus,
     Info,
     PencilLine,
-    RefreshCw,
     Search,
     Settings,
     Trash2,
@@ -25,11 +27,15 @@
 
   defineProps<{
     activeCollection: KnowledgeCollection | null;
+    exportTasks: KnowledgeExportTask[];
+    exportTemplates: KnowledgeTemplateSummary[];
     extraHits: SearchKnowledgeHit[];
     filteredSources: KnowledgeSource[];
     loadingSources?: boolean;
-    panel: "citations" | "library";
+    loadingExportTasks?: boolean;
+    panel: "citations" | "library" | "exports";
     retrieval: SearchKnowledgeResult | null;
+    selectedSource: KnowledgeSource | null;
     sourceActionId: string;
     sourceFilter: string;
     usedHits: SearchKnowledgeHit[];
@@ -39,12 +45,14 @@
     deleteSource: [source: KnowledgeSource];
     downloadSource: [source: KnowledgeSource];
     editSource: [source: KnowledgeSource];
+    createExportTask: [
+      payload: { source: KnowledgeSource; templateId?: string },
+    ];
     focusHit: [hit: SearchKnowledgeHit];
     openBriefing: [source: KnowledgeSource];
     openImport: [];
-    openPanel: [panel: "citations" | "library"];
+    openPanel: [panel: "citations" | "library" | "exports"];
     openSettings: [];
-    reprocessSource: [source: KnowledgeSource];
     "update:sourceFilter": [value: string];
   }>();
 </script>
@@ -52,36 +60,31 @@
 <template>
   <aside class="workbench-pane right-pane">
     <div class="pane-header pane-header-stack">
-      <div class="flex w-full items-center justify-between gap-3">
-        <div class="flex items-center gap-2">
-          <Info
-            v-if="panel === 'citations'"
-            class="size-4 text-[var(--accent)]"
-          />
-          <FileText v-else class="size-4 text-[var(--accent)]" />
-          <p class="text-sm font-bold text-[var(--text-strong)]">
-            {{ panel === "citations" ? "引用溯源" : "当前文件夹资料" }}
-          </p>
-        </div>
-
-        <div class="segmented-tabs !bg-transparent !border-none !p-0 gap-2">
-          <button
-            class="soft-button"
-            :class="panel === 'citations' ? 'primary' : ''"
-            type="button"
-            @click="$emit('openPanel', 'citations')"
-          >
-            引用
-          </button>
-          <button
-            class="soft-button"
-            :class="panel === 'library' ? 'primary' : ''"
-            type="button"
-            @click="$emit('openPanel', 'library')"
-          >
-            文件夹
-          </button>
-        </div>
+      <div class="segmented-tabs !bg-transparent !border-none !p-0 gap-2">
+        <button
+          class="soft-button"
+          :class="panel === 'citations' ? 'primary' : ''"
+          type="button"
+          @click="$emit('openPanel', 'citations')"
+        >
+          引用
+        </button>
+        <button
+          class="soft-button"
+          :class="panel === 'library' ? 'primary' : ''"
+          type="button"
+          @click="$emit('openPanel', 'library')"
+        >
+          文件夹
+        </button>
+        <button
+          class="soft-button"
+          :class="panel === 'exports' ? 'primary' : ''"
+          type="button"
+          @click="$emit('openPanel', 'exports')"
+        >
+          导出
+        </button>
       </div>
     </div>
 
@@ -181,7 +184,7 @@
       </template>
     </div>
 
-    <div v-else class="pane-scroll flex flex-col pt-4">
+    <div v-else-if="panel === 'library'" class="pane-scroll flex flex-col pt-4">
       <div
         class="mb-4 flex items-center gap-2 border-b border-[rgba(93,72,34,0.08)] pb-4"
       >
@@ -271,7 +274,7 @@
                     <p class="text-[10px] text-[var(--accent)]">
                       {{ source.status === "ready"
                           ? "点击生成拟办意见"
-                          : "处理完成后可生成拟办意见" }}
+                          : "当前资料暂不可生成拟办意见" }}
                     </p>
                   </div>
                 </div>
@@ -297,18 +300,6 @@
               >
                 <Download class="size-3.5" />
               </button>
-              <button
-                class="soft-button !p-1.5"
-                title="重处理"
-                type="button"
-                :disabled="sourceActionId === source.id"
-                @click.stop="$emit('reprocessSource', source)"
-              >
-                <RefreshCw
-                  class="size-3.5"
-                  :class="sourceActionId === source.id ? 'animate-spin' : ''"
-                />
-              </button>
               <div class="flex-1" />
               <button
                 class="soft-button warn !p-1.5"
@@ -319,6 +310,100 @@
               >
                 <Trash2 class="size-3.5" />
               </button>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <div v-else class="pane-scroll flex flex-col pt-4">
+      <div v-if="!selectedSource" class="empty-state items-center text-center">
+        <FileCog class="mb-2 size-8 text-[var(--text-dim)]" />
+        <p class="text-sm text-[var(--text-muted)]">
+          请先选择一份资料再查看导出任务
+        </p>
+      </div>
+
+      <template v-else>
+        <div class="mb-5">
+          <p class="section-label mb-3">导出模版</p>
+          <div
+            v-if="exportTemplates.length === 0"
+            class="panel-muted border border-[var(--border-soft)] p-4 text-sm text-[var(--text-muted)]"
+          >
+            当前没有可用模版。
+          </div>
+          <div v-else class="stack-list">
+            <button
+              v-for="template in exportTemplates"
+              :key="template.id"
+              class="stack-item cursor-pointer !p-3 text-left"
+              type="button"
+              @click="$emit('createExportTask', { source: selectedSource, templateId: template.id })"
+            >
+              <p class="text-sm font-bold text-[var(--text-strong)]">
+                {{ template.name }}
+              </p>
+              <p class="mt-1 text-[11px] text-[var(--text-dim)]">
+                {{ template.sourceFilename }}
+              </p>
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <p class="section-label mb-3">导出任务</p>
+          <div
+            v-if="loadingExportTasks"
+            class="stack-item h-16 animate-pulse opacity-50"
+          />
+          <div
+            v-else-if="exportTasks.length === 0"
+            class="panel-muted border border-[var(--border-soft)] p-4 text-sm text-[var(--text-muted)]"
+          >
+            当前资料还没有导出任务。
+          </div>
+          <div v-else class="stack-list">
+            <div
+              v-for="task in exportTasks"
+              :key="task.id"
+              class="rounded-[10px] border border-[rgba(93,72,34,0.08)] bg-[rgba(255,251,244,0.68)] px-3 py-3"
+            >
+              <div class="flex items-start gap-3">
+                <div class="min-w-0 flex-1">
+                  <p
+                    class="text-sm font-bold leading-5 text-[var(--text-strong)]"
+                  >
+                    {{ task.templateName }}
+                  </p>
+                  <p class="mt-1 text-[11px] text-[var(--text-dim)]">
+                    {{ formatRelativeTime(task.updatedAt) }}
+                  </p>
+                  <div class="mt-2 flex flex-wrap items-center gap-2">
+                    <span
+                      class="status-pill scale-90 origin-left"
+                      :class="task.status === 'completed' ? 'ready' : task.status === 'failed' ? 'failed' : ''"
+                    >
+                      {{ task.status }}
+                    </span>
+                    <a
+                      v-if="task.exportFile?.downloadUrl"
+                      class="text-[11px] font-medium text-[var(--accent)]"
+                      :href="task.exportFile.downloadUrl"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      下载导出文件
+                    </a>
+                  </div>
+                  <p
+                    v-if="task.failureMessage"
+                    class="mt-2 text-[11px] text-[var(--danger-600)]"
+                  >
+                    {{ task.failureMessage }}
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
         </div>

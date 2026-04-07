@@ -1,15 +1,20 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { getOpenAIBaseUrl, getOpenAIUrl } from "./config";
+import {
+  getOpenAIBaseUrl,
+  getOpenAIUrl,
+  resetKnowledgeConfigCache,
+} from "./config";
 
 const originalOpenAIBaseUrl = process.env.OPENAI_BASE_URL;
 
 afterEach(() => {
   if (originalOpenAIBaseUrl === undefined) {
     delete process.env.OPENAI_BASE_URL;
-    return;
+  } else {
+    process.env.OPENAI_BASE_URL = originalOpenAIBaseUrl;
   }
 
-  process.env.OPENAI_BASE_URL = originalOpenAIBaseUrl;
+  resetKnowledgeConfigCache();
 });
 
 describe("@atlas-kb/mastra knowledge config", () => {

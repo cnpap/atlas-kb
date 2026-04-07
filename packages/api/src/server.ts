@@ -12,6 +12,4 @@ app.listen({
   idleTimeout: API_IDLE_TIMEOUT_SECONDS,
 });
 
-console.log(
-  `[atlas-kb/api] listening on http://localhost:${port} (bind: ${host})`,
-);
+console.log(`[api] listening on http://localhost:${port} (bind: ${host})`);

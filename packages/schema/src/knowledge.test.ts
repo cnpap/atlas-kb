@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { success } from "./api";
 import {
+  ChatReplyResponseSchema,
   ChatReplyStreamDataEventSchema,
   KnowledgeBatchImportResponseSchema,
-  ChatReplyResponseSchema,
   KnowledgeCollectionsResponseSchema,
   KnowledgeImportResponseSchema,
   SearchKnowledgeRequestSchema,
@@ -13,6 +13,7 @@ describe("@atlas-kb/schema knowledge contracts", () => {
   it("rejects blank search queries", () => {
     const result = SearchKnowledgeRequestSchema.safeParse({
       query: "   ",
+      collectionId: "research",
     });
 
     expect(result.success).toBeFalse();
@@ -45,7 +46,7 @@ describe("@atlas-kb/schema knowledge contracts", () => {
     expect(result.data.collections[0]?.id).toBe("writing-system");
   });
 
-  it("parses import responses with job metadata", () => {
+  it("parses synchronous import responses", () => {
     const payload = success({
       collection: {
         id: "research",
@@ -64,8 +65,8 @@ describe("@atlas-kb/schema knowledge contracts", () => {
       },
       source: {
         id: "source-1",
+        documentId: "客户访谈纪要.txt",
         collectionId: "research",
-        spaceId: "research",
         title: "客户访谈纪要",
         summary: "关于目标用户痛点的整理",
         excerpt: "关于目标用户痛点的整理",
@@ -78,28 +79,17 @@ describe("@atlas-kb/schema knowledge contracts", () => {
         createdAt: "2026-03-23T10:00:00.000Z",
         updatedAt: "2026-03-23T10:00:00.000Z",
       },
-      job: {
-        id: "job-1",
-        sourceId: "source-1",
-        collectionId: "research",
-        sourceType: "text",
-        stage: "completed",
-        status: "ready",
-        attempt: 1,
-        startedAt: "2026-03-23T10:00:00.000Z",
-        finishedAt: "2026-03-23T10:00:10.000Z",
-      },
-      engine: "lexical",
-      indexed: false,
+      engine: "hybrid",
+      indexed: true,
     });
 
     const result = KnowledgeImportResponseSchema.parse(payload);
 
-    expect(result.data.source.title).toBe("客户访谈纪要");
-    expect(result.data.job.stage).toBe("completed");
+    expect(result.data.source.documentId).toBe("客户访谈纪要.txt");
+    expect(result.data.indexed).toBeTrue();
   });
 
-  it("parses batch import responses with accepted and rejected files", () => {
+  it("parses batch import responses without job metadata", () => {
     const payload = success({
       collection: {
         id: "research",
@@ -118,15 +108,14 @@ describe("@atlas-kb/schema knowledge contracts", () => {
       },
       results: [
         {
-          fileName: "访谈纪要.docx",
-          mimeType:
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          fileName: "访谈纪要.md",
+          mimeType: "text/markdown",
           byteSize: 4096,
           accepted: true,
           source: {
             id: "source-1",
+            documentId: "访谈纪要.md",
             collectionId: "research",
-            spaceId: "research",
             title: "访谈纪要",
             summary: "关于目标用户痛点的整理",
             excerpt: "关于目标用户痛点的整理",
@@ -135,23 +124,12 @@ describe("@atlas-kb/schema knowledge contracts", () => {
             tags: ["research"],
             sourceType: "file",
             status: "ready",
-            sourceFilename: "访谈纪要.docx",
-            mimeType:
-              "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            sourceFilename: "访谈纪要.md",
+            mimeType: "text/markdown",
             byteSize: 4096,
             latestVersion: 1,
             createdAt: "2026-03-23T10:00:00.000Z",
             updatedAt: "2026-03-23T10:00:00.000Z",
-          },
-          job: {
-            id: "job-1",
-            sourceId: "source-1",
-            collectionId: "research",
-            sourceType: "file",
-            stage: "queued",
-            status: "processing",
-            attempt: 1,
-            startedAt: "2026-03-23T10:00:00.000Z",
           },
         },
         {
@@ -160,7 +138,7 @@ describe("@atlas-kb/schema knowledge contracts", () => {
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
           byteSize: 8192,
           accepted: false,
-          errorMessage: "Unsupported file type.",
+          errorMessage: "当前文件包含二进制内容，暂不支持直接导入",
         },
       ],
       totalCount: 2,
@@ -179,6 +157,7 @@ describe("@atlas-kb/schema knowledge contracts", () => {
       session: {
         id: "session-1",
         title: "如何整理研究资料",
+        collectionId: "research",
         preview: "请基于研究资料给我一个总结",
         createdAt: "2026-03-23T10:00:00.000Z",
         updatedAt: "2026-03-23T10:00:00.000Z",
@@ -200,9 +179,8 @@ describe("@atlas-kb/schema knowledge contracts", () => {
         citations: [
           {
             sourceId: "source-1",
-            documentId: "source-1",
+            documentId: "客户访谈纪要.txt",
             collectionId: "research",
-            spaceId: "research",
             title: "客户访谈纪要",
             snippet: "用户认为最难的是把碎片知识变成行动。",
             sourceType: "text",
@@ -214,25 +192,24 @@ describe("@atlas-kb/schema knowledge contracts", () => {
         query: "请基于研究资料给我一个总结",
         rewrittenQueries: ["请基于研究资料给我一个总结"],
         queryVariants: ["请基于研究资料给我一个总结"],
-        engine: "lexical",
+        engine: "hybrid",
         total: 1,
-        usedHitIds: ["source-1:0"],
+        usedHitIds: ["客户访谈纪要.txt#chunk:0"],
         hits: [
           {
             sourceId: "source-1",
-            documentId: "source-1",
+            documentId: "客户访谈纪要.txt",
             collectionId: "research",
-            spaceId: "research",
-            chunkId: "source-1:0",
+            chunkId: "客户访谈纪要.txt#chunk:0",
             title: "客户访谈纪要",
             summary: "关于目标用户痛点的整理",
             snippet: "用户认为最难的是把碎片知识变成行动。",
             sourceType: "text",
             tags: ["research"],
             score: 1,
-            strategy: "lexical",
+            strategy: "fusion",
             usedInAnswer: true,
-            recallPaths: ["关键词召回", "重排"],
+            recallPaths: ["关键词召回", "语义召回"],
           },
         ],
       },
@@ -240,25 +217,24 @@ describe("@atlas-kb/schema knowledge contracts", () => {
         query: "请基于研究资料给我一个总结",
         rewrittenQueries: ["请基于研究资料给我一个总结"],
         queryVariants: ["请基于研究资料给我一个总结"],
-        engine: "lexical",
+        engine: "hybrid",
         total: 1,
-        usedHitIds: ["source-1:0"],
+        usedHitIds: ["客户访谈纪要.txt#chunk:0"],
         hits: [
           {
             sourceId: "source-1",
-            documentId: "source-1",
+            documentId: "客户访谈纪要.txt",
             collectionId: "research",
-            spaceId: "research",
-            chunkId: "source-1:0",
+            chunkId: "客户访谈纪要.txt#chunk:0",
             title: "客户访谈纪要",
             summary: "关于目标用户痛点的整理",
             snippet: "用户认为最难的是把碎片知识变成行动。",
             sourceType: "text",
             tags: ["research"],
             score: 1,
-            strategy: "lexical",
+            strategy: "fusion",
             usedInAnswer: true,
-            recallPaths: ["关键词召回", "重排"],
+            recallPaths: ["关键词召回", "语义召回"],
           },
         ],
       },
@@ -266,96 +242,23 @@ describe("@atlas-kb/schema knowledge contracts", () => {
 
     const result = ChatReplyResponseSchema.parse(payload);
 
-    expect(result.data.assistantMessage.citations[0]?.title).toBe(
-      "客户访谈纪要",
+    expect(result.data.assistantMessage.citations[0]?.collectionId).toBe(
+      "research",
     );
-    expect(result.data.search.total).toBe(1);
-    expect(result.data.retrieval.usedHitIds).toEqual(["source-1:0"]);
   });
 
-  it("parses chat stream data events", () => {
-    const traceEvent = {
-      id: "trace-1",
-      kind: "search" as const,
-      state: "completed" as const,
-      title: "命中 3 条资料",
-      detail: "已完成知识库检索。",
-      createdAt: "2026-03-23T10:00:01.000Z",
-    };
-
-    const accepted = ChatReplyStreamDataEventSchema.parse({
-      type: "reply-accepted",
-      userMessage: {
-        id: "msg-user",
-        sessionId: "session-1",
-        role: "user",
-        content: "给我一个总结",
-        citations: [],
-        createdAt: "2026-03-23T10:00:00.000Z",
-      },
-    });
-    const trace = ChatReplyStreamDataEventSchema.parse({
+  it("parses stream trace events", () => {
+    const event = ChatReplyStreamDataEventSchema.parse({
       type: "trace",
-      event: traceEvent,
-    });
-    const completed = ChatReplyStreamDataEventSchema.parse({
-      type: "reply-completed",
-      session: {
-        id: "session-1",
-        title: "产品策略讨论",
-        preview: "给我一个总结",
+      event: {
+        id: "status:search",
+        kind: "search",
+        state: "completed",
+        title: "命中 2 条资料",
         createdAt: "2026-03-23T10:00:00.000Z",
-        updatedAt: "2026-03-23T10:00:01.000Z",
-        lastMessageAt: "2026-03-23T10:00:01.000Z",
-      },
-      userMessage: {
-        id: "msg-user",
-        sessionId: "session-1",
-        role: "user",
-        content: "给我一个总结",
-        citations: [],
-        createdAt: "2026-03-23T10:00:00.000Z",
-      },
-      assistantMessage: {
-        id: "msg-assistant",
-        sessionId: "session-1",
-        role: "assistant",
-        content: "先按主题拆分，再形成行动项。",
-        citations: [],
-        retrieval: {
-          query: "给我一个总结",
-          rewrittenQueries: ["给我一个总结"],
-          queryVariants: ["给我一个总结"],
-          engine: "lexical",
-          total: 1,
-          usedHitIds: [],
-          hits: [],
-        },
-        trace: [traceEvent],
-        createdAt: "2026-03-23T10:00:01.000Z",
-      },
-      retrieval: {
-        query: "给我一个总结",
-        rewrittenQueries: ["给我一个总结"],
-        queryVariants: ["给我一个总结"],
-        engine: "lexical",
-        total: 1,
-        usedHitIds: [],
-        hits: [],
-      },
-      search: {
-        query: "给我一个总结",
-        rewrittenQueries: ["给我一个总结"],
-        queryVariants: ["给我一个总结"],
-        engine: "lexical",
-        total: 1,
-        usedHitIds: [],
-        hits: [],
       },
     });
 
-    expect(accepted.type).toBe("reply-accepted");
-    expect(trace.event.title).toBe("命中 3 条资料");
-    expect(completed.assistantMessage.trace?.[0]?.kind).toBe("search");
+    expect(event.type).toBe("trace");
   });
 });

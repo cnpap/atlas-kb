@@ -1,18 +1,20 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, extname } from "node:path";
+import type { KnowledgeSource } from "@atlas-kb/schema";
+import {
+  deleteKnowledgeCollectionObjects,
+  deleteKnowledgeSourceObject,
+  putKnowledgeSourceObject,
+} from "./object-storage";
 import {
   buildContentPreview,
   buildSummary,
   normalizeWhitespace,
 } from "./search-utils";
-import {
-  getKnowledgeExportsDir,
-  getKnowledgeSourcesDir,
-  getOpsMastraConfig,
-} from "./config";
 
 export type ManagedSourcePaths = {
+  absoluteDocumentPath: string;
   directory: string;
+  documentPath: string;
   indexPath: string;
   originalPath: string;
 };
@@ -25,9 +27,146 @@ export type ExtractedSourceContent = {
   title: string;
 };
 
-function sanitizeFileStem(value: string): string {
-  const normalized = value.trim().replace(/[^a-zA-Z0-9._-]+/g, "-");
-  return normalized || "source";
+const MIME_BY_EXTENSION = new Map<string, string>([
+  [".cjs", "text/javascript"],
+  [".css", "text/css"],
+  [".csv", "text/csv"],
+  [".html", "text/html"],
+  [".js", "text/javascript"],
+  [".json", "application/json"],
+  [".jsx", "text/javascript"],
+  [".md", "text/markdown"],
+  [".mjs", "text/javascript"],
+  [".py", "text/x-python"],
+  [".sh", "text/x-shellscript"],
+  [".sql", "text/plain"],
+  [".ts", "text/plain"],
+  [".tsx", "text/plain"],
+  [".txt", "text/plain"],
+  [".vue", "text/plain"],
+  [".xml", "application/xml"],
+  [".yaml", "application/yaml"],
+  [".yml", "application/yaml"],
+]);
+
+const DEFAULT_EXTENSION_BY_MIME = new Map<string, string>([
+  ["application/json", ".json"],
+  ["application/xml", ".xml"],
+  ["text/csv", ".csv"],
+  ["text/html", ".html"],
+  ["text/markdown", ".md"],
+  ["text/plain", ".txt"],
+  ["application/yaml", ".yaml"],
+]);
+
+function stripControlCharacters(value: string) {
+  return Array.from(value)
+    .filter((char) => {
+      const codePoint = char.codePointAt(0) ?? 0;
+      return codePoint >= 0x20 && codePoint !== 0x7f;
+    })
+    .join("");
+}
+
+export function sanitizeManagedFileName(fileName: string): string {
+  const normalized = basename(fileName.replaceAll("\\", "/"))
+    .normalize("NFC")
+    .replaceAll("/", " ");
+  const cleaned = stripControlCharacters(normalized)
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\.+/g, "")
+    .replace(/[. ]+$/g, "");
+
+  return cleaned || "source";
+}
+
+function normalizeExtension(extension: string): string {
+  if (!extension.trim()) {
+    return "";
+  }
+
+  return extension.startsWith(".")
+    ? extension.toLowerCase()
+    : `.${extension.toLowerCase()}`;
+}
+
+function getFallbackExtension(args: {
+  mimeType?: string;
+  sourceType: KnowledgeSource["sourceType"];
+}) {
+  const mimeType = args.mimeType?.split(";", 1)[0]?.trim().toLowerCase();
+
+  if (mimeType) {
+    const matchedExtension = DEFAULT_EXTENSION_BY_MIME.get(mimeType);
+
+    if (matchedExtension) {
+      return matchedExtension;
+    }
+  }
+
+  switch (args.sourceType) {
+    case "url":
+      return ".html";
+    default:
+      return ".txt";
+  }
+}
+
+function ensureManagedFileExtension(args: {
+  fileName: string;
+  sourceType: KnowledgeSource["sourceType"];
+  mimeType?: string;
+}) {
+  const extension = normalizeExtension(extname(args.fileName));
+
+  if (extension) {
+    return args.fileName;
+  }
+
+  return `${args.fileName}${getFallbackExtension(args)}`;
+}
+
+export function buildManagedSourceFileName(args: {
+  mimeType?: string;
+  sourceFilename?: string;
+  sourceType: KnowledgeSource["sourceType"];
+  sourceUrl?: string;
+  title: string;
+}) {
+  const preferredName =
+    args.sourceType === "file" || args.sourceType === "seed"
+      ? args.sourceFilename?.trim() || args.title.trim()
+      : args.sourceType === "url"
+        ? `${args.title.trim()}.html`
+        : `${args.title.trim()}.txt`;
+
+  return ensureManagedFileExtension({
+    fileName: sanitizeManagedFileName(preferredName || "source"),
+    sourceType: args.sourceType,
+    mimeType: args.mimeType,
+  });
+}
+
+export function allocateManagedSourceFileName(
+  preferredFileName: string,
+  usedFileNames: ReadonlySet<string>,
+) {
+  const normalizedFileName = sanitizeManagedFileName(preferredFileName);
+  const extension = extname(normalizedFileName);
+  const stem = extension
+    ? normalizedFileName.slice(0, -extension.length)
+    : normalizedFileName;
+
+  let nextFileName = normalizedFileName;
+  let suffix = 2;
+
+  while (usedFileNames.has(nextFileName)) {
+    nextFileName = `${stem} (${suffix})${extension}`;
+    suffix += 1;
+  }
+
+  return nextFileName;
 }
 
 function deriveTextTitle(fileName: string, content: string): string {
@@ -40,132 +179,141 @@ function deriveTextTitle(fileName: string, content: string): string {
   return basename(fileName, extname(fileName)) || "Untitled Source";
 }
 
-function deriveOriginalFileName(fileName?: string): string {
-  return sanitizeFileStem(fileName || "source.txt");
+function detectMimeType(fileName: string, mimeType?: string): string {
+  if (mimeType?.trim()) {
+    return mimeType.trim();
+  }
+
+  return MIME_BY_EXTENSION.get(extname(fileName).toLowerCase()) || "text/plain";
 }
 
-function buildTikaContentDisposition(fileName: string) {
-  const safeFileName = basename(fileName || "source");
-  const asciiFilename =
-    safeFileName
-      .normalize("NFKD")
-      .replaceAll(/[^\x20-\x7E]/g, "_")
-      .replaceAll(/["\\]/g, "_") || "source";
+function decodeTextContent(bytes: Uint8Array): string {
+  const decoded = new TextDecoder("utf-8").decode(bytes);
 
-  return `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodeURIComponent(safeFileName)}`;
+  if (decoded.includes("\u0000")) {
+    throw new Error("当前文件包含二进制内容，暂不支持直接导入");
+  }
+
+  const normalized = normalizeWhitespace(decoded.replace(/^\uFEFF/, ""));
+
+  if (!normalized) {
+    throw new Error("当前文件没有可索引的文本内容");
+  }
+
+  return normalized;
 }
 
-export function getManagedSourcePaths(
-  sourceId: string,
-  originalFileName?: string,
-): ManagedSourcePaths {
-  const directory = resolve(getKnowledgeSourcesDir(), sourceId);
-  const originalExtension = extname(originalFileName || "").trim() || ".bin";
+export function getManagedSourcePaths(args: {
+  collectionId: string;
+  fileName: string;
+  userId: string;
+}): ManagedSourcePaths {
+  const documentPath = sanitizeManagedFileName(args.fileName).replaceAll(
+    "\\",
+    "/",
+  );
 
   return {
-    directory,
-    originalPath: join(directory, `original${originalExtension}`),
-    indexPath: join(directory, "index.txt"),
+    absoluteDocumentPath: documentPath,
+    directory: "",
+    documentPath,
+    indexPath: documentPath,
+    originalPath: documentPath,
   };
 }
 
-export async function ensureManagedSourceDirectory(sourceId: string) {
-  const directory = resolve(getKnowledgeSourcesDir(), sourceId);
-  await mkdir(directory, { recursive: true });
-  return directory;
-}
-
 export async function storeUploadedSourceFile(args: {
-  sourceId: string;
+  collectionId: string;
   bytes: Uint8Array;
   fileName: string;
+  mimeType?: string;
+  userId: string;
 }) {
-  const paths = getManagedSourcePaths(args.sourceId, args.fileName);
-  await mkdir(paths.directory, { recursive: true });
-  await writeFile(paths.originalPath, args.bytes);
+  const paths = getManagedSourcePaths(args);
+
+  await putKnowledgeSourceObject({
+    userId: args.userId,
+    collectionId: args.collectionId,
+    relativePath: paths.documentPath,
+    body: args.bytes,
+    contentType: args.mimeType,
+  });
+
   return paths;
 }
 
 export async function storeTextSourceFile(args: {
-  sourceId: string;
+  collectionId: string;
   content: string;
-  fileName?: string;
+  fileName: string;
+  mimeType?: string;
+  userId: string;
 }) {
-  const fileName = deriveOriginalFileName(args.fileName);
-  const paths = getManagedSourcePaths(args.sourceId, fileName);
-  await mkdir(paths.directory, { recursive: true });
-  await writeFile(
-    paths.originalPath,
-    normalizeWhitespace(args.content),
-    "utf8",
-  );
+  const paths = getManagedSourcePaths(args);
+
+  await putKnowledgeSourceObject({
+    userId: args.userId,
+    collectionId: args.collectionId,
+    relativePath: paths.documentPath,
+    body: normalizeWhitespace(args.content),
+    contentType: args.mimeType ?? "text/plain; charset=utf-8",
+  });
+
   return paths;
 }
 
-export async function writeSourceIndexText(sourceId: string, content: string) {
-  const paths = getManagedSourcePaths(sourceId);
-  await mkdir(paths.directory, { recursive: true });
-  const normalized = normalizeWhitespace(content);
-  await writeFile(paths.indexPath, normalized, "utf8");
-  return {
-    content: normalized,
-    indexPath: paths.indexPath,
-  };
-}
-
-export async function readStoredOriginalFile(originalPath: string) {
-  return new Uint8Array(await readFile(originalPath));
-}
-
-export async function readStoredIndexText(indexPath: string) {
-  return normalizeWhitespace(await readFile(indexPath, "utf8"));
-}
-
-export async function deleteManagedSourceFiles(sourceId: string) {
-  await rm(resolve(getKnowledgeSourcesDir(), sourceId), {
-    recursive: true,
-    force: true,
+export async function overwriteStoredSourceFile(args: {
+  collectionId: string;
+  content: string;
+  mimeType?: string;
+  originalPath: string;
+  userId: string;
+}) {
+  await putKnowledgeSourceObject({
+    userId: args.userId,
+    collectionId: args.collectionId,
+    relativePath: args.originalPath,
+    body: normalizeWhitespace(args.content),
+    contentType: args.mimeType,
   });
+}
+
+export async function deleteManagedSourceFiles(args: {
+  collectionId: string;
+  originalPath?: string | null;
+  userId: string;
+}) {
+  if (!args.originalPath) {
+    return;
+  }
+
+  await deleteKnowledgeSourceObject({
+    userId: args.userId,
+    collectionId: args.collectionId,
+    relativePath: args.originalPath,
+  });
+}
+
+export async function deleteManagedCollectionFiles(args: {
+  collectionId: string;
+  userId: string;
+}) {
+  await deleteKnowledgeCollectionObjects(args);
 }
 
 export async function extractFileContent(args: {
   bytes: Uint8Array;
   fileName: string;
+  mimeType?: string;
 }) {
-  const config = getOpsMastraConfig();
-  const response = await fetch(`${config.tikaBaseUrl}/rmeta/text`, {
-    method: "PUT",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/octet-stream",
-      "Content-Disposition": buildTikaContentDisposition(args.fileName),
-    },
-    body: args.bytes,
-  });
-
-  if (!response.ok) {
-    throw new Error(`Tika 解析失败: ${response.status} ${response.statusText}`);
-  }
-
-  const payload = (await response.json()) as Array<Record<string, unknown>>;
-  const metadata = payload[0] ?? {};
-  const content = normalizeWhitespace(String(metadata["X-TIKA:content"] ?? ""));
-
-  if (!content) {
-    throw new Error("当前文件无法提取出可用文本内容");
-  }
+  const content = decodeTextContent(args.bytes);
 
   return {
     content,
     contentPreview: buildContentPreview(content),
     excerpt: buildSummary(content, 160),
-    mimeType: String(
-      metadata["Content-Type"] ?? "application/octet-stream",
-    ).split(";")[0]!,
-    title:
-      String(metadata["dc:title"] ?? metadata.resourceName ?? "").trim() ||
-      basename(args.fileName, extname(args.fileName)) ||
-      "Untitled Source",
+    mimeType: detectMimeType(args.fileName, args.mimeType),
+    title: deriveTextTitle(args.fileName, content),
   } satisfies ExtractedSourceContent;
 }
 
@@ -180,13 +328,7 @@ export function buildTextSourceContent(args: {
     content,
     contentPreview: buildContentPreview(content),
     excerpt: buildSummary(content, 160),
-    mimeType: "text/plain",
+    mimeType: detectMimeType(args.fileName),
     title: args.title?.trim() || deriveTextTitle(args.fileName, content),
   } satisfies ExtractedSourceContent;
-}
-
-export async function ensureKnowledgeExportDirectory() {
-  const directory = getKnowledgeExportsDir();
-  await mkdir(directory, { recursive: true });
-  return directory;
 }

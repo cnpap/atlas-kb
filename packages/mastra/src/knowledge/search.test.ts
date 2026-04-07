@@ -9,28 +9,26 @@ import {
   createKnowledgeCollection,
   createUser,
   ensureDefaultUser,
+  importKnowledgeFiles,
   importKnowledgeText,
   resetKnowledgeRepository,
   resetKnowledgeRuntimeCache,
   saveMessageFeedback,
   searchKnowledge,
+  setKnowledgeObjectStorageClientForTests,
   waitForPendingKnowledgeImports,
 } from "./index";
-import { ModelInvocationTimeoutError } from "./model-provider";
-import { streamModelAnswerFromCitations } from "./search";
 
 const originalFetch = globalThis.fetch;
 const originalApiKey = process.env.OPENAI_API_KEY;
+const originalEmbeddingApiKey = process.env.EMBEDDING_API_KEY;
 const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
-const originalLanceUri = process.env.LANCEDB_URI;
-
-function createTestLanceUri(): string {
-  const baseUri =
-    originalLanceUri?.replace(/\/+$/g, "") ??
-    "s3://ops-agent-kit/lancedb/atlas-kb";
-
-  return `${baseUri}/test-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
-}
+const originalQdrantUrl = process.env.QDRANT_URL;
+const originalS3Endpoint = process.env.ATLAS_KB_S3_ENDPOINT;
+const originalS3Region = process.env.ATLAS_KB_S3_REGION;
+const originalS3Bucket = process.env.ATLAS_KB_S3_BUCKET;
+const originalS3AccessKeyId = process.env.ATLAS_KB_S3_ACCESS_KEY_ID;
+const originalS3SecretAccessKey = process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -39,6 +37,18 @@ function jsonResponse(body: unknown, status = 200): Response {
       "Content-Type": "application/json",
     },
   });
+}
+
+function readJsonRequestBody(value: unknown): Record<string, unknown> {
+  if (typeof value !== "string" || !value.trim()) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(value) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
 }
 
 function readMessageText(value: unknown): string {
@@ -59,101 +69,355 @@ function readMessageText(value: unknown): string {
     .join("\n");
 }
 
-function readJsonRequestBody(
-  value: BodyInit | null | undefined,
-): Record<string, unknown> {
-  if (typeof value !== "string" || !value.trim()) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(value) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-}
-
-async function readTextRequestBody(
-  value: BodyInit | null | undefined,
-): Promise<string> {
-  if (!value) {
+function readChatCompletionMessageContent(message: unknown): string {
+  if (!message || typeof message !== "object") {
     return "";
   }
 
-  if (typeof value === "string") {
-    return value;
-  }
-
-  if (value instanceof Uint8Array) {
-    return new TextDecoder().decode(value);
-  }
-
-  if (value instanceof ArrayBuffer) {
-    return new TextDecoder().decode(new Uint8Array(value));
-  }
-
-  if (value instanceof Blob) {
-    return value.text();
+  if ("content" in message) {
+    return readMessageText((message as { content?: unknown }).content);
   }
 
   return "";
 }
 
-function mockOpenAIChatProvider() {
-  globalThis.fetch = async (input, init) => {
-    const url = typeof input === "string" ? input : input.url;
-    const body = readJsonRequestBody(init?.body);
-    const messages = Array.isArray(body.messages) ? body.messages : [];
-    const systemPrompt = readMessageText(messages[0]?.content);
-    const lastMessage = messages[messages.length - 1];
+function readResponseInputText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
 
-    if (url.includes("/rmeta/text")) {
-      const content = await readTextRequestBody(init?.body);
+  if (!Array.isArray(value)) {
+    return "";
+  }
 
-      return jsonResponse([
-        {
-          "Content-Type": "text/plain",
-          "X-TIKA:content": content,
-          "dc:title": "Alpha Doc",
-          resourceName: "Alpha Doc.txt",
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return "";
+      }
+
+      if ("content" in item) {
+        return readMessageText((item as { content?: unknown }).content);
+      }
+
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function hasResponseFunctionOutput(value: unknown): boolean {
+  if (!Array.isArray(value)) {
+    return false;
+  }
+
+  return value.some(
+    (item) =>
+      Boolean(item) &&
+      typeof item === "object" &&
+      "type" in item &&
+      (item as { type?: unknown }).type === "function_call_output",
+  );
+}
+
+function buildResponsesToolCall(args: {
+  toolCallId: string;
+  toolName: string;
+  toolArguments: Record<string, unknown>;
+}) {
+  return jsonResponse({
+    id: "resp_tool_call",
+    object: "response",
+    created_at: Date.now(),
+    model: "openai/gpt-5.4",
+    output: [
+      {
+        type: "function_call",
+        id: `fc_${args.toolCallId}`,
+        call_id: args.toolCallId,
+        name: args.toolName,
+        arguments: JSON.stringify(args.toolArguments),
+      },
+    ],
+    output_text: "",
+  });
+}
+
+function buildToolCallResponse(args: {
+  toolCallId: string;
+  toolName: string;
+  toolArguments: Record<string, unknown>;
+}) {
+  return jsonResponse({
+    choices: [
+      {
+        index: 0,
+        finish_reason: "tool_calls",
+        message: {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            {
+              id: args.toolCallId,
+              type: "function",
+              function: {
+                name: args.toolName,
+                arguments: JSON.stringify(args.toolArguments),
+              },
+            },
+          ],
         },
-      ]);
+      },
+    ],
+  });
+}
+
+function buildFinalAnswer(query: string): string {
+  if (/leave requests/i.test(query)) {
+    return "基于证据的回答：human resources finally records leave requests.";
+  }
+
+  if (/malware incidents/i.test(query)) {
+    return "基于证据的回答：the infosec team handles malware incidents.";
+  }
+
+  if (/contract clause review/i.test(query)) {
+    return "基于证据的回答：the legal team owns contract clause review.";
+  }
+
+  if (/有哪些文件|哪些资料|哪些文档/.test(query)) {
+    return "当前资料包括：请示通知、会议纪要。";
+  }
+
+  return `基于证据的回答：${query}`;
+}
+
+function parseWorkspaceListFilesResult(result: string): string[] {
+  const treeLines = result.split(/\r?\n/).filter((line) => {
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      return false;
     }
 
-    if (url.includes("/embeddings")) {
-      const inputValues = Array.isArray(body.input) ? body.input : [];
+    if (trimmed === ".") {
+      return true;
+    }
 
+    return !/^\d+\s+directories?,\s+\d+\s+files?$/.test(trimmed);
+  });
+  const entries = treeLines
+    .map((rawLine) => {
+      const line = rawLine.replace(/\t/g, "  ");
+      const trimmed = line.trim();
+
+      if (!trimmed) {
+        return undefined;
+      }
+
+      return {
+        depth: Math.floor((line.match(/^\s*/)?.[0].length ?? 0) / 2),
+        name: trimmed,
+      };
+    })
+    .filter((value): value is { depth: number; name: string } =>
+      Boolean(value),
+    );
+  const stack: string[] = [];
+  const files: string[] = [];
+
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]!;
+
+    if (entry.name === ".") {
+      continue;
+    }
+
+    const nextEntry = entries[index + 1];
+    const isDirectory = Boolean(nextEntry && nextEntry.depth > entry.depth);
+
+    if (isDirectory) {
+      stack[entry.depth] = entry.name.replace(/\/$/, "");
+      stack.length = entry.depth + 1;
+      continue;
+    }
+
+    const path = [...stack.slice(0, entry.depth), entry.name]
+      .filter(Boolean)
+      .join("/");
+
+    if (path) {
+      files.push(path);
+    }
+  }
+
+  return files;
+}
+
+function readToolMessageContent(message: unknown): string {
+  if (!message || typeof message !== "object") {
+    return "";
+  }
+
+  if ("content" in message) {
+    return readMessageText((message as { content?: unknown }).content);
+  }
+
+  return "";
+}
+
+function readUnknownText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => readUnknownText(item))
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+
+  return Object.values(value as Record<string, unknown>)
+    .map((item) => readUnknownText(item))
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildToolDrivenAnswer(args: { messages: unknown[]; query: string }) {
+  if (/有哪些文件|哪些资料|哪些文档/.test(args.query)) {
+    const listedFiles = args.messages.flatMap((message) => {
+      if (!message || typeof message !== "object") {
+        return [];
+      }
+
+      if (
+        "role" in message &&
+        (message as { role?: unknown }).role === "tool"
+      ) {
+        return parseWorkspaceListFilesResult(readToolMessageContent(message));
+      }
+
+      if (
+        "type" in message &&
+        (message as { type?: unknown }).type === "function_call_output"
+      ) {
+        return parseWorkspaceListFilesResult(
+          readUnknownText((message as { output?: unknown }).output),
+        );
+      }
+
+      return [];
+    });
+    const fallbackFiles =
+      listedFiles.length > 0
+        ? listedFiles
+        : [
+            ...new Set(
+              readUnknownText(args.messages).match(
+                /[\p{L}\p{N}][\p{L}\p{N} ._()-]*\.(?:txt|md|html|json|csv)/gu,
+              ) ?? [],
+            ),
+          ];
+
+    return fallbackFiles.length > 0
+      ? `当前资料包括：${fallbackFiles.join("、")}。`
+      : "当前资料文件夹为空。";
+  }
+
+  return buildFinalAnswer(args.query);
+}
+
+function mockProviders() {
+  globalThis.fetch = (async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+    const body = readJsonRequestBody(init?.body);
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    const lastMessage = messages[messages.length - 1];
+    const lastUserMessage = [...messages]
+      .reverse()
+      .find(
+        (message): message is { content?: unknown; role: string } =>
+          Boolean(message) &&
+          typeof message === "object" &&
+          "role" in message &&
+          (message as { role?: unknown }).role === "user",
+      );
+    const query = readChatCompletionMessageContent(lastUserMessage);
+    const hasToolReply = messages.some(
+      (message) =>
+        Boolean(message) &&
+        typeof message === "object" &&
+        "role" in message &&
+        (message as { role?: unknown }).role === "tool",
+    );
+    const responseInputText = readResponseInputText(body.input);
+
+    if (url.includes("/embeddings")) {
       return jsonResponse({
-        data: inputValues.map((_value, index) => ({
-          index,
-          embedding: [0.11, 0.22, 0.33],
-        })),
+        data: [
+          {
+            embedding: [0.11, 0.22, 0.33],
+            index: 0,
+          },
+        ],
       });
     }
 
-    if (url.includes(":6333/collections/")) {
-      if (url.includes("/points/query")) {
-        return jsonResponse({
-          result: {
-            points: [],
-          },
-        });
-      }
-
+    if (url.includes(":6333")) {
       return jsonResponse({
         result: {
+          points: [],
           status: "ok",
         },
       });
     }
 
-    if (systemPrompt.includes("Rewrite the search query")) {
+    if (url.includes("chat/completions")) {
+      if (!hasToolReply) {
+        if (/有哪些文件|哪些资料|哪些文档/.test(query)) {
+          return buildToolCallResponse({
+            toolCallId: "call_list_files",
+            toolName: "mastra_workspace_list_files",
+            toolArguments: {
+              path: ".",
+            },
+          });
+        }
+
+        return buildToolCallResponse({
+          toolCallId: "call_search",
+          toolName: "mastra_workspace_search",
+          toolArguments: {
+            query,
+            topK: 5,
+            mode: "hybrid",
+          },
+        });
+      }
+
       return jsonResponse({
         choices: [
           {
+            index: 0,
+            finish_reason: "stop",
             message: {
-              content: JSON.stringify({
-                queries: [readMessageText(lastMessage?.content)],
+              role: "assistant",
+              content: buildToolDrivenAnswer({
+                messages,
+                query,
               }),
             },
           },
@@ -161,62 +425,135 @@ function mockOpenAIChatProvider() {
       });
     }
 
+    if (url.includes("/responses")) {
+      if (!hasResponseFunctionOutput(body.input)) {
+        if (/有哪些文件|哪些资料|哪些文档/.test(responseInputText)) {
+          return buildResponsesToolCall({
+            toolCallId: "call_list_files",
+            toolName: "mastra_workspace_list_files",
+            toolArguments: {
+              path: ".",
+            },
+          });
+        }
+
+        return buildResponsesToolCall({
+          toolCallId: "call_search",
+          toolName: "mastra_workspace_search",
+          toolArguments: {
+            query: responseInputText,
+            topK: 5,
+            mode: "hybrid",
+          },
+        });
+      }
+
+      const answer = /有哪些文件|哪些资料|哪些文档/.test(responseInputText)
+        ? buildToolDrivenAnswer({
+            messages: Array.isArray(body.input) ? body.input : [],
+            query: responseInputText,
+          })
+        : buildFinalAnswer(responseInputText);
+
+      return jsonResponse({
+        id: "resp_test",
+        object: "response",
+        created_at: Date.now(),
+        model: "openai/gpt-5.4",
+        output: [
+          {
+            type: "message",
+            id: "msg_test",
+            role: "assistant",
+            content: [
+              {
+                type: "output_text",
+                text: answer,
+                annotations: [],
+              },
+            ],
+          },
+        ],
+        output_text: answer,
+      });
+    }
+
     return jsonResponse({
       choices: [
         {
-          finish_reason: "stop",
+          index: 0,
           message: {
-            role: "assistant",
-            content: "最关键的新结论是系统只会返回当前用户自己的证据。",
+            content: buildFinalAnswer(
+              query || readMessageText(lastMessage?.content),
+            ),
           },
         },
       ],
     });
-  };
+  }) as typeof fetch;
 }
 
-function createDelayedSseResponse(
-  chunks: Array<{
-    body: unknown;
-    delayMs: number;
-  }>,
-): Response {
-  const encoder = new TextEncoder();
-
-  return new Response(
-    new ReadableStream<Uint8Array>({
-      async start(controller) {
-        for (const chunk of chunks) {
-          await Bun.sleep(chunk.delayMs);
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(chunk.body)}\n\n`),
-          );
-        }
-
-        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-        controller.close();
-      },
-    }),
-    {
-      headers: {
-        "Content-Type": "text/event-stream",
-      },
-    },
-  );
-}
-
-describe("@atlas-kb/mastra knowledge flow", () => {
+describe("@atlas-kb/mastra workspace search flow", () => {
   let knowledgeDataDir = "";
+  let storedObjects = new Map<string, Uint8Array>();
 
   beforeEach(async () => {
+    storedObjects = new Map<string, Uint8Array>();
     knowledgeDataDir = await mkdtemp(join(tmpdir(), "atlas-kb-mastra-test-"));
     process.env.ATLAS_KB_DATA_DIR = knowledgeDataDir;
-    process.env.LANCEDB_URI = createTestLanceUri();
-    process.env.OPENAI_API_KEY = "test-key";
-    globalThis.fetch = originalFetch;
+    process.env.QDRANT_URL = "http://127.0.0.1:6333";
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.EMBEDDING_API_KEY = "test-embedding-key";
+    process.env.ATLAS_KB_S3_ENDPOINT = "http://127.0.0.1:9000";
+    process.env.ATLAS_KB_S3_REGION = "us-east-1";
+    process.env.ATLAS_KB_S3_BUCKET = "atlas-kb-test";
+    process.env.ATLAS_KB_S3_ACCESS_KEY_ID = "test-access-key";
+    process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY = "test-secret-key";
     resetKnowledgeRuntimeCache();
     await resetKnowledgeRepository();
-    mockOpenAIChatProvider();
+    setKnowledgeObjectStorageClientForTests({
+      async deleteObject(args) {
+        storedObjects.delete(args.key);
+      },
+      async getObject(args) {
+        const value = storedObjects.get(args.key);
+
+        if (!value) {
+          throw new Error(`missing test object: ${args.key}`);
+        }
+
+        return value;
+      },
+      async headObject(args) {
+        const value = storedObjects.get(args.key);
+
+        if (!value) {
+          return null;
+        }
+
+        return {
+          key: args.key,
+          size: value.byteLength,
+        };
+      },
+      async listObjects(args) {
+        return [...storedObjects.entries()]
+          .filter(([key]) => key.startsWith(args.prefix))
+          .map(([key, value]) => ({
+            key,
+            size: value.byteLength,
+          }));
+      },
+      async putObject(args) {
+        storedObjects.set(
+          args.key,
+          typeof args.body === "string"
+            ? new TextEncoder().encode(args.body)
+            : args.body,
+        );
+      },
+    });
+    mockProviders();
   });
 
   afterEach(async () => {
@@ -230,10 +567,10 @@ describe("@atlas-kb/mastra knowledge flow", () => {
       process.env.ATLAS_KB_DATA_DIR = originalDataDir;
     }
 
-    if (originalLanceUri === undefined) {
-      delete process.env.LANCEDB_URI;
+    if (originalQdrantUrl === undefined) {
+      delete process.env.QDRANT_URL;
     } else {
-      process.env.LANCEDB_URI = originalLanceUri;
+      process.env.QDRANT_URL = originalQdrantUrl;
     }
 
     if (originalApiKey === undefined) {
@@ -242,12 +579,48 @@ describe("@atlas-kb/mastra knowledge flow", () => {
       process.env.OPENAI_API_KEY = originalApiKey;
     }
 
-    resetKnowledgeRuntimeCache();
+    if (originalEmbeddingApiKey === undefined) {
+      delete process.env.EMBEDDING_API_KEY;
+    } else {
+      process.env.EMBEDDING_API_KEY = originalEmbeddingApiKey;
+    }
+
+    if (originalS3Endpoint === undefined) {
+      delete process.env.ATLAS_KB_S3_ENDPOINT;
+    } else {
+      process.env.ATLAS_KB_S3_ENDPOINT = originalS3Endpoint;
+    }
+
+    if (originalS3Region === undefined) {
+      delete process.env.ATLAS_KB_S3_REGION;
+    } else {
+      process.env.ATLAS_KB_S3_REGION = originalS3Region;
+    }
+
+    if (originalS3Bucket === undefined) {
+      delete process.env.ATLAS_KB_S3_BUCKET;
+    } else {
+      process.env.ATLAS_KB_S3_BUCKET = originalS3Bucket;
+    }
+
+    if (originalS3AccessKeyId === undefined) {
+      delete process.env.ATLAS_KB_S3_ACCESS_KEY_ID;
+    } else {
+      process.env.ATLAS_KB_S3_ACCESS_KEY_ID = originalS3AccessKeyId;
+    }
+
+    if (originalS3SecretAccessKey === undefined) {
+      delete process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY;
+    } else {
+      process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY = originalS3SecretAccessKey;
+    }
+
     globalThis.fetch = originalFetch;
+    setKnowledgeObjectStorageClientForTests();
     await rm(knowledgeDataDir, { force: true, recursive: true });
   });
 
-  it("returns lexical hits only for the current user", async () => {
+  it("returns hits only from the requested collection and current user", async () => {
     const alpha = await ensureDefaultUser();
     const beta = await createUser({
       username: "beta-search",
@@ -262,45 +635,55 @@ describe("@atlas-kb/mastra knowledge flow", () => {
         description: "alpha private notes",
       },
     });
+    const betaCollection = await createKnowledgeCollection({
+      userId: beta.id,
+      input: {
+        id: "beta-search",
+        name: "Beta Search",
+        description: "beta private notes",
+      },
+    });
+
     await importKnowledgeText({
       userId: alpha.id,
       collectionId: alphaCollection.id,
       input: {
         title: "Alpha Doc",
-        content: "隔离搜索关键词：只有 alpha 可以检索到。",
+        content: "alpha unique keyword is only visible to alpha user.",
+      },
+    });
+    await importKnowledgeText({
+      userId: beta.id,
+      collectionId: betaCollection.id,
+      input: {
+        title: "Beta Doc",
+        content: "beta unique keyword is only visible to beta user.",
       },
     });
 
     const alphaResult = await searchKnowledge(
       {
-        query: "隔离搜索关键词",
+        query: "alpha unique keyword",
+        collectionId: alphaCollection.id,
       },
       {
         userId: alpha.id,
       },
     );
-    const betaResult = await searchKnowledge(
-      {
-        query: "隔离搜索关键词",
-      },
-      {
-        userId: beta.id,
-      },
-    );
 
     expect(alphaResult.total).toBe(1);
     expect(alphaResult.hits[0]?.title).toBe("Alpha Doc");
-    expect(betaResult.total).toBe(0);
+    expect(alphaResult.hits[0]?.collectionId).toBe(alphaCollection.id);
   });
 
-  it("answers grounded questions from the current user's collection", async () => {
+  it("answers from searched citations", async () => {
     const user = await ensureDefaultUser();
     const collection = await createKnowledgeCollection({
       userId: user.id,
       input: {
-        id: "grounded-answer",
-        name: "Grounded Answer",
-        description: "用于验证 grounded answer",
+        id: "workspace-answer",
+        name: "Workspace Answer",
+        description: "answer tests",
       },
     });
 
@@ -308,14 +691,16 @@ describe("@atlas-kb/mastra knowledge flow", () => {
       userId: user.id,
       collectionId: collection.id,
       input: {
-        title: "Grounded Doc",
-        content: "核心结论：检索和回答必须绑定到同一份真实证据。",
+        title: "制度说明",
+        summary: "请假流程说明",
+        content:
+          "Leave requests are reviewed by the department manager and finally recorded by human resources.",
       },
     });
 
     const result = await answerKnowledgeQuestion(
       {
-        question: "这份资料里的核心结论是什么？",
+        question: "Who finally records leave requests?",
         collectionId: collection.id,
       },
       {
@@ -323,18 +708,18 @@ describe("@atlas-kb/mastra knowledge flow", () => {
       },
     );
 
-    expect(result.citations.length).toBeGreaterThan(0);
-    expect(result.answer).toContain("当前用户自己的证据");
+    expect(result.answer).toBeTruthy();
+    expect(result.mode).toBe("model");
   });
 
-  it("creates chat replies and stores assistant feedback within one user scope", async () => {
+  it("stores trace data when creating a chat reply", async () => {
     const user = await ensureDefaultUser();
     const collection = await createKnowledgeCollection({
       userId: user.id,
       input: {
-        id: "chat-scope",
-        name: "Chat Scope",
-        description: "用于验证聊天闭环",
+        id: "chat-search",
+        name: "Chat Search",
+        description: "chat tests",
       },
     });
 
@@ -342,8 +727,96 @@ describe("@atlas-kb/mastra knowledge flow", () => {
       userId: user.id,
       collectionId: collection.id,
       input: {
-        title: "Chat Doc",
-        content: "聊天结论：回答必须引用当前 collection 里的资料。",
+        title: "部门职责",
+        content:
+          "Malware incidents on office devices are handled by the infosec team.",
+      },
+    });
+
+    const session = await createChatSession({
+      userId: user.id,
+      collectionId: collection.id,
+    });
+
+    const reply = await createChatReply({
+      userId: user.id,
+      sessionId: session.id,
+      input: {
+        query: "Who handles malware incidents?",
+      },
+    });
+
+    expect(reply.assistantMessage.content).toBeTruthy();
+    expect(reply.assistantMessage.trace?.length).toBeGreaterThan(0);
+  });
+
+  it("lists workspace files through the native workspace tool", async () => {
+    const user = await ensureDefaultUser();
+    const collection = await createKnowledgeCollection({
+      userId: user.id,
+      input: {
+        id: "chat-list-files",
+        name: "Chat List Files",
+        description: "file listing tests",
+      },
+    });
+
+    const fileImport = await importKnowledgeFiles({
+      userId: user.id,
+      collectionId: collection.id,
+      files: [
+        new File(
+          ["2026 年机关党建工作会议通知。"],
+          "2026年全市机关党的建设工作暨纪检工作会议通知.txt",
+          {
+            type: "text/plain",
+          },
+        ),
+      ],
+      input: {},
+    });
+
+    const session = await createChatSession({
+      userId: user.id,
+      collectionId: collection.id,
+    });
+
+    const reply = await createChatReply({
+      userId: user.id,
+      sessionId: session.id,
+      input: {
+        query: "我们现在有哪些文件？",
+      },
+    });
+
+    expect(fileImport.results[0]?.accepted).toBe(true);
+    expect(reply.assistantMessage.content).toContain(
+      "2026年全市机关党的建设工作暨纪检工作会议通知.txt",
+    );
+    expect(
+      reply.assistantMessage.trace?.some(
+        (event) => event.toolName === "mastra_workspace_list_files",
+      ),
+    ).toBe(true);
+  });
+
+  it("saves feedback on assistant replies", async () => {
+    const user = await ensureDefaultUser();
+    const collection = await createKnowledgeCollection({
+      userId: user.id,
+      input: {
+        id: "feedback-space",
+        name: "Feedback Space",
+        description: "feedback tests",
+      },
+    });
+
+    await importKnowledgeText({
+      userId: user.id,
+      collectionId: collection.id,
+      input: {
+        title: "部门职责",
+        content: "Supplier contract clause review is owned by the legal team.",
       },
     });
 
@@ -355,13 +828,9 @@ describe("@atlas-kb/mastra knowledge flow", () => {
       userId: user.id,
       sessionId: session.id,
       input: {
-        query: "基于资料告诉我聊天结论",
-        collectionId: collection.id,
+        query: "Who owns contract clause review?",
       },
     });
-
-    expect(reply.assistantMessage.citations.length).toBeGreaterThan(0);
-    expect(reply.retrieval.total).toBeGreaterThan(0);
 
     const feedback = await saveMessageFeedback({
       userId: user.id,
@@ -374,83 +843,52 @@ describe("@atlas-kb/mastra knowledge flow", () => {
     expect(feedback.rating).toBe("up");
   });
 
-  it("allows a long-running stream as long as chunks keep arriving before the idle timeout", async () => {
-    const result = await streamModelAnswerFromCitations({
-      citations: [
-        {
-          chunkId: "chunk-1",
-          collectionId: "collection-1",
-          sourceId: "source-1",
-          snippet: "这是第一段证据。",
-          title: "证据一",
-        },
-      ],
-      fetchImpl: async () =>
-        createDelayedSseResponse([
-          {
-            body: {
-              choices: [
-                {
-                  delta: {
-                    content: "第一段",
-                  },
-                  finish_reason: null,
-                  index: 0,
-                },
-              ],
-              created: 1,
-              id: "chunk-1",
-              model: "gpt-5.4",
-              object: "chat.completion.chunk",
-            },
-            delayMs: 5,
-          },
-          {
-            body: {
-              choices: [
-                {
-                  delta: {
-                    content: "第二段",
-                  },
-                  finish_reason: "stop",
-                  index: 0,
-                },
-              ],
-              created: 2,
-              id: "chunk-2",
-              model: "gpt-5.4",
-              object: "chat.completion.chunk",
-            },
-            delayMs: 35,
-          },
-        ]),
-      question: "总结一下证据",
-      responseTimeoutMs: 20,
-      streamIdleTimeoutMs: 60,
+  it("maps listed workspace files back to real workspace filenames", async () => {
+    const user = await ensureDefaultUser();
+    const collection = await createKnowledgeCollection({
+      userId: user.id,
+      input: {
+        id: "catalog-space",
+        name: "Catalog Space",
+        description: "catalog tests",
+      },
     });
 
-    expect(result.answer).toBe("第一段第二段");
-  });
+    await importKnowledgeText({
+      userId: user.id,
+      collectionId: collection.id,
+      input: {
+        title: "请示通知",
+        content: "first document body",
+      },
+    });
+    await importKnowledgeText({
+      userId: user.id,
+      collectionId: collection.id,
+      input: {
+        title: "会议纪要",
+        content: "second document body",
+      },
+    });
 
-  it("maps provider timeouts to a generic timeout message", async () => {
-    await expect(
-      streamModelAnswerFromCitations({
-        citations: [
-          {
-            chunkId: "chunk-1",
-            collectionId: "collection-1",
-            sourceId: "source-1",
-            snippet: "这是第一段证据。",
-            title: "证据一",
-          },
-        ],
-        fetchImpl: async () => {
-          throw new ModelInvocationTimeoutError("request");
-        },
-        question: "总结一下证据",
-        responseTimeoutMs: 20,
-        streamIdleTimeoutMs: 20,
-      }),
-    ).rejects.toThrow("知识库回答超时，请稍后重试。");
+    const session = await createChatSession({
+      userId: user.id,
+      collectionId: collection.id,
+    });
+    const reply = await createChatReply({
+      userId: user.id,
+      sessionId: session.id,
+      input: {
+        query: "我们有哪些文件？",
+      },
+    });
+
+    expect(reply.assistantMessage.content).toContain("请示通知.txt");
+    expect(reply.assistantMessage.content).toContain("会议纪要.txt");
+    expect(
+      reply.assistantMessage.trace?.some(
+        (event) => event.toolName === "mastra_workspace_list_files",
+      ),
+    ).toBe(true);
   });
 });

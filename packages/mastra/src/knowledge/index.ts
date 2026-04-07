@@ -13,33 +13,21 @@ export {
   streamChatReply,
   updateChatSession,
 } from "./chat";
+export { getKnowledgeSourceDownloadUrl } from "./download";
 export {
-  getKnowledgeDocumentDownload,
-  getKnowledgeSourceDownload,
-} from "./download";
-export {
-  importKnowledgeFile,
   importKnowledgeFiles,
   importKnowledgeText,
   importKnowledgeUrl,
-  refreshKnowledgeSource,
-  retryKnowledgeSource,
   updateKnowledgeSource,
-  uploadKnowledgeDocument,
   waitForPendingKnowledgeImports,
 } from "./ingest";
-export { runKnowledgeAgentQuestion } from "./agent";
-export {
-  answerKnowledgeQuestion,
-  generateGroundedAnswer,
-  searchKnowledge,
-} from "./search";
+export { answerKnowledgeQuestion, runKnowledgeAgentQuestion } from "./agent";
+export { searchKnowledge } from "./search";
 export {
   appendChatMessage,
   archiveKnowledgeSource,
-  createImportJob,
   createKnowledgeCollection,
-  createKnowledgeSpace,
+  createKnowledgeSourceRecord,
   createSourceDraft,
   deleteKnowledgeCollection,
   deleteKnowledgeSource,
@@ -53,23 +41,16 @@ export {
   getKnowledgeCollectionSourcesData,
   getKnowledgeSourceById,
   getKnowledgeSourceData,
-  getKnowledgeSpace,
-  getKnowledgeSpaceDocuments,
   getStoredSourceRecord,
-  listImportJobs,
   listKnowledgeCollections,
-  listKnowledgeDocuments,
   listKnowledgeSources,
-  listKnowledgeSpaces,
   replaceSourceContent,
   requireChatSession,
   requireKnowledgeCollection,
   requireKnowledgeSource,
-  requireKnowledgeSpace,
   resetKnowledgeRepository,
   resolveDatabasePath,
   toStoredKnowledgeSource,
-  updateImportJob,
   updateKnowledgeCollection,
 } from "./repository";
 export {
@@ -82,4 +63,33 @@ export {
   requireAuthUser,
   requireDefaultUser,
 } from "./users";
-export { resetKnowledgeRuntimeCache } from "./runtime";
+export {
+  getKnowledgeWorkspace,
+  invalidateKnowledgeWorkspace,
+  resetKnowledgeRuntimeCache,
+} from "./runtime";
+export {
+  buildKnowledgeSourceObjectKey,
+  getKnowledgeSourceObject,
+  getPresignedGetUrl,
+  getPresignedPutUrl,
+  putKnowledgeSourceObject,
+  setKnowledgeObjectStorageClientForTests,
+} from "./object-storage";
+export {
+  createKnowledgeExportTaskInAdmin,
+  getKnowledgeTemplateDetailFromAdmin,
+  listKnowledgeExportTasksFromAdmin,
+  listKnowledgeTemplatesFromAdmin,
+} from "./admin-client";
+export {
+  allocateManagedSourceFileName,
+  buildManagedSourceFileName,
+  extractFileContent,
+  getManagedSourcePaths,
+} from "./storage";
+export { generateKnowledgeTemplateExportPayload } from "./template-exports";
+export {
+  getInternalSecret,
+  validateKnowledgeStorageConfig,
+} from "./config";

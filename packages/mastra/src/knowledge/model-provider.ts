@@ -108,7 +108,7 @@ function logModelProviderIssue(
   const errorName = error instanceof Error ? error.name : undefined;
   const errorMessage = readErrorText(error);
 
-  console.error("[atlas-kb/mastra] model provider issue", {
+  console.error("[model-provider] issue", {
     action,
     details,
     errorMessage: errorMessage || undefined,

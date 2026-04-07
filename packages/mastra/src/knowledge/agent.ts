@@ -1,22 +1,18 @@
-import type {
-  AskKnowledgeCitation,
-  ChatTraceEvent,
-  SearchKnowledgeResult,
-} from "@atlas-kb/schema";
+import { ApiHttpError } from "@atlas-kb/errors";
+import type { ChatTraceEvent } from "@atlas-kb/schema";
+import type { ChunkType, FullOutput } from "@mastra/core/stream";
+import { createKnowledgeAgent } from "../agents";
+import { buildKnowledgeMemoryResourceId } from "../memory";
 import {
   mapModelProviderError,
   requireChatModelProvider,
 } from "./model-provider";
-import { requireKnowledgeSpace } from "./repository";
-import {
-  annotateAnswerUsage,
-  generateModelAnswerFromCitations,
-  searchKnowledge,
-  streamModelAnswerFromCitations,
-  toCitation,
-} from "./search";
+import { requireKnowledgeCollection } from "./repository";
+import { getKnowledgeWorkspace } from "./runtime";
 
 const AGENT_EXECUTION_TIMEOUT_MS = 20_000;
+const MAX_AGENT_STEPS = 6;
+const MAX_TRACE_DETAIL = 600;
 
 class AgentPhaseTimeoutError extends Error {}
 
@@ -25,10 +21,14 @@ type StreamPart = {
   [key: string]: unknown;
 };
 
-type UsageSummary = {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
+type TraceUpdater = {
+  id: string;
+  kind: ChatTraceEvent["kind"];
+  state: ChatTraceEvent["state"];
+  title: string;
+  detail?: string;
+  toolCallId?: string;
+  toolName?: string;
 };
 
 function nowIso(): string {
@@ -58,8 +58,12 @@ function withTimeout<T>(
   });
 }
 
-function trimTraceDetail(detail: string, max = 600): string {
+function trimTraceDetail(detail: string, max = MAX_TRACE_DETAIL): string {
   const normalized = detail.trim();
+
+  if (!normalized) {
+    return "";
+  }
 
   if (normalized.length <= max) {
     return normalized;
@@ -67,20 +71,6 @@ function trimTraceDetail(detail: string, max = 600): string {
 
   return `${normalized.slice(0, max - 1)}…`;
 }
-
-function buildNoEvidenceAnswer(question: string): string {
-  return `没有在知识库中找到能直接回答“${question}”的证据。你可以换个问法，或者先导入更相关的资料。`;
-}
-
-type TraceUpdater = {
-  id: string;
-  kind: ChatTraceEvent["kind"];
-  state: ChatTraceEvent["state"];
-  title: string;
-  detail?: string;
-  toolCallId?: string;
-  toolName?: string;
-};
 
 function createTraceStore(
   publish?: (event: ChatTraceEvent) => Promise<void> | void,
@@ -117,182 +107,178 @@ function createTraceStore(
   };
 }
 
-export async function runKnowledgeAgentQuestion(params: {
-  limit?: number;
-  question: string;
-  spaceId: string;
-  userId: string;
-}): Promise<{
-  answer: string;
-  citations: AskKnowledgeCitation[];
-  question: string;
-  spaceId: string;
-  search: SearchKnowledgeResult;
-  toolCalls: number;
-}> {
-  const limit = params.limit ?? 3;
-
-  await requireKnowledgeSpace(params.userId, params.spaceId);
-  requireChatModelProvider();
-
-  const search = annotateAnswerUsage(
-    await withTimeout(
-      searchKnowledge(
-        {
-          query: params.question,
-          spaceId: params.spaceId,
-          limit,
-        },
-        {
-          userId: params.userId,
-          apiKey: "",
-        },
-      ),
-      AGENT_EXECUTION_TIMEOUT_MS,
-      "知识库检索超时，请重试。",
-    ),
-    limit,
-  );
-  const citations = search.hits.slice(0, limit).map(toCitation);
-  const answer =
-    citations.length === 0
-      ? buildNoEvidenceAnswer(params.question)
-      : (await generateModelAnswerFromCitations({
-          question: params.question,
-          citations,
-        })) || "";
-
-  if (!answer) {
-    throw new Error("模型服务返回了空回答，请重试。");
+function getToolTraceKind(toolName: string): ChatTraceEvent["kind"] {
+  if (toolName.toLowerCase().includes("search")) {
+    return "search";
   }
 
+  return "tool-call";
+}
+
+function summarizeToolArgs(args: unknown): string | undefined {
+  if (!args || typeof args !== "object") {
+    return undefined;
+  }
+
+  const values = args as Record<string, unknown>;
+
+  if (typeof values.query === "string" && values.query.trim()) {
+    return `query: ${values.query.trim()}`;
+  }
+
+  if (typeof values.path === "string" && values.path.trim()) {
+    return `path: ${values.path.trim()}`;
+  }
+
+  return undefined;
+}
+
+function normalizeResultText(result: unknown): string {
+  if (typeof result === "string") {
+    return result.trim();
+  }
+
+  if (result === null || result === undefined) {
+    return "";
+  }
+
+  try {
+    return JSON.stringify(result).trim();
+  } catch {
+    return String(result).trim();
+  }
+}
+
+function summarizeToolResult(result: unknown): string | undefined {
+  const text = normalizeResultText(result);
+
+  if (!text) {
+    return undefined;
+  }
+  return trimTraceDetail(text);
+}
+
+function readToolErrorDetail(error: unknown): string {
+  return normalizeResultText(error) || "工具执行失败";
+}
+
+function buildToolExecutionError(
+  toolName: string,
+  error: unknown,
+): ApiHttpError {
+  const detail = trimTraceDetail(readToolErrorDetail(error), 1200);
+
+  return new ApiHttpError({
+    statusCode: 422,
+    code: "TOOL_EXECUTION_FAILED",
+    message: `${toolName} failed: ${detail}`,
+    cause: error,
+  });
+}
+
+function buildUsageSummary(output: FullOutput<undefined>) {
   return {
-    answer,
-    citations,
-    question: params.question,
-    search,
-    spaceId: params.spaceId,
-    toolCalls: citations.length > 0 ? 1 : 0,
+    completionTokens: output.totalUsage.outputTokens ?? 0,
+    promptTokens: output.totalUsage.inputTokens ?? 0,
+    totalTokens: output.totalUsage.totalTokens ?? 0,
   };
 }
 
-export async function streamKnowledgeAgentQuestion(params: {
+async function buildKnowledgeExecutionContext(params: {
+  collectionId: string;
   limit?: number;
   question: string;
-  spaceId: string;
+  resourceId?: string;
+  threadId?: string;
   userId: string;
-  onStreamPart?: (part: StreamPart) => Promise<void> | void;
-  onTraceEvent?: (event: ChatTraceEvent) => Promise<void> | void;
+}) {
+  await requireKnowledgeCollection(params.userId, params.collectionId);
+  requireChatModelProvider();
+
+  const workspace = await getKnowledgeWorkspace({
+    userId: params.userId,
+    collectionId: params.collectionId,
+  });
+  const agent = createKnowledgeAgent({
+    collectionId: params.collectionId,
+    workspace,
+  });
+
+  return {
+    agent,
+    options: {
+      maxSteps: MAX_AGENT_STEPS,
+      memory:
+        params.threadId && params.resourceId
+          ? {
+              thread: params.threadId,
+              resource: params.resourceId,
+            }
+          : undefined,
+      temperature: 0,
+    },
+  };
+}
+
+export async function runKnowledgeAgentQuestion(params: {
+  limit?: number;
+  question: string;
+  collectionId: string;
+  userId: string;
+  threadId?: string;
+  resourceId?: string;
 }): Promise<{
   answer: string;
-  citations: AskKnowledgeCitation[];
-  finishReason: string;
   question: string;
-  search: SearchKnowledgeResult;
-  spaceId: string;
-  toolCalls: number;
+  collectionId: string;
   trace: ChatTraceEvent[];
-  usage?: UsageSummary;
 }> {
-  const trace = createTraceStore(params.onTraceEvent);
+  const trace = createTraceStore();
 
   await trace.upsert({
     id: "status:reply",
     kind: "status",
     state: "running",
-    title: "智能体正在检索资料并组织回答",
+    title: "智能体正在处理提问",
   });
 
   try {
-    await requireKnowledgeSpace(params.userId, params.spaceId);
-    requireChatModelProvider();
-
-    const limit = params.limit ?? 3;
-    const search = annotateAnswerUsage(
-      await withTimeout(
-        searchKnowledge(
-          {
-            query: params.question,
-            spaceId: params.spaceId,
-            limit,
-          },
-          {
-            userId: params.userId,
-            // Keep the retrieval path short. Skip the model-based query rewrite.
-            apiKey: "",
-          },
-        ),
-        AGENT_EXECUTION_TIMEOUT_MS,
-        "知识库检索超时，请重试。",
-      ),
-      limit,
+    const context = await buildKnowledgeExecutionContext(params);
+    const output = await withTimeout(
+      context.agent.generate(params.question, context.options),
+      AGENT_EXECUTION_TIMEOUT_MS,
+      "知识库回答超时，请重试。",
     );
-    const citations = search.hits.slice(0, limit).map(toCitation);
 
-    await trace.upsert({
-      id: "status:search",
-      kind: "search",
-      state: "completed",
-      title: `命中 ${search.total} 条资料`,
-      detail: `查询变体 ${search.queryVariants.length} 个。`,
-    });
-
-    const fallbackAnswer =
-      citations.length === 0
-        ? buildNoEvidenceAnswer(params.question)
-        : undefined;
-
-    const streamResult = fallbackAnswer
-      ? {
-          answer: fallbackAnswer,
-          finishReason: "stop",
-        }
-      : await streamModelAnswerFromCitations({
-          question: params.question,
-          citations,
-          onTextDelta: async (delta) => {
-            await params.onStreamPart?.({
-              type: "text-delta",
-              textDelta: delta,
-            });
-          },
-        });
-
-    const answer = streamResult.answer.trim() || fallbackAnswer || "";
-
-    if (!answer) {
-      const generatedAnswer =
-        (await generateModelAnswerFromCitations({
-          question: params.question,
-          citations,
-        })) || "";
-
-      if (!generatedAnswer) {
-        throw new Error("模型服务返回了空回答，请重试。");
-      }
-
-      await params.onStreamPart?.({
-        type: "text-delta",
-        textDelta: generatedAnswer,
-      });
-
+    for (const toolCall of output.toolCalls) {
       await trace.upsert({
-        id: "status:reply",
-        kind: "status",
+        id: `tool:${toolCall.payload.toolCallId}`,
+        kind: getToolTraceKind(toolCall.payload.toolName),
         state: "completed",
-        title: "回答生成完成",
+        title: toolCall.payload.toolName,
+        detail: summarizeToolArgs(toolCall.payload.args),
+        toolCallId: toolCall.payload.toolCallId,
+        toolName: toolCall.payload.toolName,
+      });
+    }
+
+    for (const toolResult of output.toolResults) {
+      await trace.upsert({
+        id: `tool:${toolResult.payload.toolCallId}`,
+        kind: getToolTraceKind(toolResult.payload.toolName),
+        state: toolResult.payload.isError ? "failed" : "completed",
+        title: toolResult.payload.toolName,
+        detail: summarizeToolResult(toolResult.payload.result),
+        toolCallId: toolResult.payload.toolCallId,
+        toolName: toolResult.payload.toolName,
       });
 
-      return {
-        answer: generatedAnswer,
-        citations,
-        finishReason: "stop",
-        question: params.question,
-        search,
-        spaceId: params.spaceId,
-        toolCalls: 0,
-        trace: trace.list(),
-      };
+      if (toolResult.payload.isError) {
+        throw buildToolExecutionError(
+          toolResult.payload.toolName,
+          toolResult.payload.result,
+        );
+      }
     }
 
     await trace.upsert({
@@ -303,13 +289,11 @@ export async function streamKnowledgeAgentQuestion(params: {
     });
 
     return {
-      answer,
-      citations,
-      finishReason: streamResult.finishReason,
+      answer:
+        output.text.trim() ||
+        "没有在当前资料文件夹中找到能直接回答该问题的证据。你可以换个问法，或者先导入更相关的资料。",
       question: params.question,
-      search,
-      spaceId: params.spaceId,
-      toolCalls: 0,
+      collectionId: params.collectionId,
       trace: trace.list(),
     };
   } catch (error) {
@@ -328,17 +312,188 @@ export async function streamKnowledgeAgentQuestion(params: {
       detail: message,
     });
 
-    if (error instanceof AgentPhaseTimeoutError) {
-      throw error;
-    }
-
     if (
-      error instanceof Error &&
-      error.message.includes("模型服务返回了空回答")
+      error instanceof AgentPhaseTimeoutError ||
+      error instanceof ApiHttpError
     ) {
       throw error;
     }
 
     throw mapModelProviderError(error, "AI 对话");
   }
+}
+
+export async function streamKnowledgeAgentQuestion(params: {
+  limit?: number;
+  question: string;
+  collectionId: string;
+  userId: string;
+  threadId?: string;
+  resourceId?: string;
+  onStreamPart?: (part: StreamPart) => Promise<void> | void;
+  onTraceEvent?: (event: ChatTraceEvent) => Promise<void> | void;
+}): Promise<{
+  answer: string;
+  finishReason: string;
+  question: string;
+  collectionId: string;
+  trace: ChatTraceEvent[];
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+}> {
+  const trace = createTraceStore(params.onTraceEvent);
+
+  await trace.upsert({
+    id: "status:reply",
+    kind: "status",
+    state: "running",
+    title: "智能体正在处理提问",
+  });
+
+  try {
+    const context = await buildKnowledgeExecutionContext(params);
+    const stream = await withTimeout(
+      context.agent.stream(params.question, context.options),
+      AGENT_EXECUTION_TIMEOUT_MS,
+      "知识库回答超时，请重试。",
+    );
+    const output = await withTimeout(
+      (async () => {
+        for await (const chunk of stream.fullStream as AsyncIterable<
+          ChunkType<undefined>
+        >) {
+          switch (chunk.type) {
+            case "text-delta":
+              await params.onStreamPart?.({
+                type: "text-delta",
+                textDelta: chunk.payload.text,
+              });
+              break;
+            case "tool-call":
+              await trace.upsert({
+                id: `tool:${chunk.payload.toolCallId}`,
+                kind: getToolTraceKind(chunk.payload.toolName),
+                state: "running",
+                title: chunk.payload.toolName,
+                detail: summarizeToolArgs(chunk.payload.args),
+                toolCallId: chunk.payload.toolCallId,
+                toolName: chunk.payload.toolName,
+              });
+              break;
+            case "tool-result":
+              await trace.upsert({
+                id: `tool:${chunk.payload.toolCallId}`,
+                kind: getToolTraceKind(chunk.payload.toolName),
+                state: chunk.payload.isError ? "failed" : "completed",
+                title: chunk.payload.toolName,
+                detail: summarizeToolResult(chunk.payload.result),
+                toolCallId: chunk.payload.toolCallId,
+                toolName: chunk.payload.toolName,
+              });
+
+              if (chunk.payload.isError) {
+                throw buildToolExecutionError(
+                  chunk.payload.toolName,
+                  chunk.payload.result,
+                );
+              }
+
+              break;
+            case "tool-error":
+              await trace.upsert({
+                id: `tool:${chunk.payload.toolCallId}`,
+                kind: getToolTraceKind(chunk.payload.toolName),
+                state: "failed",
+                title: chunk.payload.toolName,
+                detail: readToolErrorDetail(chunk.payload.error),
+                toolCallId: chunk.payload.toolCallId,
+                toolName: chunk.payload.toolName,
+              });
+
+              throw buildToolExecutionError(
+                chunk.payload.toolName,
+                chunk.payload.error,
+              );
+            default:
+              break;
+          }
+        }
+
+        return stream.getFullOutput();
+      })(),
+      AGENT_EXECUTION_TIMEOUT_MS,
+      "知识库回答超时，请重试。",
+    );
+
+    await trace.upsert({
+      id: "status:reply",
+      kind: "status",
+      state: "completed",
+      title: "回答生成完成",
+    });
+
+    return {
+      answer:
+        output.text.trim() ||
+        "没有在当前资料文件夹中找到能直接回答该问题的证据。你可以换个问法，或者先导入更相关的资料。",
+      finishReason: output.finishReason || "stop",
+      question: params.question,
+      collectionId: params.collectionId,
+      trace: trace.list(),
+      usage: buildUsageSummary(output),
+    };
+  } catch (error) {
+    const message =
+      error instanceof AgentPhaseTimeoutError
+        ? error.message
+        : error instanceof Error && error.message.trim()
+          ? error.message.trim()
+          : "模型执行失败";
+
+    await trace.upsert({
+      id: "status:reply",
+      kind: "status",
+      state: "failed",
+      title: "回答生成失败",
+      detail: message,
+    });
+
+    if (
+      error instanceof AgentPhaseTimeoutError ||
+      error instanceof ApiHttpError
+    ) {
+      throw error;
+    }
+
+    throw mapModelProviderError(error, "AI 对话");
+  }
+}
+
+export async function answerKnowledgeQuestion(
+  input: { question: string; collectionId: string; limit?: number },
+  options: {
+    userId: string;
+  },
+): Promise<{ question: string; answer: string; mode: "model" }> {
+  const resourceId = buildKnowledgeMemoryResourceId(
+    options.userId,
+    input.collectionId,
+  );
+  const answer = await runKnowledgeAgentQuestion({
+    question: input.question,
+    collectionId: input.collectionId,
+    limit: input.limit,
+    userId: options.userId,
+    threadId: `ask:${crypto.randomUUID()}`,
+    resourceId,
+  });
+
+  return {
+    question: input.question,
+    answer: answer.answer,
+    mode: "model",
+  };
 }

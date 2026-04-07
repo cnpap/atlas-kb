@@ -21,6 +21,7 @@ import {
   ChatReplyRequestSchema,
   ChatReplyStreamRequestSchema,
 } from "@atlas-kb/schema";
+import { buildKnowledgeMemoryResourceId } from "../memory";
 import {
   appendChatMessage,
   createChatSession,
@@ -156,16 +157,14 @@ export async function createChatReply(params: {
   userId: string;
   sessionId: string;
   input: ChatReplyRequest;
-  fetchImpl?: typeof fetch;
 }): Promise<ChatReplyFinal> {
-  void params.fetchImpl;
   const session = await requireChatSession(params.userId, params.sessionId);
   const parsedInput = ChatReplyRequestSchema.parse(params.input);
-  const collectionId = parsedInput.collectionId ?? session.collectionId;
-
-  if (!collectionId) {
-    throw new Error("请先选择一个资料分组，再开始 AI 对话");
-  }
+  const collectionId = session.collectionId;
+  const resourceId = buildKnowledgeMemoryResourceId(
+    params.userId,
+    collectionId,
+  );
 
   const userMessage = await appendChatMessage({
     userId: params.userId,
@@ -175,26 +174,26 @@ export async function createChatReply(params: {
   });
   const answer = await runKnowledgeAgentQuestion({
     question: parsedInput.query,
-    spaceId: collectionId,
+    collectionId,
     limit: parsedInput.limit,
     userId: params.userId,
+    threadId: session.id,
+    resourceId,
   });
   const assistantMessage = await appendChatMessage({
     userId: params.userId,
     sessionId: session.id,
     role: "assistant",
     content: answer.answer,
-    citations: answer.citations,
-    retrieval: answer.search,
+    trace: answer.trace,
   });
+
   const refreshedSession = await requireChatSession(params.userId, session.id);
 
   return {
     session: refreshedSession,
     userMessage,
     assistantMessage,
-    retrieval: answer.search,
-    search: answer.search,
   };
 }
 
@@ -207,11 +206,11 @@ export async function streamChatReply(params: {
     params.userId,
     parsedInput.sessionId,
   );
-  const collectionId = parsedInput.collectionId ?? session.collectionId;
-
-  if (!collectionId) {
-    throw new Error("请先选择一个资料分组，再开始 AI 对话");
-  }
+  const collectionId = session.collectionId;
+  const resourceId = buildKnowledgeMemoryResourceId(
+    params.userId,
+    collectionId,
+  );
 
   const userMessage = await appendChatMessage({
     userId: params.userId,
@@ -271,9 +270,11 @@ export async function streamChatReply(params: {
         try {
           const answer = await streamKnowledgeAgentQuestion({
             question: parsedInput.query,
-            spaceId: collectionId,
+            collectionId,
             limit: parsedInput.limit,
             userId: params.userId,
+            threadId: session.id,
+            resourceId,
             onStreamPart: async (part) => {
               if (part.type === "text-delta") {
                 writeTextDelta(String(part.textDelta ?? ""));
@@ -298,10 +299,9 @@ export async function streamChatReply(params: {
             sessionId: session.id,
             role: "assistant",
             content: answer.answer,
-            citations: answer.citations,
-            retrieval: answer.search,
             trace: answer.trace,
           });
+
           const refreshedSession = await requireChatSession(
             params.userId,
             session.id,
@@ -312,17 +312,15 @@ export async function streamChatReply(params: {
             session: refreshedSession,
             userMessage,
             assistantMessage,
-            retrieval: answer.search,
-            search: answer.search,
           });
           writer.write({
             type: "finish",
-            finishReason: answer.finishReason,
+            finishReason: "stop",
           });
         } catch (error) {
           finishText();
           if (!(error instanceof ApiHttpError)) {
-            console.error("[atlas-kb/mastra] streamChatReply failed", {
+            console.error("[knowledge] streamChatReply failed", {
               errorMessage: readErrorText(error) || undefined,
               errorName: error instanceof Error ? error.name : undefined,
               ...getModelProviderLogContext(),

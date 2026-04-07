@@ -24,11 +24,6 @@ const router = createRouter({
       redirect: "/app?panel=library",
     },
     {
-      path: "/kb/:spaceId",
-      redirect: (to) =>
-        `/app?group=${encodeURIComponent(String(to.params.spaceId))}&panel=library`,
-    },
-    {
       path: "/app",
       component: MainLayout,
       meta: {
@@ -40,7 +35,7 @@ const router = createRouter({
           name: "app-workspace",
           component: () => import("@/features/app/views/WorkspaceView.vue"),
           meta: {
-            title: "Atlas KB",
+            title: "知识库",
             requiresAuth: true,
           },
         },
@@ -101,7 +96,7 @@ router.afterEach((to) => {
   document.title =
     typeof to.meta.title === "string" && to.meta.title.trim()
       ? to.meta.title
-      : "Atlas KB";
+      : "知识库";
 });
 
 export { router };

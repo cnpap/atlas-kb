@@ -8,10 +8,10 @@ import {
 } from "@atlas-kb/schema";
 import { SignJWT, jwtVerify } from "jose";
 
-const DEFAULT_JWT_SECRET = "atlas-kb-dev-secret-change-me";
+const DEFAULT_JWT_SECRET = "dev-secret-change-me";
 const TOKEN_TTL_SECONDS = 60 * 60 * 12;
-const JWT_ISSUER = "atlas-kb/api";
-const JWT_AUDIENCE = "atlas-kb/web";
+const JWT_ISSUER = "api";
+const JWT_AUDIENCE = "web";
 
 const encoder = new TextEncoder();
 

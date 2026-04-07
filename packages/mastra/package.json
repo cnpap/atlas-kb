@@ -17,16 +17,16 @@
     "agent:smoke": "bun run src/scripts/run-department-agent-smoke.ts"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.51",
     "@atlas-kb/errors": "workspace:*",
     "@atlas-kb/schema": "workspace:*",
-    "@cnpap/ops-agent-kit": "^0.1.0",
+    "@aws-sdk/client-s3": "^3.1025.0",
+    "@aws-sdk/s3-request-presigner": "^3.1025.0",
     "@mastra/core": "1.13.2",
+    "@mastra/memory": "1.13.1",
     "@mastra/pg": "^1.8.3",
-    "@mozilla/readability": "0.6.0",
+    "@mastra/qdrant": "^1.0.2",
     "ai": "*",
-    "jsdom": "29.0.1",
-    "mammoth": "1.12.0",
-    "pdf-parse": "2.4.5",
     "postgres": "^3.4.8"
   }
 }

@@ -19,6 +19,7 @@ import {
   ChatReplyStreamBodySchema,
   ChatSessionCreateRequestSchema,
   ChatSessionIdParamsSchema,
+  ChatSessionsQuerySchema,
   ChatSessionResponseSchema,
   ChatSessionsResponseSchema,
   ChatSessionUpdateRequestSchema,
@@ -30,13 +31,14 @@ import { requireAuthenticatedSession } from "../auth";
 export const chatRoutes = new Elysia({ prefix: "/api/chat" })
   .get(
     "/sessions",
-    async ({ headers }) => {
+    async ({ headers, query }) => {
       const session = await requireAuthenticatedSession(headers.authorization);
       return success({
-        sessions: await listChatSessions(session.user.id),
+        sessions: await listChatSessions(session.user.id, query.collectionId),
       });
     },
     {
+      query: ChatSessionsQuerySchema,
       response: ChatSessionsResponseSchema,
     },
   )
@@ -116,7 +118,6 @@ export const chatRoutes = new Elysia({ prefix: "/api/chat" })
           userId: session.user.id,
           sessionId: params.sessionId,
           input: body,
-          fetchImpl: fetch,
         }),
       );
     },

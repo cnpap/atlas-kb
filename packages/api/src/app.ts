@@ -1,4 +1,5 @@
 import { failure } from "@atlas-kb/schema";
+import { validateKnowledgeStorageConfig } from "@atlas-kb/mastra/knowledge";
 import { cors } from "@elysiajs/cors";
 import { Elysia } from "elysia";
 import { isApiHttpError } from "@atlas-kb/errors";
@@ -10,6 +11,8 @@ import { healthRoutes } from "./routes/health";
 import { knowledgeRoutes } from "./routes/knowledge";
 
 export function createApp() {
+  validateKnowledgeStorageConfig();
+
   return new Elysia()
     .onError(({ code, error, set }) => {
       const normalizedError = error as unknown;
@@ -21,7 +24,13 @@ export function createApp() {
 
       if (code === "VALIDATION") {
         set.status = 400;
-        return failure("VALIDATION_ERROR", "Request validation failed");
+        return failure(
+          "VALIDATION_ERROR",
+          normalizedError instanceof Error &&
+            normalizedError.message.trim().length > 0
+            ? normalizedError.message
+            : "Validation error",
+        );
       }
 
       if (code === "NOT_FOUND") {

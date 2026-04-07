@@ -23,17 +23,20 @@ import type {
   ChatSessionsData,
   ChatSessionUpdateRequest,
   DashboardSummary,
-  KnowledgeBatchImportData,
   HealthData,
   KnowledgeCollectionCreateRequest,
   KnowledgeCollectionData,
   KnowledgeCollectionUpdateRequest,
   KnowledgeCollectionsData,
+  KnowledgeExportTask,
+  KnowledgeExportTaskCreateRequest,
+  KnowledgeExportTasksData,
   KnowledgeImportData,
-  KnowledgeImportJobsData,
   KnowledgeSourceData,
   KnowledgeSourceUpdateRequest,
   KnowledgeSourcesData,
+  KnowledgeTemplateData,
+  KnowledgeTemplatesData,
   KnowledgeTextImportRequest,
   LoginRequest,
   LoginResult,
@@ -110,20 +113,6 @@ function resolveRequestUrl(
   return url.toString();
 }
 
-function parseDownloadFilename(headerValue: string | null): string | undefined {
-  if (!headerValue) return undefined;
-  const utf8Match = headerValue.match(/filename\*=UTF-8''([^;]+)/i);
-  if (utf8Match?.[1]) {
-    try {
-      return decodeURIComponent(utf8Match[1]);
-    } catch {
-      return utf8Match[1];
-    }
-  }
-  const basicMatch = headerValue.match(/filename="([^"]+)"/i);
-  return basicMatch?.[1];
-}
-
 function sanitizeErrorMessage(message: string): string {
   const normalized = message.trim();
 
@@ -188,6 +177,29 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
       throw new Error(`请求失败 (${response.status})`);
     }
+  }
+
+  return readPayload<T>(response);
+}
+
+async function requestFormData<T>(path: string, body: FormData): Promise<T> {
+  const token = getAuthToken();
+  const response = await fetch(resolveRequestUrl(path, token, "POST"), {
+    method: "POST",
+    body,
+    headers: {
+      Accept: "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+
+  if (response.status === 401) {
+    clearAuthToken();
+    notifyAuthExpired();
+  }
+
+  if (!response.ok) {
+    return readPayload<T>(response);
   }
 
   return readPayload<T>(response);
@@ -262,12 +274,6 @@ async function getStreamRequestError(response: Response): Promise<Error> {
   }
 
   return new Error(`请求失败 (${response.status})`);
-}
-
-export function getKnowledgeSourceDownloadUrl(sourceId: string): string {
-  return resolveApiUrl(
-    `/api/kb/sources/${encodeURIComponent(sourceId)}/download`,
-  );
 }
 
 export async function fetchDashboardSummary(): Promise<DashboardSummary> {
@@ -370,75 +376,6 @@ export async function deleteKnowledgeSourceRequest(
   );
 }
 
-export async function refreshKnowledgeSourceRequest(
-  sourceId: string,
-): Promise<KnowledgeImportData> {
-  return requestJson<KnowledgeImportData>(
-    `/api/kb/sources/${encodeURIComponent(sourceId)}/refresh`,
-    {
-      method: "POST",
-    },
-  );
-}
-
-export async function reprocessKnowledgeSourceRequest(
-  sourceId: string,
-): Promise<KnowledgeImportData> {
-  return requestJson<KnowledgeImportData>(
-    `/api/kb/sources/${encodeURIComponent(sourceId)}/reprocess`,
-    {
-      method: "POST",
-    },
-  );
-}
-
-export async function importKnowledgeFileRequest(params: {
-  collectionId: string;
-  file: File;
-  title?: string;
-  summary?: string;
-  tags?: string[];
-}): Promise<KnowledgeImportData> {
-  const form = new FormData();
-
-  form.append("file", params.file);
-  if (params.title) form.append("title", params.title);
-  if (params.summary) form.append("summary", params.summary);
-  if (params.tags?.length) form.append("tags", params.tags.join(", "));
-
-  return requestJson<KnowledgeImportData>(
-    `/api/kb/collections/${encodeURIComponent(params.collectionId)}/imports/file`,
-    {
-      method: "POST",
-      body: form,
-    },
-  );
-}
-
-export async function importKnowledgeFilesRequest(params: {
-  collectionId: string;
-  files: File[];
-  summary?: string;
-  tags?: string[];
-}): Promise<KnowledgeBatchImportData> {
-  const form = new FormData();
-
-  for (const file of params.files) {
-    form.append("files", file);
-  }
-
-  if (params.summary) form.append("summary", params.summary);
-  if (params.tags?.length) form.append("tags", params.tags.join(", "));
-
-  return requestJson<KnowledgeBatchImportData>(
-    `/api/kb/collections/${encodeURIComponent(params.collectionId)}/imports/files`,
-    {
-      method: "POST",
-      body: form,
-    },
-  );
-}
-
 export async function importKnowledgeTextRequest(params: {
   collectionId: string;
   body: KnowledgeTextImportRequest;
@@ -452,10 +389,6 @@ export async function importKnowledgeTextRequest(params: {
   );
 }
 
-export async function listImportJobsRequest(): Promise<KnowledgeImportJobsData> {
-  return requestJson<KnowledgeImportJobsData>("/api/kb/imports");
-}
-
 export async function searchKnowledgeRequest(
   body: SearchKnowledgeRequest,
 ): Promise<SearchKnowledgeResult> {
@@ -465,8 +398,12 @@ export async function searchKnowledgeRequest(
   });
 }
 
-export async function listChatSessionsRequest(): Promise<ChatSessionsData> {
-  return requestJson<ChatSessionsData>("/api/chat/sessions");
+export async function listChatSessionsRequest(
+  collectionId: string,
+): Promise<ChatSessionsData> {
+  return requestJson<ChatSessionsData>(
+    `/api/chat/sessions?collectionId=${encodeURIComponent(collectionId)}`,
+  );
 }
 
 export async function createChatSessionRequest(
@@ -664,47 +601,88 @@ export function downloadBriefingExportFile(exportRecord: BriefingExport): void {
   URL.revokeObjectURL(objectUrl);
 }
 
+export async function uploadKnowledgeFileRequest(params: {
+  collectionId: string;
+  file: File;
+  title?: string;
+  summary?: string;
+  tags?: string[];
+}): Promise<KnowledgeImportData> {
+  const formData = new FormData();
+  formData.set("file", params.file);
+
+  if (params.title?.trim()) {
+    formData.set("title", params.title.trim());
+  }
+
+  if (params.summary?.trim()) {
+    formData.set("summary", params.summary.trim());
+  }
+
+  if (params.tags?.length) {
+    formData.set("tags", params.tags.join(", "));
+  }
+
+  return requestFormData<KnowledgeImportData>(
+    `/api/kb/collections/${encodeURIComponent(params.collectionId)}/uploads`,
+    formData,
+  );
+}
+
 export async function downloadKnowledgeSourceRequest(params: {
   sourceId: string;
   filename?: string;
 }): Promise<void> {
-  const response = await fetch(getKnowledgeSourceDownloadUrl(params.sourceId), {
-    headers: getAuthorizedHeaders(),
-  });
+  const downloadInfo = await requestJson<{
+    url: string;
+    filename: string;
+    mimeType: string;
+  }>(`/api/kb/sources/${encodeURIComponent(params.sourceId)}/download`);
 
-  if (response.status === 401) {
-    clearAuthToken();
-    notifyAuthExpired();
-  }
-
-  if (!response.ok) {
-    let errorMessage = "资料下载失败";
-
-    try {
-      const payload = (await response.json()) as FailureEnvelope;
-      if (!payload.success) {
-        errorMessage = sanitizeErrorMessage(payload.error.message);
-      }
-    } catch {
-      errorMessage = `资料下载失败 (${response.status})`;
-    }
-
-    throw new Error(errorMessage);
-  }
-
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  const resolvedFilename =
-    parseDownloadFilename(response.headers.get("Content-Disposition")) ||
-    params.filename ||
-    "atlas-kb-download";
-
-  link.href = objectUrl;
-  link.download = resolvedFilename;
+  link.href = downloadInfo.url;
+  link.download = params.filename || downloadInfo.filename;
   link.style.display = "none";
+  link.target = "_blank";
   document.body.appendChild(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(objectUrl);
+}
+
+export async function listKnowledgeTemplatesRequest(): Promise<KnowledgeTemplatesData> {
+  return requestJson<KnowledgeTemplatesData>("/api/kb/templates");
+}
+
+export async function fetchKnowledgeTemplateRequest(
+  templateId: string,
+): Promise<KnowledgeTemplateData> {
+  return requestJson<KnowledgeTemplateData>(
+    `/api/kb/templates/${encodeURIComponent(templateId)}`,
+  );
+}
+
+export async function listKnowledgeExportTasksRequest(params?: {
+  sourceId?: string;
+}): Promise<KnowledgeExportTasksData> {
+  const search = new URLSearchParams();
+
+  if (params?.sourceId) {
+    search.set("sourceId", params.sourceId);
+  }
+
+  const suffix = search.size > 0 ? `?${search.toString()}` : "";
+  return requestJson<KnowledgeExportTasksData>(`/api/kb/export-tasks${suffix}`);
+}
+
+export async function createKnowledgeExportTaskRequest(params: {
+  sourceId: string;
+  body: KnowledgeExportTaskCreateRequest;
+}): Promise<{ task: KnowledgeExportTask }> {
+  return requestJson<{ task: KnowledgeExportTask }>(
+    `/api/kb/sources/${encodeURIComponent(params.sourceId)}/export-tasks`,
+    {
+      method: "POST",
+      body: JSON.stringify(params.body),
+    },
+  );
 }

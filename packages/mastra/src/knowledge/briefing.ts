@@ -1,5 +1,7 @@
 import type {
   BriefingExportCreateRequest,
+  BriefingField,
+  BriefingForm,
   BriefingOpinionData,
 } from "@atlas-kb/schema";
 import { BadRequestError } from "@atlas-kb/errors";
@@ -8,137 +10,177 @@ import {
   listBriefingExports,
   requireKnowledgeSource,
 } from "./repository";
-import { throwMappedModelProviderError } from "./model-provider";
-import { getKnowledgeServiceForUser } from "./runtime";
+import { getOpenAIApiKey, getOpenAIModel, getOpenAIUrl } from "./config";
+import { buildSummary } from "./search-utils";
 
-const BRIEFING_KEYS = [
-  "sourceOrg",
-  "documentCode",
-  "documentTitle",
-  "receivedAt",
-  "briefingOpinion",
-  "pendingQuestions",
-] as const;
-const BRIEFING_RETRY_DELAY_MS = 2_000;
-const BRIEFING_MAX_ATTEMPTS = 3;
+const BRIEFING_FIELDS: Array<{
+  key: keyof BriefingForm;
+  label: string;
+}> = [
+  { key: "sourceOrg", label: "来文单位" },
+  { key: "documentCode", label: "文号" },
+  { key: "documentTitle", label: "文件标题" },
+  { key: "receivedAt", label: "收文时间" },
+  { key: "briefingOpinion", label: "拟办意见" },
+  { key: "pendingQuestions", label: "待明确事项" },
+];
 
-function readStatusCode(error: unknown): number | undefined {
-  if (!error || typeof error !== "object") {
-    return undefined;
+interface OpenAIChatCompletionResponse {
+  choices?: Array<{
+    message?: {
+      content?:
+        | string
+        | Array<{
+            type?: string;
+            text?: string;
+          }>;
+    };
+  }>;
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function normalizeFieldValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function createFallbackForm(params: {
+  content: string;
+  summary: string;
+  title: string;
+}): BriefingForm {
+  return {
+    sourceOrg: "",
+    documentCode: "",
+    documentTitle: params.title,
+    receivedAt: "",
+    briefingOpinion:
+      params.summary.trim() ||
+      buildSummary(params.content, 220) ||
+      "请结合正文内容补充拟办意见。",
+    pendingQuestions: "",
+  };
+}
+
+function buildFields(form: BriefingForm): BriefingField[] {
+  return BRIEFING_FIELDS.map((field) => {
+    const value = form[field.key] || "";
+
+    return {
+      key: field.key,
+      label: field.label,
+      value,
+      status: value.trim() ? "confirmed" : "missing",
+      citations: [],
+    };
+  });
+}
+
+function readMessageText(
+  payload: OpenAIChatCompletionResponse,
+): string | undefined {
+  const content = payload.choices?.[0]?.message?.content;
+
+  if (typeof content === "string") {
+    return content.trim() || undefined;
   }
 
-  const candidate =
-    ("status" in error && typeof error.status === "number"
-      ? error.status
-      : undefined) ??
-    ("statusCode" in error && typeof error.statusCode === "number"
-      ? error.statusCode
-      : undefined);
-
-  if (candidate) {
-    return candidate;
-  }
-
-  const cause =
-    "cause" in error && error.cause && typeof error.cause === "object"
-      ? error.cause
-      : undefined;
-
-  if (!cause) {
+  if (!Array.isArray(content)) {
     return undefined;
   }
 
   return (
-    ("status" in cause && typeof cause.status === "number"
-      ? cause.status
-      : undefined) ??
-    ("statusCode" in cause && typeof cause.statusCode === "number"
-      ? cause.statusCode
-      : undefined)
+    content
+      .filter((item) => item.type === "text" && typeof item.text === "string")
+      .map((item) => item.text?.trim() ?? "")
+      .filter(Boolean)
+      .join("\n")
+      .trim() || undefined
   );
 }
 
-function readErrorText(error: unknown): string {
-  if (!(error instanceof Error)) {
-    return "";
+function extractJsonObject(text: string): Record<string, unknown> | undefined {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+
+  if (start < 0 || end <= start) {
+    return undefined;
   }
 
-  return [
-    error.message,
-    error.cause instanceof Error ? error.cause.message : "",
-  ]
-    .join(" ")
-    .trim();
+  try {
+    return JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
 }
 
-function isTransientBriefingFailure(error: unknown): boolean {
-  const statusCode = readStatusCode(error);
+async function generateBriefingFormWithModel(params: {
+  content: string;
+  summary: string;
+  title: string;
+}): Promise<BriefingForm | undefined> {
+  const apiKey = getOpenAIApiKey();
 
-  if (statusCode === 408 || statusCode === 429) {
-    return true;
+  if (!apiKey) {
+    return undefined;
   }
 
-  if (typeof statusCode === "number" && statusCode >= 500) {
-    return true;
-  }
+  const response = await fetch(getOpenAIUrl("chat/completions"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: getOpenAIModel(),
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content:
+            "你是政务办公助手。请从来文内容中提取拟办意见表单，严格返回 JSON 对象，不要输出解释。",
+        },
+        {
+          role: "user",
+          content: `请根据以下资料生成 JSON，对象必须包含 sourceOrg、documentCode、documentTitle、receivedAt、briefingOpinion、pendingQuestions 六个字符串字段。无法确认的字段填空字符串。
 
-  return /timed out|timeout|AbortError|ETIMEDOUT|rate limit|temporarily unavailable|service unavailable|internal server error|ECONNRESET|EAI_AGAIN|socket hang up|GenericFailure/i.test(
-    readErrorText(error),
-  );
-}
-
-function waitBriefingRetry() {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, BRIEFING_RETRY_DELAY_MS);
+标题：${params.title}
+摘要：${params.summary}
+正文：
+${params.content.slice(0, 12_000)}`,
+        },
+      ],
+    }),
   });
-}
 
-async function runBriefingTaskWithRetry(args: {
-  service: Awaited<ReturnType<typeof getKnowledgeServiceForUser>>;
-  documentId: string;
-}) {
-  let lastError: unknown;
-
-  for (let attempt = 1; attempt <= BRIEFING_MAX_ATTEMPTS; attempt += 1) {
-    try {
-      return await args.service.runKnowledgeTask({
-        documentId: args.documentId,
-        taskType: "briefing_opinion",
-      });
-    } catch (error) {
-      lastError = error;
-
-      if (attempt >= BRIEFING_MAX_ATTEMPTS) {
-        break;
-      }
-
-      await waitBriefingRetry();
-    }
+  if (!response.ok) {
+    throw new Error(`Briefing request failed with ${response.status}`);
   }
 
-  if (isTransientBriefingFailure(lastError)) {
-    throwMappedModelProviderError(lastError, "拟办意见生成");
+  const payload = (await response.json()) as OpenAIChatCompletionResponse;
+  const messageText = readMessageText(payload);
+
+  if (!messageText) {
+    return undefined;
   }
 
-  throw lastError;
-}
+  const parsed = extractJsonObject(messageText);
 
-function toBriefingCitations(
-  citations: Array<{
-    documentId: string;
-    segmentId: string;
-    locatorStart: number;
-    locatorEnd: number;
-    excerpt: string;
-  }>,
-) {
-  return citations.map((citation) => ({
-    documentId: citation.documentId,
-    segmentId: citation.segmentId,
-    locatorStart: citation.locatorStart,
-    locatorEnd: citation.locatorEnd,
-    excerpt: citation.excerpt,
-  }));
+  if (!parsed) {
+    return undefined;
+  }
+
+  return {
+    sourceOrg: normalizeFieldValue(parsed.sourceOrg),
+    documentCode: normalizeFieldValue(parsed.documentCode),
+    documentTitle:
+      normalizeFieldValue(parsed.documentTitle) || params.title.trim(),
+    receivedAt: normalizeFieldValue(parsed.receivedAt),
+    briefingOpinion: normalizeFieldValue(parsed.briefingOpinion),
+    pendingQuestions: normalizeFieldValue(parsed.pendingQuestions),
+  };
 }
 
 export async function generateBriefingOpinion(params: {
@@ -147,57 +189,34 @@ export async function generateBriefingOpinion(params: {
 }): Promise<BriefingOpinionData> {
   const source = await requireKnowledgeSource(params.userId, params.sourceId);
 
-  if (!source.documentId) {
-    throw new BadRequestError("当前资料还没有可用的知识库文档索引");
+  if (source.status !== "ready") {
+    throw new BadRequestError("当前资料尚未准备好，暂时无法生成拟办意见");
   }
 
-  const service = await getKnowledgeServiceForUser(params.userId);
-  const result = await runBriefingTaskWithRetry({
-    service,
-    documentId: source.documentId,
+  const fallbackForm = createFallbackForm({
+    title: source.title,
+    summary: source.summary,
+    content: source.content,
   });
-  const form = {
-    sourceOrg: "",
-    documentCode: "",
-    documentTitle: "",
-    receivedAt: "",
-    briefingOpinion: "",
-    pendingQuestions: "",
-  };
-
-  const fields = result.fields
-    .filter(
-      (
-        field,
-      ): field is (typeof result.fields)[number] & {
-        key: (typeof BRIEFING_KEYS)[number];
-      } => BRIEFING_KEYS.includes(field.key as (typeof BRIEFING_KEYS)[number]),
-    )
-    .map((field) => {
-      form[field.key] = field.value;
-
-      return {
-        key: field.key,
-        label: field.label,
-        value: field.value,
-        status: field.status,
-        citations: toBriefingCitations(field.citations),
-      };
-    });
-
+  const form =
+    (await generateBriefingFormWithModel({
+      title: source.title,
+      summary: source.summary,
+      content: source.content,
+    }).catch(() => undefined)) ?? fallbackForm;
   const history = await listBriefingExports(params.userId, params.sourceId);
 
   return {
     source,
     briefing: {
       sourceId: source.id,
-      documentId: source.documentId,
-      title: result.title,
-      summary: result.summary,
+      documentId: source.documentId || source.id,
+      title: source.title,
+      summary: source.summary,
       form,
-      fields,
-      citations: toBriefingCitations(result.citations),
-      generatedAt: result.generatedAt,
+      fields: buildFields(form),
+      citations: [],
+      generatedAt: nowIso(),
     },
     history,
   };
