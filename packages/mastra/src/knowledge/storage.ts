@@ -2,7 +2,7 @@ import { basename, extname } from "node:path";
 import type { KnowledgeSource } from "@atlas-kb/schema";
 import { normalizeWhitespace } from "./search-utils";
 
-export type ExtractedSourceContent = {
+type ExtractedSourceContent = {
   content: string;
   mimeType: string;
   title: string;
@@ -49,7 +49,7 @@ function stripControlCharacters(value: string) {
     .join("");
 }
 
-export function sanitizeManagedFileName(fileName: string): string {
+function sanitizeManagedFileName(fileName: string): string {
   const normalized = basename(fileName.replaceAll("\\", "/"))
     .normalize("NFC")
     .replaceAll("/", " ");

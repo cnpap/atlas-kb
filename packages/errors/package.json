@@ -7,9 +7,5 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts"
-  },
-  "dependencies": {
-    "@atlas-kb/schema": "workspace:*",
-    "zod": "^4.3.6"
   }
 }

@@ -2,7 +2,7 @@ import {
   createChatReply,
   createChatSession,
   deleteChatSession,
-  getChatMessagesData,
+  listChatMessages,
   listChatSessions,
   requireChatSession,
   saveMessageFeedback,
@@ -100,9 +100,15 @@ export const chatRoutes = new Elysia({ prefix: "/api/chat" })
     "/sessions/:sessionId/messages",
     async ({ params, headers }) => {
       const session = await requireAuthenticatedSession(headers.authorization);
-      return success(
-        await getChatMessagesData(session.user.id, params.sessionId),
-      );
+      const [chatSession, messages] = await Promise.all([
+        requireChatSession(session.user.id, params.sessionId),
+        listChatMessages(session.user.id, params.sessionId),
+      ]);
+
+      return success({
+        session: chatSession,
+        messages,
+      });
     },
     {
       params: ChatSessionIdParamsSchema,

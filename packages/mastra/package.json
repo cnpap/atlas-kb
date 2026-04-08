@@ -13,6 +13,7 @@
     "dev": "mastra dev",
     "start": "mastra start",
     "build": "mastra build",
+    "typecheck": "bun x tsc -p tsconfig.json --noEmit",
     "db:codegen": "kysely-codegen --env-file ../../.env --url 'env(DATABASE_URL)' --dialect postgres --out-file src/knowledge/db.generated.ts",
     "fixtures:import": "bun run src/scripts/import-department-fixtures.ts",
     "agent:smoke": "bun run src/scripts/run-department-agent-smoke.ts"

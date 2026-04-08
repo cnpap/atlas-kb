@@ -3,7 +3,6 @@ import type {
   ChatMessage,
   ChatMessageFeedback,
   ChatMessageFeedbackRequest,
-  ChatMessagesData,
   ChatSession,
 } from "@atlas-kb/schema";
 import { ensureKnowledgeDatabase } from "./db";
@@ -18,7 +17,7 @@ import {
 } from "./repository-shared";
 import { requireKnowledgeCollection } from "./collections-repository";
 
-export async function getChatSessionRow(
+async function getChatSessionRow(
   userId: string,
   sessionId: string,
 ): Promise<ChatSessionRow | null> {
@@ -34,7 +33,7 @@ export async function getChatSessionRow(
   );
 }
 
-export async function getChatMessageRow(
+async function getChatMessageRow(
   userId: string,
   messageId: string,
 ): Promise<ChatMessageRow | null> {
@@ -240,21 +239,6 @@ export async function appendChatMessage(params: {
 
   const message = await getChatMessageRow(params.userId, id);
   return toChatMessage(message!);
-}
-
-export async function getChatMessagesData(
-  userId: string,
-  sessionId: string,
-): Promise<ChatMessagesData> {
-  const [session, messages] = await Promise.all([
-    requireChatSession(userId, sessionId),
-    listChatMessages(userId, sessionId),
-  ]);
-
-  return {
-    session,
-    messages,
-  };
 }
 
 export async function saveMessageFeedback(params: {

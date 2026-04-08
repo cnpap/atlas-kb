@@ -90,11 +90,6 @@ export async function initializeAuthSession(): Promise<Session | null> {
   return initPromise;
 }
 
-export async function refreshAuthSession(): Promise<Session | null> {
-  initializedRef.value = false;
-  return initializeAuthSession();
-}
-
 export async function loginWithPassword(
   input: LoginRequest,
 ): Promise<LoginResult> {

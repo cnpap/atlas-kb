@@ -5,17 +5,19 @@ import {
 } from "@atlas-kb/errors";
 import type { AuthUser } from "@atlas-kb/schema";
 import { ensureKnowledgeDatabase } from "./db";
-import type { Users } from "./db.generated";
 import { nowIso, toDbUserId } from "./repository-shared";
 
 const DEFAULT_USERNAME = "admin";
 const DEFAULT_PASSWORD = "atlas-kb-dev";
 const USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{2,63}$/;
 
-type UserRow = Pick<
-  Users,
-  "created_at" | "id" | "password" | "updated_at" | "username"
->;
+type UserRow = {
+  created_at: Date | string | null;
+  id: string;
+  password: string;
+  updated_at: Date | string | null;
+  username: string | null;
+};
 
 function normalizeUsername(input: string): string {
   const normalized = input.trim().toLowerCase();
@@ -30,8 +32,12 @@ function normalizeUsername(input: string): string {
 }
 
 function toAuthUser(row: Pick<UserRow, "id" | "username">): AuthUser {
+  if (!row.username) {
+    throw new NotFoundError(`User "${row.id}" has no username`);
+  }
+
   return {
-    id: String(row.id),
+    id: row.id,
     username: row.username,
   };
 }
@@ -166,14 +172,4 @@ export async function getAuthUserById(
 ): Promise<AuthUser | undefined> {
   const row = await getUserRowById(userId);
   return row ? toAuthUser(row) : undefined;
-}
-
-export async function requireAuthUser(userId: string): Promise<AuthUser> {
-  const user = await getAuthUserById(userId);
-
-  if (!user) {
-    throw new NotFoundError(`User "${userId}" not found`);
-  }
-
-  return user;
 }

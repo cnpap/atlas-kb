@@ -1,14 +1,9 @@
 import type { DashboardSummary } from "@atlas-kb/schema";
 import { resetKnowledgeDatabase } from "./db";
 import {
-  createBriefingExport,
-  listBriefingExports,
-} from "./briefing-repository";
-import {
   appendChatMessage,
   createChatSession,
   deleteChatSession,
-  getChatMessagesData,
   getChatSessionById,
   listChatMessages,
   listChatSessions,
@@ -21,7 +16,6 @@ import {
   deleteKnowledgeCollection,
   getDashboardCounts,
   getKnowledgeCollection,
-  getKnowledgeCollectionData,
   listKnowledgeCollections,
   requireKnowledgeCollection,
   updateKnowledgeCollection,
@@ -31,7 +25,6 @@ import {
   deleteKnowledgeSource,
   getKnowledgeCollectionSourcesData,
   getKnowledgeSourceById,
-  getKnowledgeSourceData,
   listKnowledgeSources,
   replaceSourceContent,
   requireKnowledgeSource,
@@ -66,21 +59,16 @@ export async function getDashboardSummary(
 
 export {
   appendChatMessage,
-  createBriefingExport,
   createChatSession,
   createKnowledgeCollection,
   createKnowledgeSourceRecord,
   deleteChatSession,
   deleteKnowledgeCollection,
   deleteKnowledgeSource,
-  getChatMessagesData,
   getChatSessionById,
   getKnowledgeCollection,
-  getKnowledgeCollectionData,
   getKnowledgeCollectionSourcesData,
   getKnowledgeSourceById,
-  getKnowledgeSourceData,
-  listBriefingExports,
   listChatMessages,
   listChatSessions,
   listKnowledgeCollections,

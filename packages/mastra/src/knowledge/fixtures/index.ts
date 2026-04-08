@@ -8,7 +8,7 @@ export const DEPARTMENT_FIXTURE_SPACE = {
   name: "部门职责库",
 } as const;
 
-export interface KnowledgeFixtureFile {
+interface KnowledgeFixtureFile {
   content: string;
   filename: string;
   path: string;

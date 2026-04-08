@@ -324,9 +324,14 @@ function mockProviders() {
         }
 
         if ((init?.method || "GET").toUpperCase() === "PATCH") {
+          const nextParameters =
+            body.parameters && typeof body.parameters === "object"
+              ? (body.parameters as Record<string, string>)
+              : {};
+
           task.parameters = {
-            ...body.parameters,
-          } as Record<string, string>;
+            ...nextParameters,
+          };
           task.updatedAt = "2026-04-07T15:18:00.000Z";
           task.exportFile = {
             id: "export-updated",
@@ -497,7 +502,7 @@ async function login(
   };
 }
 
-function authHeaders(token: string): HeadersInit {
+function authHeaders(token: string): Record<string, string> {
   return {
     Authorization: `Bearer ${token}`,
   };

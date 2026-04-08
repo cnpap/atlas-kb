@@ -1,6 +1,5 @@
 import { BadRequestError } from "@atlas-kb/errors";
 import type {
-  AskKnowledgeCitation,
   SearchKnowledgeHit,
   SearchKnowledgeRequest,
   SearchKnowledgeResult,
@@ -140,37 +139,6 @@ function toSearchHit(args: {
   };
 }
 
-export function toCitation(hit: SearchKnowledgeHit): AskKnowledgeCitation {
-  return {
-    sourceId: hit.sourceId,
-    documentId: hit.documentId,
-    collectionId: hit.collectionId,
-    title: hit.title,
-    sectionPath: hit.sectionPath,
-    snippet: hit.snippet,
-    sourceFilename: hit.sourceFilename,
-    downloadUrl: hit.downloadUrl,
-    sourceType: hit.sourceType,
-  };
-}
-
-export function annotateAnswerUsage(
-  search: SearchKnowledgeResult,
-  limit: number,
-): SearchKnowledgeResult {
-  const usedHitIds = search.hits.slice(0, limit).map((hit) => hit.chunkId);
-  const usedSet = new Set(usedHitIds);
-
-  return {
-    ...search,
-    usedHitIds,
-    hits: search.hits.map((hit) => ({
-      ...hit,
-      usedInAnswer: usedSet.has(hit.chunkId),
-    })),
-  };
-}
-
 export async function searchKnowledge(
   input: SearchKnowledgeRequest,
   options: {
@@ -234,7 +202,7 @@ export async function searchKnowledge(
     queryVariants: [parsedInput.query],
     engine,
     total: hits.length,
-    usedHitIds: [],
+    usedHitIds: hits.map((hit) => hit.chunkId),
     hits,
   };
 }

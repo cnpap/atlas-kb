@@ -5,7 +5,6 @@
     KnowledgeCollection,
     KnowledgeExportTask,
     KnowledgeSource,
-    KnowledgeSourcesData,
   } from "@atlas-kb/schema";
   import { useToast } from "@nuxt/ui/composables";
   import { computed, onMounted, ref, watch } from "vue";
@@ -263,7 +262,10 @@
     );
   }
 
-  function syncSourceCollection(data: KnowledgeSourcesData) {
+  function syncSourceCollection(data: {
+    collection: KnowledgeCollection;
+    sources: KnowledgeSource[];
+  }) {
     sources.value = data.sources;
   }
 

@@ -6,5 +6,4 @@ export const KNOWLEDGE_TABLES = {
   chatSessions: "kb_chat_sessions",
   chatMessages: "kb_chat_messages",
   chatFeedback: "kb_chat_feedback",
-  briefingExports: "kb_briefing_exports",
 } as const;

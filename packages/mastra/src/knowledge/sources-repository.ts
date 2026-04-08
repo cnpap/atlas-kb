@@ -1,9 +1,5 @@
 import { NotFoundError } from "@atlas-kb/errors";
-import type {
-  KnowledgeSource,
-  KnowledgeSourceData,
-  KnowledgeSourcesData,
-} from "@atlas-kb/schema";
+import type { KnowledgeCollection, KnowledgeSource } from "@atlas-kb/schema";
 import { ensureKnowledgeDatabase } from "./db";
 import {
   getKnowledgeWorkspace,
@@ -22,7 +18,7 @@ import {
   touchCollection,
 } from "./collections-repository";
 
-export async function getSourceRow(
+async function getSourceRow(
   userId: string,
   sourceId: string,
 ): Promise<SourceRow | null> {
@@ -59,7 +55,7 @@ export async function listKnowledgeSources(
 export async function getKnowledgeCollectionSourcesData(
   userId: string,
   collectionId: string,
-): Promise<KnowledgeSourcesData> {
+): Promise<{ collection: KnowledgeCollection; sources: KnowledgeSource[] }> {
   const [collection, sources] = await Promise.all([
     requireKnowledgeCollection(userId, collectionId),
     listKnowledgeSources(userId, collectionId),
@@ -90,15 +86,6 @@ export async function requireKnowledgeSource(
   }
 
   return source;
-}
-
-export async function getKnowledgeSourceData(
-  userId: string,
-  sourceId: string,
-): Promise<KnowledgeSourceData> {
-  return {
-    source: await requireKnowledgeSource(userId, sourceId),
-  };
 }
 
 export async function createKnowledgeSourceRecord(params: {

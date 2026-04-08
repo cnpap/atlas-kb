@@ -1,99 +1,70 @@
 import type {
-  BriefingExport,
   ChatMessage,
   ChatMessageFeedback,
   ChatSession,
-  DashboardSummary,
   KnowledgeCollection,
   KnowledgeSource,
 } from "@atlas-kb/schema";
-import type {
-  KbBriefingExports,
-  KbChatMessages,
-  KbChatSessions,
-  KbCollections,
-  KbSources,
-} from "./db.generated";
-
-export type CollectionRow = Pick<
-  KbCollections,
-  | "color"
-  | "created_at"
-  | "description"
-  | "icon"
-  | "id"
-  | "is_pinned"
-  | "last_activity_at"
-  | "name"
-  | "owner_user_id"
-  | "updated_at"
-> & {
+export type CollectionRow = {
+  color: string;
+  created_at: Date | string;
+  description: string;
+  icon: string;
+  id: string;
+  is_pinned: boolean;
+  last_activity_at: Date | string;
+  name: string;
+  owner_user_id: string;
+  updated_at: Date | string;
   document_count: number;
   failed_document_count: number;
   processing_document_count: number;
   ready_document_count: number;
 };
 
-export type SourceRow = Pick<
-  KbSources,
-  | "byte_size"
-  | "collection_id"
-  | "content"
-  | "created_at"
-  | "document_id"
-  | "failure_message"
-  | "id"
-  | "mime_type"
-  | "owner_user_id"
-  | "source_filename"
-  | "source_type"
-  | "status"
-  | "summary"
-  | "tags_json"
-  | "title"
-  | "updated_at"
->;
+export type SourceRow = {
+  byte_size: number | string | null;
+  collection_id: string;
+  content: string;
+  created_at: Date | string;
+  document_id: string;
+  failure_message: string | null;
+  id: string;
+  mime_type: string | null;
+  owner_user_id: string;
+  source_filename: string | null;
+  source_type: string;
+  status: string;
+  summary: string;
+  tags_json: unknown;
+  title: string;
+  updated_at: Date | string;
+};
 
-export type ChatSessionRow = Pick<
-  KbChatSessions,
-  | "collection_id"
-  | "created_at"
-  | "id"
-  | "last_message_at"
-  | "owner_user_id"
-  | "preview"
-  | "title"
-  | "updated_at"
->;
+export type ChatSessionRow = {
+  collection_id: string;
+  created_at: Date | string;
+  id: string;
+  last_message_at: Date | string;
+  owner_user_id: string;
+  preview: string;
+  title: string;
+  updated_at: Date | string;
+};
 
-export type ChatMessageRow = Pick<
-  KbChatMessages,
-  | "citations_json"
-  | "content"
-  | "created_at"
-  | "id"
-  | "owner_user_id"
-  | "role"
-  | "session_id"
-> & {
+export type ChatMessageRow = {
+  citations_json: unknown;
+  content: string;
+  created_at: Date | string;
+  id: string;
+  owner_user_id: string;
+  role: string;
+  session_id: string;
   feedback_created_at: Date | string | null;
   feedback_id: string | null;
   feedback_note: string | null;
-  feedback_rating: ChatMessageFeedback["rating"] | null;
+  feedback_rating: string | null;
 };
-
-export type BriefingExportRow = Pick<
-  KbBriefingExports,
-  | "citations_json"
-  | "created_at"
-  | "document_id"
-  | "form_json"
-  | "id"
-  | "owner_user_id"
-  | "source_id"
-  | "summary"
-  | "title"
->;
 
 export const SOURCE_COLUMNS = [
   "id",
@@ -133,21 +104,11 @@ export function toDbUserId(userId: string): string {
   return userId.trim();
 }
 
-export function toIsoTimestamp(value: string | Date): string {
+function toIsoTimestamp(value: string | Date): string {
   return value instanceof Date ? value.toISOString() : value;
 }
 
-export function toOptionalIsoTimestamp(
-  value: string | Date | null | undefined,
-): string | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  return toIsoTimestamp(value);
-}
-
-export function parseJsonArray(raw: unknown): string[] {
+function parseJsonArray(raw: unknown): string[] {
   if (Array.isArray(raw)) {
     return raw.filter((value): value is string => typeof value === "string");
   }
@@ -166,7 +127,7 @@ export function parseJsonArray(raw: unknown): string[] {
   return [];
 }
 
-export function parseOptionalJson<T>(raw: unknown): T | undefined {
+function parseOptionalJson<T>(raw: unknown): T | undefined {
   if (!raw) {
     return undefined;
   }
@@ -241,7 +202,7 @@ export function toChatMessage(row: ChatMessageRow): ChatMessage {
       ? {
           id: row.feedback_id,
           messageId: row.id,
-          rating: row.feedback_rating,
+          rating: row.feedback_rating as ChatMessageFeedback["rating"],
           note: row.feedback_note ?? undefined,
           createdAt: toIsoTimestamp(row.feedback_created_at),
         }
@@ -258,33 +219,3 @@ export function toChatMessage(row: ChatMessageRow): ChatMessage {
     feedback,
   };
 }
-
-export function toBriefingExport(row: BriefingExportRow): BriefingExport {
-  return {
-    id: row.id,
-    sourceId: row.source_id,
-    documentId: row.document_id,
-    title: row.title,
-    summary: row.summary,
-    form: parseOptionalJson<BriefingExport["form"]>(row.form_json) ?? {
-      sourceOrg: "",
-      documentCode: "",
-      documentTitle: "",
-      receivedAt: "",
-      briefingOpinion: "",
-      pendingQuestions: "",
-    },
-    citations:
-      parseOptionalJson<BriefingExport["citations"]>(row.citations_json) ?? [],
-    createdAt: toIsoTimestamp(row.created_at),
-  };
-}
-
-export type DashboardCounts = Pick<
-  DashboardSummary,
-  | "chatSessionsCount"
-  | "collectionsCount"
-  | "failedSourcesCount"
-  | "processingSourcesCount"
-  | "readySourcesCount"
->;

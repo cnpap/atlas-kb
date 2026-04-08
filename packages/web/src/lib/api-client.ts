@@ -7,38 +7,28 @@ import {
 } from "ai";
 import { ChatReplyStreamDataEventSchema } from "@atlas-kb/schema";
 import type {
+  ChatSession,
   ChatMessageFeedback,
   ChatMessageFeedbackRequest,
-  ChatMessagesData,
-  ChatReplyFinal,
-  ChatReplyRequest,
+  ChatMessage,
   ChatReplyStreamBody,
   ChatReplyStreamDataEvent,
   ChatSessionCreateRequest,
-  ChatSessionsData,
   ChatSessionUpdateRequest,
-  DashboardSummary,
-  HealthData,
+  KnowledgeCollection,
   KnowledgeCollectionCreateRequest,
-  KnowledgeCollectionData,
   KnowledgeCollectionUpdateRequest,
-  KnowledgeCollectionsData,
   KnowledgeExportTask,
   KnowledgeExportTaskCreateRequest,
-  KnowledgeExportTaskDetailData,
+  KnowledgeExportTaskDetail,
   KnowledgeExportTaskUpdateRequest,
-  KnowledgeExportTasksData,
   KnowledgeImportData,
-  KnowledgeSourceData,
+  KnowledgeSource,
   KnowledgeSourceUpdateRequest,
-  KnowledgeSourcesData,
-  KnowledgeTemplateData,
-  KnowledgeTemplatesData,
+  KnowledgeTemplateSummary,
   KnowledgeTextImportRequest,
   LoginRequest,
   LoginResult,
-  SearchKnowledgeRequest,
-  SearchKnowledgeResult,
   Session,
 } from "@atlas-kb/schema";
 import {
@@ -271,10 +261,6 @@ async function getStreamRequestError(response: Response): Promise<Error> {
   return new Error(`请求失败 (${response.status})`);
 }
 
-export async function fetchDashboardSummary(): Promise<DashboardSummary> {
-  return requestJson<DashboardSummary>("/api/dashboard/summary");
-}
-
 export async function loginRequest(body: LoginRequest): Promise<LoginResult> {
   return requestJson<LoginResult>("/api/auth/login", {
     method: "POST",
@@ -290,28 +276,31 @@ export async function fetchCurrentSessionRequest(): Promise<Session> {
   return requestJson<Session>("/api/auth/me");
 }
 
-export async function fetchHealthStatus(): Promise<HealthData> {
-  return requestJson<HealthData>("/api/health");
-}
-
-export async function listKnowledgeCollections(): Promise<KnowledgeCollectionsData> {
-  return requestJson<KnowledgeCollectionsData>("/api/kb/collections");
+export async function listKnowledgeCollections(): Promise<{
+  collections: KnowledgeCollection[];
+}> {
+  return requestJson<{ collections: KnowledgeCollection[] }>(
+    "/api/kb/collections",
+  );
 }
 
 export async function createKnowledgeCollectionRequest(
   body: KnowledgeCollectionCreateRequest,
-): Promise<KnowledgeCollectionData> {
-  return requestJson<KnowledgeCollectionData>("/api/kb/collections", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+): Promise<{ collection: KnowledgeCollection }> {
+  return requestJson<{ collection: KnowledgeCollection }>(
+    "/api/kb/collections",
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
 }
 
 export async function updateKnowledgeCollectionRequest(params: {
   collectionId: string;
   body: KnowledgeCollectionUpdateRequest;
-}): Promise<KnowledgeCollectionData> {
-  return requestJson<KnowledgeCollectionData>(
+}): Promise<{ collection: KnowledgeCollection }> {
+  return requestJson<{ collection: KnowledgeCollection }>(
     `/api/kb/collections/${encodeURIComponent(params.collectionId)}`,
     {
       method: "PATCH",
@@ -333,25 +322,18 @@ export async function deleteKnowledgeCollectionRequest(
 
 export async function fetchKnowledgeCollectionSources(
   collectionId: string,
-): Promise<KnowledgeSourcesData> {
-  return requestJson<KnowledgeSourcesData>(
-    `/api/kb/collections/${encodeURIComponent(collectionId)}/sources`,
-  );
-}
-
-export async function fetchKnowledgeSource(
-  sourceId: string,
-): Promise<KnowledgeSourceData> {
-  return requestJson<KnowledgeSourceData>(
-    `/api/kb/sources/${encodeURIComponent(sourceId)}`,
-  );
+): Promise<{ collection: KnowledgeCollection; sources: KnowledgeSource[] }> {
+  return requestJson<{
+    collection: KnowledgeCollection;
+    sources: KnowledgeSource[];
+  }>(`/api/kb/collections/${encodeURIComponent(collectionId)}/sources`);
 }
 
 export async function updateKnowledgeSourceRequest(params: {
   sourceId: string;
   body: KnowledgeSourceUpdateRequest;
-}): Promise<KnowledgeSourceData> {
-  return requestJson<KnowledgeSourceData>(
+}): Promise<{ source: KnowledgeSource }> {
+  return requestJson<{ source: KnowledgeSource }>(
     `/api/kb/sources/${encodeURIComponent(params.sourceId)}`,
     {
       method: "PATCH",
@@ -384,40 +366,28 @@ export async function importKnowledgeTextRequest(params: {
   );
 }
 
-export async function searchKnowledgeRequest(
-  body: SearchKnowledgeRequest,
-): Promise<SearchKnowledgeResult> {
-  return requestJson<SearchKnowledgeResult>("/api/kb/search", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
 export async function listChatSessionsRequest(
   collectionId: string,
-): Promise<ChatSessionsData> {
-  return requestJson<ChatSessionsData>(
+): Promise<{ sessions: ChatSession[] }> {
+  return requestJson<{ sessions: ChatSession[] }>(
     `/api/chat/sessions?collectionId=${encodeURIComponent(collectionId)}`,
   );
 }
 
 export async function createChatSessionRequest(
   body: ChatSessionCreateRequest,
-): Promise<{ session: ChatSessionsData["sessions"][number] }> {
-  return requestJson<{ session: ChatSessionsData["sessions"][number] }>(
-    "/api/chat/sessions",
-    {
-      method: "POST",
-      body: JSON.stringify(body),
-    },
-  );
+): Promise<{ session: ChatSession }> {
+  return requestJson<{ session: ChatSession }>("/api/chat/sessions", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export async function updateChatSessionRequest(params: {
   sessionId: string;
   body: ChatSessionUpdateRequest;
-}): Promise<{ session: ChatSessionsData["sessions"][number] }> {
-  return requestJson<{ session: ChatSessionsData["sessions"][number] }>(
+}): Promise<{ session: ChatSession }> {
+  return requestJson<{ session: ChatSession }>(
     `/api/chat/sessions/${encodeURIComponent(params.sessionId)}`,
     {
       method: "PATCH",
@@ -439,22 +409,9 @@ export async function deleteChatSessionRequest(
 
 export async function fetchChatMessagesRequest(
   sessionId: string,
-): Promise<ChatMessagesData> {
-  return requestJson<ChatMessagesData>(
+): Promise<{ session: ChatSession; messages: ChatMessage[] }> {
+  return requestJson<{ session: ChatSession; messages: ChatMessage[] }>(
     `/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`,
-  );
-}
-
-export async function replyChatSessionRequest(params: {
-  sessionId: string;
-  body: ChatReplyRequest;
-}): Promise<ChatReplyFinal> {
-  return requestJson<ChatReplyFinal>(
-    `/api/chat/sessions/${encodeURIComponent(params.sessionId)}/reply`,
-    {
-      method: "POST",
-      body: JSON.stringify(params.body),
-    },
   );
 }
 
@@ -582,21 +539,17 @@ export async function downloadKnowledgeSourceRequest(params: {
   link.remove();
 }
 
-export async function listKnowledgeTemplatesRequest(): Promise<KnowledgeTemplatesData> {
-  return requestJson<KnowledgeTemplatesData>("/api/kb/templates");
-}
-
-export async function fetchKnowledgeTemplateRequest(
-  templateId: string,
-): Promise<KnowledgeTemplateData> {
-  return requestJson<KnowledgeTemplateData>(
-    `/api/kb/templates/${encodeURIComponent(templateId)}`,
+export async function listKnowledgeTemplatesRequest(): Promise<{
+  templates: KnowledgeTemplateSummary[];
+}> {
+  return requestJson<{ templates: KnowledgeTemplateSummary[] }>(
+    "/api/kb/templates",
   );
 }
 
 export async function listKnowledgeExportTasksRequest(params?: {
   sourceId?: string;
-}): Promise<KnowledgeExportTasksData> {
+}): Promise<{ tasks: KnowledgeExportTask[] }> {
   const search = new URLSearchParams();
 
   if (params?.sourceId) {
@@ -604,7 +557,9 @@ export async function listKnowledgeExportTasksRequest(params?: {
   }
 
   const suffix = search.size > 0 ? `?${search.toString()}` : "";
-  return requestJson<KnowledgeExportTasksData>(`/api/kb/export-tasks${suffix}`);
+  return requestJson<{ tasks: KnowledgeExportTask[] }>(
+    `/api/kb/export-tasks${suffix}`,
+  );
 }
 
 export async function createKnowledgeExportTaskRequest(params: {
@@ -622,8 +577,8 @@ export async function createKnowledgeExportTaskRequest(params: {
 
 export async function fetchKnowledgeExportTaskRequest(
   taskId: string,
-): Promise<KnowledgeExportTaskDetailData> {
-  return requestJson<KnowledgeExportTaskDetailData>(
+): Promise<{ task: KnowledgeExportTaskDetail }> {
+  return requestJson<{ task: KnowledgeExportTaskDetail }>(
     `/api/kb/export-tasks/${encodeURIComponent(taskId)}`,
   );
 }
@@ -631,8 +586,8 @@ export async function fetchKnowledgeExportTaskRequest(
 export async function updateKnowledgeExportTaskRequest(params: {
   taskId: string;
   body: KnowledgeExportTaskUpdateRequest;
-}): Promise<KnowledgeExportTaskDetailData> {
-  return requestJson<KnowledgeExportTaskDetailData>(
+}): Promise<{ task: KnowledgeExportTaskDetail }> {
+  return requestJson<{ task: KnowledgeExportTaskDetail }>(
     `/api/kb/export-tasks/${encodeURIComponent(params.taskId)}`,
     {
       method: "PATCH",

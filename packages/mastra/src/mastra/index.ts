@@ -1,10 +1,8 @@
-import { createAgents } from "../agents";
 import {
   getDatabaseUrl,
   validateKnowledgeStorageConfig,
 } from "../knowledge/config";
 import { memory } from "../memory";
-import { apiRoutes } from "../routes";
 import { tools } from "../tools";
 import { Mastra } from "@mastra/core";
 import { PostgresStore } from "@mastra/pg";
@@ -26,20 +24,19 @@ function getMastraHost(): string {
   return host && host.length > 0 ? host : "127.0.0.1";
 }
 
-export const defaultStorage = new PostgresStore({
+const defaultStorage = new PostgresStore({
   id: "default-storage",
   connectionString: getDatabaseUrl(),
   schemaName: "atlas_kb_mastra",
 });
 
 export const mastra = new Mastra({
-  agents: createAgents(),
+  agents: {},
   tools,
   storage: defaultStorage,
   memory,
   server: {
     host: getMastraHost(),
     port: getMastraPort(),
-    apiRoutes,
   },
 });

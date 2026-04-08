@@ -24,7 +24,7 @@ function createDatabaseClient(): Kysely<DB> {
   });
 }
 
-export function getKnowledgeDatabase(): Kysely<DB> {
+function getKnowledgeDatabase(): Kysely<DB> {
   const nextUrl = getDatabaseUrl();
 
   if (!dbCache || dbUrlCache !== nextUrl) {
@@ -46,7 +46,6 @@ export async function resetKnowledgeDatabase(): Promise<void> {
   await db.transaction().execute(async (trx) => {
     await sql`
       TRUNCATE TABLE
-        ${sql.table(KNOWLEDGE_TABLES.briefingExports)},
         ${sql.table(KNOWLEDGE_TABLES.chatFeedback)},
         ${sql.table(KNOWLEDGE_TABLES.chatMessages)},
         ${sql.table(KNOWLEDGE_TABLES.chatSessions)},

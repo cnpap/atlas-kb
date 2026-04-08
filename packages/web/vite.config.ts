@@ -1,5 +1,6 @@
 import { fileURLToPath, URL } from "node:url";
 import { vueJumpPlugin } from "@cnpap/vue-jump";
+import tailwindcss from "@tailwindcss/vite";
 import vue from "@vitejs/plugin-vue";
 import { defineConfig } from "vite";
 import ui from "@nuxt/ui/vite";
@@ -71,6 +72,7 @@ export default defineConfig({
   },
   plugins: [
     vueJumpPlugin(),
+    tailwindcss(),
     vue(),
     ui({
       ui: {

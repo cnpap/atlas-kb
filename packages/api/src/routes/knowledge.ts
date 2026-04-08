@@ -6,10 +6,8 @@ import {
   deleteKnowledgeSource,
   downloadKnowledgeExportTaskFromAdmin,
   generateKnowledgeTemplateExportPayload,
-  getKnowledgeCollectionData,
   getKnowledgeCollectionSourcesData,
   getKnowledgeExportTaskDetailFromAdmin,
-  getKnowledgeSourceData,
   getKnowledgeSourceDownloadUrl,
   getKnowledgeTemplateDetailFromAdmin,
   importKnowledgeFile,
@@ -18,6 +16,7 @@ import {
   listKnowledgeCollections,
   listKnowledgeTemplatesFromAdmin,
   requireKnowledgeCollection,
+  requireKnowledgeSource,
   searchKnowledge,
   updateKnowledgeExportTaskInAdmin,
   updateKnowledgeCollection,
@@ -76,7 +75,7 @@ function requireInternalSecret(headers: Record<string, string | undefined>) {
 }
 
 function readOptionalFormValue(
-  formData: FormData,
+  formData: { get(name: string): unknown },
   key: string,
 ): string | undefined {
   const value = formData.get(key);
@@ -129,9 +128,12 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
     "/collections/:collectionId",
     async ({ params, headers }) => {
       const session = await requireAuthenticatedSession(headers.authorization);
-      return success(
-        await getKnowledgeCollectionData(session.user.id, params.collectionId),
-      );
+      return success({
+        collection: await requireKnowledgeCollection(
+          session.user.id,
+          params.collectionId,
+        ),
+      });
     },
     {
       params: KnowledgeCollectionIdParamsSchema,
@@ -354,9 +356,9 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
     "/sources/:sourceId",
     async ({ params, headers }) => {
       const session = await requireAuthenticatedSession(headers.authorization);
-      return success(
-        await getKnowledgeSourceData(session.user.id, params.sourceId),
-      );
+      return success({
+        source: await requireKnowledgeSource(session.user.id, params.sourceId),
+      });
     },
     {
       params: KnowledgeSourceIdParamsSchema,

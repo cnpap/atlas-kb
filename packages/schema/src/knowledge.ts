@@ -2,7 +2,7 @@ import { z } from "zod/v4";
 import { createApiSuccessResponseSchema } from "./api";
 import { TimestampSchema } from "./utils";
 
-export const HealthDataSchema = z.object({
+const HealthDataSchema = z.object({
   status: z.literal("ok"),
   timestamp: TimestampSchema,
 });
@@ -111,31 +111,29 @@ export const KnowledgeSourceTagListSchema = z
   .array(z.string().trim().min(1).max(64))
   .max(24);
 
-export const KnowledgeSourceMetadataSchema = z.object({
+export const KnowledgeSourceInputSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   summary: z.string().trim().min(1).max(400).optional(),
   tags: KnowledgeSourceTagListSchema.optional(),
 });
 
-export const KnowledgeUploadMetadataSchema = KnowledgeSourceMetadataSchema;
-export const KnowledgeBatchFileImportRequestSchema =
-  KnowledgeSourceMetadataSchema.pick({
-    summary: true,
-    tags: true,
-  });
+const KnowledgeBatchFileImportRequestSchema = KnowledgeSourceInputSchema.pick({
+  summary: true,
+  tags: true,
+});
 
 export const KnowledgeTextImportRequestSchema =
-  KnowledgeSourceMetadataSchema.extend({
+  KnowledgeSourceInputSchema.extend({
     content: z.string().trim().min(1),
   });
 
 export const KnowledgeSourceUpdateRequestSchema =
-  KnowledgeSourceMetadataSchema.extend({
+  KnowledgeSourceInputSchema.extend({
     content: z.string().trim().min(1).optional(),
     status: KnowledgeSourceStatusSchema.optional(),
   });
 
-export const KnowledgeSearchRequestSchema = z.object({
+export const SearchKnowledgeRequestSchema = z.object({
   query: z.string().trim().min(1),
   collectionId: z.string().trim().min(1),
   limit: z.number().int().min(1).max(20).optional(),
@@ -248,19 +246,19 @@ export const ChatReplyStreamBodySchema = ChatReplyStreamRequestSchema.omit({
   sessionId: true,
 });
 
-export const ChatReplyStreamAcceptedEventSchema = z.object({
+const ChatReplyStreamAcceptedEventSchema = z.object({
   type: z.literal("reply-accepted"),
   userMessage: ChatMessageSchema,
 });
 
-export const ChatReplyStreamCompletedEventSchema = z.object({
+const ChatReplyStreamCompletedEventSchema = z.object({
   type: z.literal("reply-completed"),
   session: ChatSessionSchema,
   userMessage: ChatMessageSchema,
   assistantMessage: ChatMessageSchema,
 });
 
-export const ChatReplyStreamErrorEventSchema = z.object({
+const ChatReplyStreamErrorEventSchema = z.object({
   type: z.literal("reply-error"),
   message: z.string().trim().min(1),
 });
@@ -276,7 +274,7 @@ export const ChatMessageFeedbackRequestSchema = z.object({
   note: z.string().trim().min(1).max(500).optional(),
 });
 
-export const DashboardSummarySchema = z.object({
+const DashboardSummarySchema = z.object({
   collectionsCount: z.number().int().nonnegative(),
   readySourcesCount: z.number().int().nonnegative(),
   processingSourcesCount: z.number().int().nonnegative(),
@@ -288,31 +286,31 @@ export const DashboardSummarySchema = z.object({
   hasAnyData: z.boolean(),
 });
 
-export const KnowledgeCollectionsDataSchema = z.object({
+const KnowledgeCollectionsDataSchema = z.object({
   collections: z.array(KnowledgeCollectionSchema),
 });
 
-export const KnowledgeCollectionDataSchema = z.object({
+const KnowledgeCollectionDataSchema = z.object({
   collection: KnowledgeCollectionSchema,
 });
 
-export const KnowledgeSourcesDataSchema = z.object({
+const KnowledgeSourcesDataSchema = z.object({
   collection: KnowledgeCollectionSchema,
   sources: z.array(KnowledgeSourceSchema),
 });
 
-export const KnowledgeSourceDataSchema = z.object({
+const KnowledgeSourceDataSchema = z.object({
   source: KnowledgeSourceSchema,
 });
 
-export const KnowledgeImportDataSchema = z.object({
+const KnowledgeImportDataSchema = z.object({
   collection: KnowledgeCollectionSchema,
   source: KnowledgeSourceSchema,
   engine: KnowledgeRetrievalEngineSchema,
   indexed: z.boolean(),
 });
 
-export const KnowledgeBatchImportAcceptedItemSchema = z.object({
+const KnowledgeBatchImportAcceptedItemSchema = z.object({
   fileName: z.string().trim().min(1),
   mimeType: z.string().trim().min(1).optional(),
   byteSize: z.number().int().nonnegative().optional(),
@@ -320,7 +318,7 @@ export const KnowledgeBatchImportAcceptedItemSchema = z.object({
   source: KnowledgeSourceSchema,
 });
 
-export const KnowledgeBatchImportRejectedItemSchema = z.object({
+const KnowledgeBatchImportRejectedItemSchema = z.object({
   fileName: z.string().trim().min(1),
   mimeType: z.string().trim().min(1).optional(),
   byteSize: z.number().int().nonnegative().optional(),
@@ -341,15 +339,15 @@ export const KnowledgeBatchImportDataSchema = z.object({
   rejectedCount: z.number().int().nonnegative(),
 });
 
-export const ChatSessionsDataSchema = z.object({
+const ChatSessionsDataSchema = z.object({
   sessions: z.array(ChatSessionSchema),
 });
 
-export const ChatSessionDataSchema = z.object({
+const ChatSessionDataSchema = z.object({
   session: ChatSessionSchema,
 });
 
-export const ChatMessagesDataSchema = z.object({
+const ChatMessagesDataSchema = z.object({
   session: ChatSessionSchema,
   messages: z.array(ChatMessageSchema),
 });
@@ -373,8 +371,6 @@ export const KnowledgeSourceResponseSchema = createApiSuccessResponseSchema(
 export const KnowledgeImportResponseSchema = createApiSuccessResponseSchema(
   KnowledgeImportDataSchema,
 );
-export const KnowledgeBatchImportResponseSchema =
-  createApiSuccessResponseSchema(KnowledgeBatchImportDataSchema);
 export const SearchKnowledgeResponseSchema = createApiSuccessResponseSchema(
   SearchKnowledgeResultSchema,
 );
@@ -399,69 +395,10 @@ export const AskKnowledgeRequestSchema = z.object({
   collectionId: z.string().trim().min(1),
   limit: z.number().int().min(1).max(8).optional(),
 });
-export const AskKnowledgeCitationSchema = ChatCitationSchema;
 export const AskKnowledgeResultSchema = z.object({
   question: z.string().trim().min(1),
   answer: z.string().trim().min(1),
   mode: AskKnowledgeModeSchema,
-});
-
-export const BriefingFieldKeySchema = z.enum([
-  "sourceOrg",
-  "documentCode",
-  "documentTitle",
-  "receivedAt",
-  "briefingOpinion",
-  "pendingQuestions",
-]);
-
-export const BriefingFieldStatusSchema = z.enum(["confirmed", "missing"]);
-
-export const BriefingCitationSchema = z.object({
-  documentId: z.string().trim().min(1),
-  segmentId: z.string().trim().min(1),
-  locatorStart: z.number().int().positive(),
-  locatorEnd: z.number().int().positive(),
-  excerpt: z.string().trim().min(1),
-});
-
-export const BriefingFormSchema = z.object({
-  sourceOrg: z.string(),
-  documentCode: z.string(),
-  documentTitle: z.string(),
-  receivedAt: z.string(),
-  briefingOpinion: z.string(),
-  pendingQuestions: z.string(),
-});
-
-export const BriefingFieldSchema = z.object({
-  key: BriefingFieldKeySchema,
-  label: z.string().trim().min(1),
-  value: z.string(),
-  status: BriefingFieldStatusSchema,
-  citations: z.array(BriefingCitationSchema),
-});
-
-export const BriefingOpinionSchema = z.object({
-  sourceId: z.string().trim().min(1),
-  documentId: z.string().trim().min(1),
-  title: z.string().trim().min(1),
-  summary: z.string().trim().min(1),
-  form: BriefingFormSchema,
-  fields: z.array(BriefingFieldSchema),
-  citations: z.array(BriefingCitationSchema),
-  generatedAt: TimestampSchema,
-});
-
-export const BriefingExportSchema = z.object({
-  id: z.string().trim().min(1),
-  sourceId: z.string().trim().min(1),
-  documentId: z.string().trim().min(1),
-  title: z.string().trim().min(1),
-  summary: z.string().trim().min(1),
-  form: BriefingFormSchema,
-  citations: z.array(BriefingCitationSchema),
-  createdAt: TimestampSchema,
 });
 
 export const KnowledgeTemplateSummarySchema = z.object({
@@ -556,32 +493,18 @@ export const KnowledgeExportTaskGenerateRequestSchema = z.object({
 export const KnowledgeExportTaskGenerateResultSchema = z.object({
   summary: z.string(),
   parameters: z.record(z.string(), z.string()),
-  citations: z.array(BriefingCitationSchema),
+  citations: z.array(ChatCitationSchema),
 });
-
-export const BriefingOpinionDataSchema = z.object({
-  source: KnowledgeSourceSchema,
-  briefing: BriefingOpinionSchema,
-  history: z.array(BriefingExportSchema),
-});
-
-export const BriefingExportDataSchema = z.object({
-  export: BriefingExportSchema,
-});
-
-export const BriefingExportsDataSchema = z.object({
-  exports: z.array(BriefingExportSchema),
-});
-export const KnowledgeTemplatesDataSchema = z.object({
+const KnowledgeTemplatesDataSchema = z.object({
   templates: z.array(KnowledgeTemplateSummarySchema),
 });
-export const KnowledgeTemplateDataSchema = z.object({
+const KnowledgeTemplateDataSchema = z.object({
   template: KnowledgeTemplateDetailSchema,
 });
-export const KnowledgeExportTasksDataSchema = z.object({
+const KnowledgeExportTasksDataSchema = z.object({
   tasks: z.array(KnowledgeExportTaskSchema),
 });
-export const KnowledgeExportTaskDataSchema = z.object({
+const KnowledgeExportTaskDataSchema = z.object({
   task: KnowledgeExportTaskSchema,
 });
 export const KnowledgeExportTaskDetailSchema = KnowledgeExportTaskSchema.extend(
@@ -591,28 +514,12 @@ export const KnowledgeExportTaskDetailSchema = KnowledgeExportTaskSchema.extend(
     canEdit: z.boolean(),
   },
 );
-export const KnowledgeExportTaskDetailDataSchema = z.object({
+const KnowledgeExportTaskDetailDataSchema = z.object({
   task: KnowledgeExportTaskDetailSchema,
 });
-export const KnowledgeExportTaskGenerateDataSchema = z.object({
+const KnowledgeExportTaskGenerateDataSchema = z.object({
   result: KnowledgeExportTaskGenerateResultSchema,
 });
-
-export const BriefingExportCreateRequestSchema = z.object({
-  summary: z.string().trim().min(1),
-  form: BriefingFormSchema,
-  citations: z.array(BriefingCitationSchema).optional(),
-});
-
-export const BriefingOpinionResponseSchema = createApiSuccessResponseSchema(
-  BriefingOpinionDataSchema,
-);
-export const BriefingExportResponseSchema = createApiSuccessResponseSchema(
-  BriefingExportDataSchema,
-);
-export const BriefingExportsResponseSchema = createApiSuccessResponseSchema(
-  BriefingExportsDataSchema,
-);
 export const KnowledgeTemplatesResponseSchema = createApiSuccessResponseSchema(
   KnowledgeTemplatesDataSchema,
 );
@@ -631,12 +538,7 @@ export const KnowledgeExportTaskGenerateResponseSchema =
 export const AskKnowledgeResponseSchema = createApiSuccessResponseSchema(
   AskKnowledgeResultSchema,
 );
-export const SearchKnowledgeRequestSchema = KnowledgeSearchRequestSchema;
 
-export type HealthData = z.infer<typeof HealthDataSchema>;
-export type KnowledgeRetrievalEngine = z.infer<
-  typeof KnowledgeRetrievalEngineSchema
->;
 export type KnowledgeCollection = z.infer<typeof KnowledgeCollectionSchema>;
 export type KnowledgeSource = z.infer<typeof KnowledgeSourceSchema>;
 export type KnowledgeCollectionCreateRequest = z.infer<
@@ -683,46 +585,15 @@ export type ChatMessageFeedbackRequest = z.infer<
   typeof ChatMessageFeedbackRequestSchema
 >;
 export type DashboardSummary = z.infer<typeof DashboardSummarySchema>;
-export type KnowledgeCollectionsData = z.infer<
-  typeof KnowledgeCollectionsDataSchema
->;
-export type KnowledgeCollectionData = z.infer<
-  typeof KnowledgeCollectionDataSchema
->;
-export type KnowledgeSourcesData = z.infer<typeof KnowledgeSourcesDataSchema>;
-export type KnowledgeSourceData = z.infer<typeof KnowledgeSourceDataSchema>;
 export type KnowledgeImportData = z.infer<typeof KnowledgeImportDataSchema>;
-export type KnowledgeBatchImportItem = z.infer<
-  typeof KnowledgeBatchImportItemSchema
->;
 export type KnowledgeBatchImportData = z.infer<
   typeof KnowledgeBatchImportDataSchema
 >;
-export type ChatSessionsData = z.infer<typeof ChatSessionsDataSchema>;
-export type ChatSessionData = z.infer<typeof ChatSessionDataSchema>;
-export type ChatMessagesData = z.infer<typeof ChatMessagesDataSchema>;
-export type KnowledgeUploadMetadata = z.infer<
-  typeof KnowledgeUploadMetadataSchema
->;
 export type AskKnowledgeMode = z.infer<typeof AskKnowledgeModeSchema>;
 export type AskKnowledgeRequest = z.infer<typeof AskKnowledgeRequestSchema>;
-export type AskKnowledgeCitation = z.infer<typeof AskKnowledgeCitationSchema>;
 export type AskKnowledgeResult = z.infer<typeof AskKnowledgeResultSchema>;
-export type BriefingFieldKey = z.infer<typeof BriefingFieldKeySchema>;
-export type BriefingFieldStatus = z.infer<typeof BriefingFieldStatusSchema>;
-export type BriefingCitation = z.infer<typeof BriefingCitationSchema>;
-export type BriefingForm = z.infer<typeof BriefingFormSchema>;
-export type BriefingField = z.infer<typeof BriefingFieldSchema>;
-export type BriefingOpinion = z.infer<typeof BriefingOpinionSchema>;
-export type BriefingExport = z.infer<typeof BriefingExportSchema>;
 export type KnowledgeTemplateSummary = z.infer<
   typeof KnowledgeTemplateSummarySchema
->;
-export type KnowledgeTemplateField = z.infer<
-  typeof KnowledgeTemplateFieldSchema
->;
-export type KnowledgeTemplateLibrary = z.infer<
-  typeof KnowledgeTemplateLibrarySchema
 >;
 export type KnowledgeTemplateDetail = z.infer<
   typeof KnowledgeTemplateDetailSchema
@@ -733,9 +604,6 @@ export type KnowledgeExportTaskParameters = z.infer<
 export type KnowledgeExportTaskStatus = z.infer<
   typeof KnowledgeExportTaskStatusSchema
 >;
-export type KnowledgeTemplateExportFile = z.infer<
-  typeof KnowledgeTemplateExportFileSchema
->;
 export type KnowledgeExportTask = z.infer<typeof KnowledgeExportTaskSchema>;
 export type KnowledgeExportTaskDetail = z.infer<
   typeof KnowledgeExportTaskDetailSchema
@@ -743,37 +611,9 @@ export type KnowledgeExportTaskDetail = z.infer<
 export type KnowledgeExportTasksQuery = z.infer<
   typeof KnowledgeExportTasksQuerySchema
 >;
-export type BriefingOpinionData = z.infer<typeof BriefingOpinionDataSchema>;
-export type BriefingExportData = z.infer<typeof BriefingExportDataSchema>;
-export type BriefingExportsData = z.infer<typeof BriefingExportsDataSchema>;
-export type KnowledgeTemplatesData = z.infer<
-  typeof KnowledgeTemplatesDataSchema
->;
-export type KnowledgeTemplateData = z.infer<typeof KnowledgeTemplateDataSchema>;
-export type KnowledgeExportTasksData = z.infer<
-  typeof KnowledgeExportTasksDataSchema
->;
-export type KnowledgeExportTaskData = z.infer<
-  typeof KnowledgeExportTaskDataSchema
->;
-export type KnowledgeExportTaskDetailData = z.infer<
-  typeof KnowledgeExportTaskDetailDataSchema
->;
-export type BriefingExportCreateRequest = z.infer<
-  typeof BriefingExportCreateRequestSchema
->;
 export type KnowledgeExportTaskCreateRequest = z.infer<
   typeof KnowledgeExportTaskCreateRequestSchema
 >;
 export type KnowledgeExportTaskUpdateRequest = z.infer<
   typeof KnowledgeExportTaskUpdateRequestSchema
->;
-export type KnowledgeExportTaskGenerateRequest = z.infer<
-  typeof KnowledgeExportTaskGenerateRequestSchema
->;
-export type KnowledgeExportTaskGenerateResult = z.infer<
-  typeof KnowledgeExportTaskGenerateResultSchema
->;
-export type KnowledgeExportTaskGenerateData = z.infer<
-  typeof KnowledgeExportTaskGenerateDataSchema
 >;

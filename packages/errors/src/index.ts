@@ -37,17 +37,6 @@ export class UnauthorizedError extends ApiHttpError {
   }
 }
 
-export class ForbiddenError extends ApiHttpError {
-  constructor(message = "Forbidden", cause?: unknown) {
-    super({
-      message,
-      statusCode: 403,
-      code: "FORBIDDEN",
-      cause,
-    });
-  }
-}
-
 export class ConflictError extends ApiHttpError {
   constructor(message = "Conflict", cause?: unknown) {
     super({
@@ -65,45 +54,6 @@ export class UpstreamServiceError extends ApiHttpError {
       message,
       statusCode: 502,
       code: "UPSTREAM_SERVICE_ERROR",
-      cause,
-    });
-  }
-}
-
-export class ModelProviderConfigurationError extends ApiHttpError {
-  constructor(
-    message = "Model provider configuration is invalid",
-    cause?: unknown,
-  ) {
-    super({
-      message,
-      statusCode: 500,
-      code: "MODEL_PROVIDER_CONFIGURATION_ERROR",
-      cause,
-    });
-  }
-}
-
-export class ModelProviderPermissionError extends ApiHttpError {
-  constructor(
-    message = "Model provider rejected the configured credentials or model",
-    cause?: unknown,
-  ) {
-    super({
-      message,
-      statusCode: 500,
-      code: "MODEL_PROVIDER_PERMISSION_ERROR",
-      cause,
-    });
-  }
-}
-
-export class ModelProviderRateLimitError extends ApiHttpError {
-  constructor(message = "Model provider rate limit exceeded", cause?: unknown) {
-    super({
-      message,
-      statusCode: 503,
-      code: "MODEL_PROVIDER_RATE_LIMITED",
       cause,
     });
   }

@@ -10,14 +10,8 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "@atlas-kb/api": "workspace:*",
     "@atlas-kb/schema": "workspace:*",
-    "@elysiajs/eden": "^1.4.6",
-    "@iconify-json/lucide": "1.2.98",
-    "@iconify-json/simple-icons": "1.2.74",
     "@nuxt/ui": "4.5.1",
-    "@unhead/vue": "2.1.12",
-    "@vueuse/core": "14.2.1",
     "ai": "*",
     "lucide-vue-next": "0.577.0",
     "markdown-it": "^14.1.1",

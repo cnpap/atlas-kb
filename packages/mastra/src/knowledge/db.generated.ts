@@ -555,18 +555,6 @@ export interface Jobs {
   reserved_at: number | null;
 }
 
-export interface KbBriefingExports {
-  citations_json: Json;
-  created_at: Timestamp;
-  document_id: string;
-  form_json: Json;
-  id: string;
-  owner_user_id: Int8;
-  source_id: string;
-  summary: string;
-  title: string;
-}
-
 export interface KbChatFeedback {
   created_at: Timestamp;
   id: string;
@@ -844,7 +832,6 @@ export interface DB {
   failed_jobs: FailedJobs;
   job_batches: JobBatches;
   jobs: Jobs;
-  kb_briefing_exports: KbBriefingExports;
   kb_chat_feedback: KbChatFeedback;
   kb_chat_messages: KbChatMessages;
   kb_chat_sessions: KbChatSessions;

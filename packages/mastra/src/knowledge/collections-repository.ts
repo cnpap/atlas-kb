@@ -3,7 +3,6 @@ import type {
   DashboardSummary,
   KnowledgeCollection,
   KnowledgeCollectionCreateRequest,
-  KnowledgeCollectionData,
   KnowledgeCollectionUpdateRequest,
 } from "@atlas-kb/schema";
 import { sql } from "kysely";
@@ -101,7 +100,7 @@ export async function touchCollection(collectionId: string) {
     .execute();
 }
 
-export async function getCollectionRow(
+async function getCollectionRow(
   userId: string,
   collectionId: string,
 ): Promise<CollectionRow | null> {
@@ -171,15 +170,6 @@ export async function requireKnowledgeCollection(
   }
 
   return collection;
-}
-
-export async function getKnowledgeCollectionData(
-  userId: string,
-  collectionId: string,
-): Promise<KnowledgeCollectionData> {
-  return {
-    collection: await requireKnowledgeCollection(userId, collectionId),
-  };
 }
 
 export async function updateKnowledgeCollection(params: {

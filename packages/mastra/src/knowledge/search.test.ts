@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createKnowledgeAgent } from "../agents";
+import { importKnowledgeFiles } from "./ingest";
 import {
   answerKnowledgeQuestion,
   createChatReply,
@@ -10,7 +11,6 @@ import {
   createKnowledgeCollection,
   createUser,
   ensureDefaultUser,
-  importKnowledgeFiles,
   importKnowledgeText,
   LocalFilesystem,
   resetKnowledgeRepository,
@@ -854,8 +854,21 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
         workspace: {} as never,
       });
       const instructions = await agent.getInstructions();
-      const text =
-        typeof instructions === "string" ? instructions : instructions.content;
+      const text = Array.isArray(instructions)
+        ? instructions
+            .map((item) => {
+              if (typeof item === "string") {
+                return item;
+              }
+
+              return "content" in item ? JSON.stringify(item.content) : "";
+            })
+            .join("\n")
+        : typeof instructions === "string"
+          ? instructions
+          : "content" in instructions
+            ? JSON.stringify(instructions.content)
+            : "";
 
       expect(String(text)).toContain(
         "先使用你现有的工具查看当前工作区中的实际内容",

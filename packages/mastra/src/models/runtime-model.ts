@@ -14,7 +14,7 @@ type RuntimeModelLogContext = {
   runtimeModel: string;
 };
 
-export class ModelInvocationTimeoutError extends Error {
+class ModelInvocationTimeoutError extends Error {
   readonly phase: "request" | "first-token" | "stream-idle";
 
   constructor(phase: "request" | "first-token" | "stream-idle") {
@@ -29,7 +29,7 @@ function readEnv(name: string): string | undefined {
   return value ? value : undefined;
 }
 
-export function getRuntimeModelProvider(): string {
+function getRuntimeModelProvider(): string {
   return readEnv("RUNTIME_PROVIDER") ?? DEFAULT_RUNTIME_PROVIDER;
 }
 

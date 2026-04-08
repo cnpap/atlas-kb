@@ -1,8 +1,3 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const DEFAULT_DATA_DIR_NAME = ".atlas-kb";
-const DEFAULT_RUNTIME_DIR = "runtime";
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_OPENAI_MODEL = "gpt-5.4";
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
@@ -11,10 +6,6 @@ const DEFAULT_KNOWLEDGE_S3_PREFIX = "knowledge-sources";
 const DEFAULT_ADMIN_API_BASE_URL = "http://127.0.0.1:8000";
 const DEFAULT_DATABASE_URL =
   "postgresql://ops_agent_kit:OpsAgentKit_TSDB_2026!x7Q2mP9r@127.0.0.1:15432/ops_agent_kit";
-
-function getProjectRoot(): string {
-  return resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
-}
 
 function trimEnvValue(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -43,34 +34,6 @@ function parseBooleanEnv(
   return !["0", "false", "no", "off"].includes(normalized);
 }
 
-export function getKnowledgeDataDir(): string {
-  const customDir = trimEnvValue(process.env.ATLAS_KB_DATA_DIR);
-
-  if (customDir) {
-    return resolve(customDir);
-  }
-
-  return resolve(getProjectRoot(), DEFAULT_DATA_DIR_NAME);
-}
-
-export function getKnowledgeRuntimeDir(): string {
-  const customDir = trimEnvValue(process.env.ATLAS_KB_RUNTIME_DIR);
-
-  if (customDir) {
-    return resolve(customDir);
-  }
-
-  return resolve(getKnowledgeDataDir(), DEFAULT_RUNTIME_DIR);
-}
-
-export function getKnowledgeWorkspacesDir(): string {
-  return resolve(getKnowledgeRuntimeDir(), "workspaces");
-}
-
-export function getKnowledgeExportsDir(): string {
-  return resolve(getKnowledgeRuntimeDir(), "exports");
-}
-
 export function getDatabaseUrl(): string {
   return (
     trimEnvValue(process.env.DATABASE_URL) ??
@@ -95,10 +58,6 @@ export function getOpenAIUrl(path: string, baseUrl?: string): string {
 
 export function getOpenAIModel(): string {
   return trimEnvValue(process.env.OPENAI_MODEL) ?? DEFAULT_OPENAI_MODEL;
-}
-
-export function getDashScopeApiKey(): string | undefined {
-  return trimEnvValue(process.env.DASHSCOPE_API_KEY);
 }
 
 export function getEmbeddingApiKey(): string | undefined {
@@ -192,13 +151,6 @@ export function getAdminApiBaseUrl(): string {
 
 export function getInternalSecret(): string | undefined {
   return trimEnvValue(process.env.ATLAS_KB_INTERNAL_SECRET);
-}
-
-export function getPublicApiBaseUrl(): string | undefined {
-  return trimEnvValue(process.env.ATLAS_KB_PUBLIC_API_BASE_URL)?.replace(
-    /\/+$/g,
-    "",
-  );
 }
 
 export function validateKnowledgeStorageConfig(): void {
