@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api\Internal;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Internal\InternalKnowledgeTemplateDetailResource;
-use App\Models\KnowledgeTemplate;
 use App\Models\KnowledgeUser;
 use Illuminate\Http\Request;
 

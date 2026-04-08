@@ -38,23 +38,14 @@ return new class extends Migration
             $table->text('document_id');
             $table->text('title');
             $table->text('summary');
-            $table->text('excerpt');
-            $table->text('content_preview');
             $table->text('content');
             $table->jsonb('tags_json');
             $table->text('source_type');
             $table->text('status');
-            $table->text('source_filename')->nullable();
-            $table->text('source_url')->nullable();
+            $table->text('source_filename');
             $table->text('mime_type')->nullable();
             $table->bigInteger('byte_size')->nullable();
-            $table->integer('latest_version')->default(1);
-            $table->timestampTz('ready_at')->nullable();
-            $table->timestampTz('last_processed_at')->nullable();
-            $table->timestampTz('snapshot_updated_at')->nullable();
             $table->text('failure_message')->nullable();
-            $table->text('original_path')->nullable();
-            $table->text('index_path');
             $table->timestampTz('created_at');
             $table->timestampTz('updated_at');
 

@@ -1,16 +1,16 @@
 <?php
 
-use App\Http\Controllers\Api\KnowledgeTemplateExports\KnowledgeTemplateExportIndexController;
-use App\Http\Controllers\Api\KnowledgeTemplateExports\KnowledgeTemplateExportStoreController;
-use App\Http\Controllers\Api\KnowledgeTemplates\KnowledgeTemplateIndexController;
-use App\Http\Controllers\Api\KnowledgeTemplates\KnowledgeTemplateShowController;
-use App\Http\Controllers\Api\Internal\KnowledgeTemplateExportTaskIndexController as InternalKnowledgeTemplateExportTaskIndexController;
 use App\Http\Controllers\Api\Internal\KnowledgeTemplateExportTaskDownloadController as InternalKnowledgeTemplateExportTaskDownloadController;
+use App\Http\Controllers\Api\Internal\KnowledgeTemplateExportTaskIndexController as InternalKnowledgeTemplateExportTaskIndexController;
 use App\Http\Controllers\Api\Internal\KnowledgeTemplateExportTaskShowController as InternalKnowledgeTemplateExportTaskShowController;
 use App\Http\Controllers\Api\Internal\KnowledgeTemplateExportTaskStoreController as InternalKnowledgeTemplateExportTaskStoreController;
 use App\Http\Controllers\Api\Internal\KnowledgeTemplateExportTaskUpdateController as InternalKnowledgeTemplateExportTaskUpdateController;
 use App\Http\Controllers\Api\Internal\KnowledgeTemplateIndexController as InternalKnowledgeTemplateIndexController;
 use App\Http\Controllers\Api\Internal\KnowledgeTemplateShowController as InternalKnowledgeTemplateShowController;
+use App\Http\Controllers\Api\KnowledgeTemplateExports\KnowledgeTemplateExportIndexController;
+use App\Http\Controllers\Api\KnowledgeTemplateExports\KnowledgeTemplateExportStoreController;
+use App\Http\Controllers\Api\KnowledgeTemplates\KnowledgeTemplateIndexController;
+use App\Http\Controllers\Api\KnowledgeTemplates\KnowledgeTemplateShowController;
 use App\Http\Middleware\EnsureAtlasKbInternalRequest;
 use Illuminate\Support\Facades\Route;
 

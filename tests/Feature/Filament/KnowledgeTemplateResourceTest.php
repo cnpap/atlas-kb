@@ -61,11 +61,46 @@ test('knowledge template create page is rendered in simplified chinese', functio
 
     $response->assertOk();
     $response->assertSee('模板市场');
-    $response->assertSee('模板名称');
+    $response->assertSee('基础信息');
     $response->assertSee('系统级提示词');
-    $response->assertSee('可用用户');
-    $response->assertSee('关联资料库');
     $response->assertSee('模板文件');
+    $response->assertSee('分配与资料');
+    $response->assertDontSee('模板类型将在上传后自动识别');
+    $response->assertDontSee('待创建');
+    $response->assertDontSee('尚未上传文件');
+});
+
+test('knowledge template form schema uses textarea for the system prompt', function () {
+    $source = file_get_contents(app_path('Filament/Resources/KnowledgeTemplates/Schemas/KnowledgeTemplateForm.php'));
+
+    expect($source)->toContain("Textarea::make('system_prompt')")
+        ->and($source)->toContain('->columns(1)')
+        ->and($source)->toContain("'xl' => 12")
+        ->and($source)->toContain("'xl' => 5")
+        ->and($source)->toContain("'xl' => 7")
+        ->and($source)->toContain("'lg' => 4")
+        ->and($source)->toContain("'lg' => 3")
+        ->and($source)->toContain("'lg' => 1")
+        ->and($source)->toContain('->columnSpanFull()')
+        ->and($source)->not->toContain("MarkdownEditor::make('system_prompt')")
+        ->and($source)->not->toContain('Flex::make([');
+});
+
+test('knowledge template edit page is rendered with the workspace layout', function () {
+    $admin = createAdminUser();
+    $template = KnowledgeTemplate::factory()->create([
+        'parse_status' => KnowledgeTemplate::PARSE_STATUS_READY,
+    ]);
+
+    $response = $this->actingAs($admin)->get(KnowledgeTemplateResource::getUrl('edit', ['record' => $template]));
+
+    $response->assertOk();
+    $response->assertSee('基础信息');
+    $response->assertSee('系统级提示词');
+    $response->assertSee('模板文件');
+    $response->assertSee('template.docx');
+    $response->assertSee('可用');
+    $response->assertDontSee('解析错误将只在失败时显示');
 });
 
 test('admin users can create a knowledge template from filament', function () {
@@ -102,7 +137,7 @@ test('admin users can create a knowledge template from filament', function () {
         ->assertOk()
         ->fillForm([
             'name' => '拟办意见模板',
-            'system_prompt' => '请根据模板字段生成结构化表单。',
+            'system_prompt' => "## 生成要求\n\n- 请根据模板字段生成结构化表单。",
             'is_active' => true,
             'assignedKnowledgeUsers' => [$knowledgeUser->getKey()],
             'referenceLibraries' => [$library->getKey()],
@@ -115,6 +150,7 @@ test('admin users can create a knowledge template from filament', function () {
     $template = KnowledgeTemplate::query()->with(['assignedKnowledgeUsers', 'referenceLibraries'])->sole();
 
     expect($template->name)->toBe('拟办意见模板')
+        ->and($template->system_prompt)->toBe("## 生成要求\n\n- 请根据模板字段生成结构化表单。")
         ->and($template->template_type)->toBe(KnowledgeTemplate::TYPE_DOCX)
         ->and($template->parse_status)->toBe(KnowledgeTemplate::PARSE_STATUS_PENDING)
         ->and($template->assignedKnowledgeUsers->modelKeys())->toBe([$knowledgeUser->getKey()])
@@ -123,6 +159,59 @@ test('admin users can create a knowledge template from filament', function () {
 
     Queue::assertPushed(ParseKnowledgeTemplate::class, fn (ParseKnowledgeTemplate $job): bool => $job->templateId === $template->getKey()
         && $job->expectedChecksum === $template->checksum_sha256);
+});
+
+test('admin users can update a knowledge template from filament', function () {
+    $admin = createAdminUser();
+    $existingKnowledgeUser = KnowledgeUser::factory()->create([
+        'username' => 'existing_template_user',
+        'name' => 'Existing Template User',
+    ]);
+    $replacementKnowledgeUser = KnowledgeUser::factory()->create([
+        'username' => 'replacement_template_user',
+        'name' => 'Replacement Template User',
+    ]);
+    $existingLibrary = KnowledgeTemplateLibrary::factory()->create([
+        'name' => '旧资料库',
+        'storage_prefix' => 'ops/old',
+    ]);
+    $replacementLibrary = KnowledgeTemplateLibrary::factory()->create([
+        'name' => '新资料库',
+        'storage_prefix' => 'ops/new',
+    ]);
+    $template = KnowledgeTemplate::factory()->create([
+        'name' => '旧模板名称',
+        'system_prompt' => '旧提示词',
+        'parse_status' => KnowledgeTemplate::PARSE_STATUS_READY,
+    ]);
+
+    $template->assignedKnowledgeUsers()->sync([$existingKnowledgeUser->getKey()]);
+    $template->referenceLibraries()->sync([$existingLibrary->getKey()]);
+
+    $this->actingAs($admin);
+
+    Livewire::test(EditKnowledgeTemplate::class, [
+        'record' => $template->getRouteKey(),
+    ])
+        ->assertOk()
+        ->fillForm([
+            'name' => '更新后的拟办模板',
+            'system_prompt' => "# 角色\n\n你是公文拟办助手。\n\n- 缺失字段时明确指出\n- 不要虚构内容",
+            'is_active' => false,
+            'assignedKnowledgeUsers' => [$replacementKnowledgeUser->getKey()],
+            'referenceLibraries' => [$replacementLibrary->getKey()],
+        ])
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    $template->refresh();
+    $template->load(['assignedKnowledgeUsers', 'referenceLibraries']);
+
+    expect($template->name)->toBe('更新后的拟办模板')
+        ->and($template->system_prompt)->toBe("# 角色\n\n你是公文拟办助手。\n\n- 缺失字段时明确指出\n- 不要虚构内容")
+        ->and($template->is_active)->toBeFalse()
+        ->and($template->assignedKnowledgeUsers->modelKeys())->toBe([$replacementKnowledgeUser->getKey()])
+        ->and($template->referenceLibraries->modelKeys())->toBe([$replacementLibrary->getKey()]);
 });
 
 test('admins can download stored templates', function () {

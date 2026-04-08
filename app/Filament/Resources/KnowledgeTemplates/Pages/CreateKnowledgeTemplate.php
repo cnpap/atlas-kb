@@ -7,6 +7,7 @@ use App\Jobs\ParseKnowledgeTemplate;
 use App\Models\KnowledgeTemplate;
 use App\Support\KnowledgeTemplates\TemplateFileManager;
 use Filament\Resources\Pages\CreateRecord;
+use Filament\Support\Enums\Width;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -16,6 +17,8 @@ use Throwable;
 class CreateKnowledgeTemplate extends CreateRecord
 {
     protected static string $resource = KnowledgeTemplateResource::class;
+
+    protected Width|string|null $maxContentWidth = Width::Full;
 
     protected ?TemporaryUploadedFile $pendingTemplateUpload = null;
 

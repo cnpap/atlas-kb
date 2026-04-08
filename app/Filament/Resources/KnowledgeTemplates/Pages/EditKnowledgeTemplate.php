@@ -8,6 +8,7 @@ use App\Models\KnowledgeTemplate;
 use App\Support\KnowledgeTemplates\TemplateFileManager;
 use Filament\Actions\DeleteAction;
 use Filament\Resources\Pages\EditRecord;
+use Filament\Support\Enums\Width;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
@@ -16,6 +17,8 @@ use Throwable;
 class EditKnowledgeTemplate extends EditRecord
 {
     protected static string $resource = KnowledgeTemplateResource::class;
+
+    protected Width|string|null $maxContentWidth = Width::Full;
 
     protected ?TemporaryUploadedFile $pendingTemplateUpload = null;
 
