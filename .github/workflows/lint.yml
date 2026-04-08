@@ -7,12 +7,14 @@ on:
       - main
       - master
       - workos
+      - admin
   pull_request:
     branches:
       - develop
       - main
       - master
       - workos
+      - admin
 
 permissions:
   contents: write
