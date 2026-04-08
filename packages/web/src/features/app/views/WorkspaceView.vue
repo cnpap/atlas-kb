@@ -602,6 +602,7 @@
 
     replying.value = true;
     error.value = "";
+    composer.value = "";
 
     const previousMessages = [...messages.value];
     const previousSelectedAssistantMessageId = selectedAssistantMessageId.value;
@@ -677,7 +678,6 @@
         throw new Error("AI 对话未完成，请重试。");
       }
 
-      composer.value = "";
       await loadSessions(activeCollectionId.value);
       await replaceWorkspaceQuery({
         session: sessionId,
@@ -687,6 +687,7 @@
       if (!acceptedReply) {
         messages.value = previousMessages;
         selectedAssistantMessageId.value = previousSelectedAssistantMessageId;
+        composer.value = trimmed;
       }
 
       if (!error.value) {

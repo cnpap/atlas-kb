@@ -858,12 +858,18 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
         typeof instructions === "string" ? instructions : instructions.content;
 
       expect(String(text)).toContain(
-        "利用现有工具查明当前 workspace 里的真实情况",
+        "先使用你现有的工具查看当前工作区中的实际内容",
       );
+      expect(String(text)).toContain("角色定位：");
+      expect(String(text)).toContain("工作流程：");
       expect(String(text)).toContain(
         "如果你还没有查看工具结果，不要直接下结论",
       );
       expect(String(text)).toContain("请查看文件列表");
+      expect(String(text)).toContain("不要主动暴露内部标识、集合 id");
+      expect(String(text)).not.toContain(
+        '当前绑定的资料文件夹是 "research-space"',
+      );
     },
   );
 

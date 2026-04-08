@@ -178,6 +178,28 @@
     emit("selectAssistantMessage", assistantMessageId);
   }
 
+  function handleComposerKeydown(event: KeyboardEvent) {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    if (event.isComposing) {
+      return;
+    }
+
+    if (event.altKey) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (props.replying || !props.composer.trim()) {
+      return;
+    }
+
+    emit("submit");
+  }
+
   watch(
     () => props.activeSession?.id,
     () => {
@@ -249,7 +271,7 @@
         </div>
         <p class="card-heading">开始深度知识问答</p>
         <p class="text-sm leading-6 text-[var(--text-muted)]">
-          选择一个资料文件夹，智能体会结合当前 workspace 内容回答你的问题。
+          选择一个资料文件夹，智能体会结合当前工作区内容回答你的问题。
         </p>
       </div>
 
@@ -290,12 +312,7 @@
 
           <section
             v-if="turn.assistantMessage || turn.status !== 'pending'"
-            class="stack-item w-full !rounded-[8px] !px-3.5 !py-3 shadow-none transition-colors"
-            :class="[
-              turn.isSelected
-                ? '!border-[rgba(15,118,110,0.28)] !bg-[rgba(15,118,110,0.08)]'
-                : '!border-[rgba(93,72,34,0.08)] !bg-[rgba(255,251,244,0.82)] hover:!bg-[rgba(255,252,247,0.92)]',
-            ]"
+            class="stack-item w-full !rounded-[8px] !border-[rgba(93,72,34,0.08)] !bg-[rgba(255,251,244,0.82)] !px-3.5 !py-3 shadow-none transition-colors hover:!bg-[rgba(255,252,247,0.92)]"
             @click="selectAssistantTurn(turn)"
           >
             <div class="block-header">
@@ -373,6 +390,7 @@
         data-testid="chat-composer"
         placeholder="向当前资料文件夹提问..."
         @input="emit('update:composer', ($event.target as HTMLTextAreaElement).value)"
+        @keydown="handleComposerKeydown"
       />
       <div class="composer-actions">
         <button
