@@ -1,11 +1,10 @@
 import type { ChunkType, FullOutput } from "@mastra/core/stream";
 import { createKnowledgeAgent } from "../agents";
 import { buildKnowledgeMemoryResourceId } from "../memory";
-import { getRuntimeModelLabel } from "./config";
 import {
-  mapModelProviderError,
-  requireChatModelProvider,
-} from "./model-provider";
+  getRuntimeModelLabel,
+  mapRuntimeModelError,
+} from "../models/runtime-model";
 import { requireKnowledgeCollection } from "./repository";
 import { getKnowledgeWorkspace } from "./runtime";
 
@@ -136,7 +135,6 @@ async function buildKnowledgeExecutionContext(params: {
   // 对话和 ask 接口共用同一套执行上下文：校验资料库、获取 workspace、
   // 绑定智能体，并附上 Mastra 记忆所需的标识。
   await requireKnowledgeCollection(params.userId, params.collectionId);
-  requireChatModelProvider();
 
   const workspace = await getKnowledgeWorkspace({
     userId: params.userId,
@@ -205,7 +203,7 @@ export async function runKnowledgeAgentQuestion(params: {
       throw error;
     }
 
-    throw mapModelProviderError(error, "AI 对话");
+    throw mapRuntimeModelError(error, "AI 对话");
   }
 }
 
@@ -275,7 +273,7 @@ export async function streamKnowledgeAgentQuestion(params: {
       throw error;
     }
 
-    throw mapModelProviderError(error, "AI 对话");
+    throw mapRuntimeModelError(error, "AI 对话");
   }
 }
 

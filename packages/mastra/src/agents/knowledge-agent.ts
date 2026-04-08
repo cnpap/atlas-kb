@@ -1,7 +1,7 @@
 import { Agent } from "@mastra/core/agent";
 import type { Workspace, WorkspaceFilesystem } from "@mastra/core/workspace";
 import { knowledgeMemory } from "../memory";
-import { createRuntimeModel } from "../models";
+import { createRuntimeModel } from "../models/runtime-model";
 
 const KNOWLEDGE_AGENT_ID = "knowledge-assistant";
 const KNOWLEDGE_AGENT_PROMPT = `

@@ -2,7 +2,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { Memory } from "@mastra/memory";
 import { PostgresStore } from "@mastra/pg";
 import { QdrantVector } from "@mastra/qdrant";
-import { createRuntimeModel } from "../models";
+import { createRuntimeModel } from "../models/runtime-model";
 import {
   getDatabaseUrl,
   getEmbeddingApiKey,

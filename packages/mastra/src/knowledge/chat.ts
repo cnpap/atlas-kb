@@ -4,13 +4,7 @@ import {
   type UIMessage,
   type UIMessageStreamWriter,
 } from "ai";
-import {
-  ApiHttpError,
-  ModelProviderConfigurationError,
-  ModelProviderPermissionError,
-  ModelProviderRateLimitError,
-  ModelProviderUnavailableError,
-} from "@atlas-kb/errors";
+import { ApiHttpError } from "@atlas-kb/errors";
 import type {
   ChatReplyFinal,
   ChatReplyRequest,
@@ -36,7 +30,7 @@ import {
   runKnowledgeAgentQuestion,
   streamKnowledgeAgentQuestion,
 } from "./agent";
-import { getModelProviderLogContext } from "./model-provider";
+import { getRuntimeModelLogContext } from "../models/runtime-model";
 
 export {
   createChatSession,
@@ -123,18 +117,6 @@ function getErrorMessage(error: unknown): string {
 
   if (error instanceof ApiHttpError && error.message.trim()) {
     return error.message;
-  }
-
-  if (error instanceof ModelProviderRateLimitError) {
-    return "知识库回答暂时繁忙，请稍后重试。";
-  }
-
-  if (
-    error instanceof ModelProviderConfigurationError ||
-    error instanceof ModelProviderPermissionError ||
-    error instanceof ModelProviderUnavailableError
-  ) {
-    return "知识库回答暂时不可用，请稍后重试。";
   }
 
   if (error instanceof Error && error.message.trim()) {
@@ -312,7 +294,7 @@ export async function streamChatReply(params: {
             console.error("[knowledge] streamChatReply failed", {
               errorMessage: readErrorText(error) || undefined,
               errorName: error instanceof Error ? error.name : undefined,
-              ...getModelProviderLogContext(),
+              ...getRuntimeModelLogContext(),
             });
           }
 
