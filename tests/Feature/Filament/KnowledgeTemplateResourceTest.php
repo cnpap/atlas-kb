@@ -65,6 +65,7 @@ test('knowledge template create page is rendered in simplified chinese', functio
     $response->assertSee('系统级提示词');
     $response->assertSee('模板文件');
     $response->assertSee('分配与资料');
+    $response->assertSeeInOrder(['基础信息', '分配与资料', '模板文件']);
     $response->assertDontSee('模板类型将在上传后自动识别');
     $response->assertDontSee('待创建');
     $response->assertDontSee('尚未上传文件');
@@ -98,6 +99,8 @@ test('knowledge template edit page is rendered with the workspace layout', funct
     $response->assertSee('基础信息');
     $response->assertSee('系统级提示词');
     $response->assertSee('模板文件');
+    $response->assertSee('分配与资料');
+    $response->assertSeeInOrder(['基础信息', '模板文件', '分配与资料']);
     $response->assertSee('template.docx');
     $response->assertSee('可用');
     $response->assertDontSee('解析错误将只在失败时显示');

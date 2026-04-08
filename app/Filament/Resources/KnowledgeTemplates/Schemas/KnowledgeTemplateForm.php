@@ -28,11 +28,8 @@ class KnowledgeTemplateForm
                     'xl' => 12,
                 ])
                     ->schema([
-                        Group::make([
-                            static::baseInfoSection(),
-                            static::fileSection(),
-                            static::assignmentSection(),
-                        ])
+                        Group::make()
+                            ->schema(fn (string $operation): array => static::leftColumnSections($operation))
                             ->columnSpan([
                                 'default' => 1,
                                 'xl' => 5,
@@ -47,6 +44,22 @@ class KnowledgeTemplateForm
                     ])
                     ->columnSpanFull(),
             ]);
+    }
+
+    protected static function leftColumnSections(string $operation): array
+    {
+        return match ($operation) {
+            'create' => [
+                static::baseInfoSection(),
+                static::assignmentSection(),
+                static::fileSection(),
+            ],
+            default => [
+                static::baseInfoSection(),
+                static::fileSection(),
+                static::assignmentSection(),
+            ],
+        };
     }
 
     protected static function baseInfoSection(): Section
