@@ -71,10 +71,15 @@ test('knowledge template create page is rendered in simplified chinese', functio
     $response->assertDontSee('尚未上传文件');
 });
 
-test('knowledge template form schema uses textarea for the system prompt', function () {
+test('knowledge template form schema uses markdown editor for the system prompt', function () {
     $source = file_get_contents(app_path('Filament/Resources/KnowledgeTemplates/Schemas/KnowledgeTemplateForm.php'));
 
-    expect($source)->toContain("Textarea::make('system_prompt')")
+    expect($source)->toContain("MarkdownEditor::make('system_prompt')")
+        ->and($source)->toContain("->helperText('支持 Markdown，建议使用标题、列表和代码块组织提示词。')")
+        ->and($source)->toContain("['blockquote', 'codeBlock']")
+        ->and($source)->toContain("->minHeight('24rem')")
+        ->and($source)->toContain("->maxHeight('48rem')")
+        ->and($source)->toContain("'style' => 'min-height: 24rem;'")
         ->and($source)->toContain('->columns(1)')
         ->and($source)->toContain("'xl' => 12")
         ->and($source)->toContain("'xl' => 5")
@@ -83,7 +88,8 @@ test('knowledge template form schema uses textarea for the system prompt', funct
         ->and($source)->toContain("'lg' => 3")
         ->and($source)->toContain("'lg' => 1")
         ->and($source)->toContain('->columnSpanFull()')
-        ->and($source)->not->toContain("MarkdownEditor::make('system_prompt')")
+        ->and($source)->not->toContain("CodeEditor::make('system_prompt')")
+        ->and($source)->not->toContain("Textarea::make('system_prompt')")
         ->and($source)->not->toContain('Flex::make([');
 });
 

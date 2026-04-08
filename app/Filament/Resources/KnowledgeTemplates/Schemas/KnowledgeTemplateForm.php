@@ -5,6 +5,7 @@ namespace App\Filament\Resources\KnowledgeTemplates\Schemas;
 use App\Filament\Resources\KnowledgeTemplates\KnowledgeTemplateResource;
 use App\Models\KnowledgeTemplate;
 use Filament\Forms\Components\FileUpload;
+use Filament\Forms\Components\MarkdownEditor;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -97,12 +98,23 @@ class KnowledgeTemplateForm
         return Section::make('系统级提示词')
             ->icon(Heroicon::OutlinedChatBubbleLeftRight)
             ->schema([
-                Textarea::make('system_prompt')
+                MarkdownEditor::make('system_prompt')
                     ->label('系统级提示词')
+                    ->helperText('支持 Markdown，建议使用标题、列表和代码块组织提示词。')
+                    ->toolbarButtons([
+                        ['bold', 'italic', 'strike'],
+                        ['heading'],
+                        ['blockquote', 'codeBlock'],
+                        ['bulletList', 'orderedList'],
+                        ['undo', 'redo'],
+                    ])
+                    ->minHeight('24rem')
+                    ->maxHeight('48rem')
+                    ->extraAttributes([
+                        'style' => 'min-height: 24rem;',
+                    ])
                     ->maxLength(8000)
                     ->default('')
-                    ->rows(24)
-                    ->autosize(false)
                     ->columnSpanFull(),
             ]);
     }
