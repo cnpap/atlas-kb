@@ -117,7 +117,7 @@ function toSearchHit(args: {
     snippet: buildSearchSnippet(
       args.result.content,
       args.query,
-      args.source.excerpt,
+      args.source.summary,
     ),
     sectionPath: buildSectionPath(args.result),
     sourceFilename: args.source.sourceFilename,

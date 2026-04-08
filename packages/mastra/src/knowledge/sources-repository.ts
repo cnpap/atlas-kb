@@ -9,19 +9,13 @@ import {
   getKnowledgeWorkspace,
   removeDocumentFromKnowledgeWorkspace,
 } from "./runtime";
-import {
-  buildContentPreview,
-  buildSummary,
-  normalizeWhitespace,
-} from "./search-utils";
+import { buildSummary, normalizeWhitespace } from "./search-utils";
 import {
   nowIso,
   SOURCE_COLUMNS,
   toDbUserId,
   toSource,
-  toStoredSourceRecord,
   type SourceRow,
-  type StoredKnowledgeSourceRecord,
 } from "./repository-shared";
 import {
   requireKnowledgeCollection,
@@ -42,14 +36,6 @@ export async function getSourceRow(
       .where("id", "=", sourceId)
       .executeTakeFirst()) ?? null
   );
-}
-
-export async function getStoredSourceRecord(
-  userId: string,
-  sourceId: string,
-): Promise<StoredKnowledgeSourceRecord | null> {
-  const row = await getSourceRow(userId, sourceId);
-  return row ? toStoredSourceRecord(row) : null;
 }
 
 export async function listKnowledgeSources(
@@ -130,8 +116,6 @@ export async function createKnowledgeSourceRecord(params: {
   byteSize?: number;
   status: KnowledgeSource["status"];
   failureMessage?: string;
-  originalPath?: string | null;
-  indexPath: string;
 }): Promise<KnowledgeSource> {
   await requireKnowledgeCollection(params.userId, params.collectionId);
   const db = await ensureKnowledgeDatabase();
@@ -139,8 +123,6 @@ export async function createKnowledgeSourceRecord(params: {
   const id = params.sourceId ?? crypto.randomUUID();
   const content = normalizeWhitespace(params.content);
   const summary = params.summary?.trim() || buildSummary(content);
-  const preview = buildContentPreview(content);
-  const excerpt = buildSummary(content, 160);
 
   await db
     .insertInto("kb_sources")
@@ -151,23 +133,14 @@ export async function createKnowledgeSourceRecord(params: {
       document_id: params.documentId,
       title: params.title.trim(),
       summary,
-      excerpt,
-      content_preview: preview,
       content,
       tags_json: params.tags,
       source_type: params.sourceType,
       status: params.status,
       source_filename: params.sourceFilename ?? null,
-      source_url: null,
       mime_type: params.mimeType ?? null,
       byte_size: params.byteSize ?? null,
-      latest_version: 1,
-      ready_at: params.status === "ready" ? now : null,
-      last_processed_at: now,
-      snapshot_updated_at: null,
       failure_message: params.failureMessage ?? null,
-      original_path: params.originalPath ?? null,
-      index_path: params.indexPath,
       created_at: now,
       updated_at: now,
     })
@@ -190,16 +163,11 @@ export async function replaceSourceContent(params: {
   sourceFilename?: string;
   status: KnowledgeSource["status"];
   failureMessage?: string;
-  originalPath?: string | null;
-  indexPath: string;
 }): Promise<KnowledgeSource> {
   const current = await requireKnowledgeSource(params.userId, params.sourceId);
   const db = await ensureKnowledgeDatabase();
   const content = normalizeWhitespace(params.content);
   const summary = params.summary?.trim() || buildSummary(content);
-  const preview = buildContentPreview(content);
-  const excerpt = buildSummary(content, 160);
-  const nextVersion = current.latestVersion + 1;
   const now = nowIso();
 
   await db
@@ -208,22 +176,13 @@ export async function replaceSourceContent(params: {
       document_id: params.documentId,
       title: params.title.trim(),
       summary,
-      excerpt,
-      content_preview: preview,
       content,
       tags_json: params.tags,
       source_filename: params.sourceFilename ?? current.sourceFilename ?? null,
-      source_url: null,
       mime_type: params.mimeType ?? current.mimeType ?? null,
       byte_size: params.byteSize ?? current.byteSize ?? null,
-      latest_version: nextVersion,
       status: params.status,
-      ready_at: params.status === "ready" ? now : null,
-      last_processed_at: now,
-      snapshot_updated_at: null,
       failure_message: params.failureMessage ?? null,
-      original_path: params.originalPath ?? null,
-      index_path: params.indexPath,
       updated_at: now,
     })
     .where("owner_user_id", "=", toDbUserId(params.userId))

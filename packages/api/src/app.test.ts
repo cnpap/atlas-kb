@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   createUser,
+  ensureDefaultUser,
   getDefaultPassword,
   getDefaultUsername,
   LocalFilesystem,
@@ -544,7 +545,7 @@ async function uploadFileThroughDirectObjectFlow(params: {
   };
 }
 
-describe("@atlas-kb/api knowledge endpoints", () => {
+describe.serial("@atlas-kb/api knowledge endpoints", () => {
   let knowledgeDataDir = "";
   let workspaceFilesDir = "";
 
@@ -563,6 +564,7 @@ describe("@atlas-kb/api knowledge endpoints", () => {
     globalThis.fetch = originalFetch;
     resetKnowledgeRuntimeCache();
     await resetKnowledgeRepository();
+    await ensureDefaultUser();
     setKnowledgeFilesystemFactoryForTests(({ userId, collectionId }) => {
       return new LocalFilesystem({
         basePath: join(workspaceFilesDir, userId, collectionId),
@@ -636,234 +638,246 @@ describe("@atlas-kb/api knowledge endpoints", () => {
     await rm(knowledgeDataDir, { force: true, recursive: true });
   });
 
-  it("creates a collection, imports text, and searches within it", async () => {
-    const app = createApp();
-    const session = await login(app);
+  it.serial(
+    "creates a collection, imports text, and searches within it",
+    async () => {
+      const app = createApp();
+      const session = await login(app);
 
-    const createCollectionResponse = await app.handle(
-      new Request("http://localhost/api/kb/collections", {
-        method: "POST",
-        headers: {
-          ...authHeaders(session.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: "api-search",
-          name: "API Search",
-          description: "api test collection",
-        }),
-      }),
-    );
-    const collectionData = await readJson<{
-      collection: {
-        id: string;
-      };
-    }>(createCollectionResponse);
-
-    const importResponse = await app.handle(
-      new Request(
-        `http://localhost/api/kb/collections/${collectionData.collection.id}/imports/text`,
-        {
+      const createCollectionResponse = await app.handle(
+        new Request("http://localhost/api/kb/collections", {
           method: "POST",
           headers: {
             ...authHeaders(session.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            title: "Alpha API Doc",
-            content: "alpha api keyword appears in this source.",
+            id: "api-search",
+            name: "API Search",
+            description: "api test collection",
           }),
-        },
-      ),
-    );
-    const imported = await readJson<{
-      source: {
-        id: string;
-        status: string;
-      };
-    }>(importResponse);
-
-    expect(imported.source.status).toBe("ready");
-
-    const searchResponse = await app.handle(
-      new Request("http://localhost/api/kb/search", {
-        method: "POST",
-        headers: {
-          ...authHeaders(session.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          query: "alpha api keyword",
-          collectionId: collectionData.collection.id,
         }),
-      }),
-    );
-    const searchData = await readJson<{
-      hits: Array<{
-        sourceId: string;
-        title: string;
-      }>;
-      total: number;
-    }>(searchResponse);
+      );
+      const collectionData = await readJson<{
+        collection: {
+          id: string;
+        };
+      }>(createCollectionResponse);
 
-    expect(searchData.total).toBe(1);
-    expect(searchData.hits[0]?.title).toBe("Alpha API Doc");
-  });
+      const importResponse = await app.handle(
+        new Request(
+          `http://localhost/api/kb/collections/${collectionData.collection.id}/imports/text`,
+          {
+            method: "POST",
+            headers: {
+              ...authHeaders(session.token),
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              title: "Alpha API Doc",
+              content: "alpha api keyword appears in this source.",
+            }),
+          },
+        ),
+      );
+      const imported = await readJson<{
+        source: {
+          id: string;
+          status: string;
+        };
+      }>(importResponse);
 
-  it("imports one file through the direct object upload flow and returns a download url", async () => {
-    const app = createApp();
-    const session = await login(app);
+      expect(imported.source.status).toBe("ready");
 
-    const createCollectionResponse = await app.handle(
-      new Request("http://localhost/api/kb/collections", {
-        method: "POST",
-        headers: {
-          ...authHeaders(session.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: "api-download",
-          name: "API Download",
-          description: "download tests",
+      const searchResponse = await app.handle(
+        new Request("http://localhost/api/kb/search", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            query: "alpha api keyword",
+            collectionId: collectionData.collection.id,
+          }),
         }),
-      }),
-    );
-    const collectionData = await readJson<{
-      collection: {
-        id: string;
-      };
-    }>(createCollectionResponse);
+      );
+      const searchData = await readJson<{
+        hits: Array<{
+          sourceId: string;
+          title: string;
+        }>;
+        total: number;
+      }>(searchResponse);
 
-    const upload = await uploadFileThroughDirectObjectFlow({
-      app,
-      token: session.token,
-      collectionId: collectionData.collection.id,
-      file: new File(["downloadable file body"], "downloadable.txt", {
-        type: "text/plain",
-      }),
-    });
-    const importData = await readJson<{
-      source: {
-        id: string;
-        documentId: string;
-        sourceFilename?: string;
-      };
-    }>(upload.confirmResponse);
+      expect(searchData.total).toBe(1);
+      expect(searchData.hits[0]?.title).toBe("Alpha API Doc");
+    },
+  );
 
-    expect(importData.source.documentId).toBe("downloadable.txt");
-    expect(importData.source.sourceFilename).toBe("downloadable.txt");
+  it.serial(
+    "imports one file through the direct object upload flow and returns a download url",
+    async () => {
+      const app = createApp();
+      const session = await login(app);
 
-    const downloadResponse = await app.handle(
-      new Request(
-        `http://localhost/api/kb/sources/${importData.source.id}/download`,
-        {
-          headers: authHeaders(session.token),
-        },
-      ),
-    );
-
-    expect(downloadResponse.status).toBe(200);
-    const downloadData = await readJson<{
-      url: string;
-      filename: string;
-      mimeType: string;
-    }>(downloadResponse);
-    expect(downloadData.url).toBeString();
-    expect(downloadData.filename).toBe("downloadable.txt");
-  });
-
-  it("imports multiple files through the direct object upload flow", async () => {
-    const app = createApp();
-    const session = await login(app);
-
-    const createCollectionResponse = await app.handle(
-      new Request("http://localhost/api/kb/collections", {
-        method: "POST",
-        headers: {
-          ...authHeaders(session.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: "api-batch-upload",
-          name: "API Batch Upload",
-          description: "batch upload tests",
+      const createCollectionResponse = await app.handle(
+        new Request("http://localhost/api/kb/collections", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            id: "api-download",
+            name: "API Download",
+            description: "download tests",
+          }),
         }),
-      }),
-    );
-    const collectionData = await readJson<{
-      collection: {
-        id: string;
-      };
-    }>(createCollectionResponse);
+      );
+      const collectionData = await readJson<{
+        collection: {
+          id: string;
+        };
+      }>(createCollectionResponse);
 
-    const firstUpload = await uploadFileThroughDirectObjectFlow({
-      app,
-      token: session.token,
-      collectionId: collectionData.collection.id,
-      file: new File(["first body"], "first.txt", {
-        type: "text/plain",
-      }),
-    });
-    const secondUpload = await uploadFileThroughDirectObjectFlow({
-      app,
-      token: session.token,
-      collectionId: collectionData.collection.id,
-      file: new File(["second body"], "second.txt", {
-        type: "text/plain",
-      }),
-    });
-
-    const firstImport = await readJson<{
-      source: {
-        documentId: string;
-        sourceFilename?: string;
-      };
-    }>(firstUpload.confirmResponse);
-    const secondImport = await readJson<{
-      source: {
-        documentId: string;
-        sourceFilename?: string;
-      };
-    }>(secondUpload.confirmResponse);
-
-    expect(firstImport.source.documentId).toBe("first.txt");
-    expect(firstImport.source.sourceFilename).toBe("first.txt");
-    expect(secondImport.source.documentId).toBe("second.txt");
-    expect(secondImport.source.sourceFilename).toBe("second.txt");
-  });
-
-  it("surfaces validator messages instead of the generic validation error string", async () => {
-    const app = createApp();
-    const session = await login(app);
-
-    const response = await app.handle(
-      new Request("http://localhost/api/kb/collections", {
-        method: "POST",
-        headers: {
-          ...authHeaders(session.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: "Missing Description",
+      const upload = await uploadFileThroughDirectObjectFlow({
+        app,
+        token: session.token,
+        collectionId: collectionData.collection.id,
+        file: new File(["downloadable file body"], "downloadable.txt", {
+          type: "text/plain",
         }),
-      }),
-    );
+      });
+      const importData = await readJson<{
+        source: {
+          id: string;
+          documentId: string;
+          sourceFilename?: string;
+        };
+      }>(upload.confirmResponse);
 
-    expect(response.status).toBe(400);
+      expect(importData.source.documentId).toBe("downloadable.txt");
+      expect(importData.source.sourceFilename).toBe("downloadable.txt");
 
-    const payload = (await response.json()) as {
-      error: {
-        code: string;
-        message: string;
+      const downloadResponse = await app.handle(
+        new Request(
+          `http://localhost/api/kb/sources/${importData.source.id}/download`,
+          {
+            headers: authHeaders(session.token),
+          },
+        ),
+      );
+
+      expect(downloadResponse.status).toBe(200);
+      const downloadData = await readJson<{
+        url: string;
+        filename: string;
+        mimeType: string;
+      }>(downloadResponse);
+      expect(downloadData.url).toBeString();
+      expect(downloadData.filename).toBe("downloadable.txt");
+    },
+  );
+
+  it.serial(
+    "imports multiple files through the direct object upload flow",
+    async () => {
+      const app = createApp();
+      const session = await login(app);
+
+      const createCollectionResponse = await app.handle(
+        new Request("http://localhost/api/kb/collections", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            id: "api-batch-upload",
+            name: "API Batch Upload",
+            description: "batch upload tests",
+          }),
+        }),
+      );
+      const collectionData = await readJson<{
+        collection: {
+          id: string;
+        };
+      }>(createCollectionResponse);
+
+      const firstUpload = await uploadFileThroughDirectObjectFlow({
+        app,
+        token: session.token,
+        collectionId: collectionData.collection.id,
+        file: new File(["first body"], "first.txt", {
+          type: "text/plain",
+        }),
+      });
+      const secondUpload = await uploadFileThroughDirectObjectFlow({
+        app,
+        token: session.token,
+        collectionId: collectionData.collection.id,
+        file: new File(["second body"], "second.txt", {
+          type: "text/plain",
+        }),
+      });
+
+      const firstImport = await readJson<{
+        source: {
+          documentId: string;
+          sourceFilename?: string;
+        };
+      }>(firstUpload.confirmResponse);
+      const secondImport = await readJson<{
+        source: {
+          documentId: string;
+          sourceFilename?: string;
+        };
+      }>(secondUpload.confirmResponse);
+
+      expect(firstImport.source.documentId).toBe("first.txt");
+      expect(firstImport.source.sourceFilename).toBe("first.txt");
+      expect(secondImport.source.documentId).toBe("second.txt");
+      expect(secondImport.source.sourceFilename).toBe("second.txt");
+    },
+  );
+
+  it.serial(
+    "surfaces validator messages instead of the generic validation error string",
+    async () => {
+      const app = createApp();
+      const session = await login(app);
+
+      const response = await app.handle(
+        new Request("http://localhost/api/kb/collections", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: "Missing Description",
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(400);
+
+      const payload = (await response.json()) as {
+        error: {
+          code: string;
+          message: string;
+        };
+        success: false;
       };
-      success: false;
-    };
 
-    expect(payload.error.code).toBe("VALIDATION_ERROR");
-    expect(payload.error.message).toContain("description");
-  });
+      expect(payload.error.code).toBe("VALIDATION_ERROR");
+      expect(payload.error.message).toContain("description");
+    },
+  );
 
-  it("requires collectionId when creating a chat session", async () => {
+  it.serial("requires collectionId when creating a chat session", async () => {
     const app = createApp();
     const session = await login(app);
 
@@ -894,336 +908,348 @@ describe("@atlas-kb/api knowledge endpoints", () => {
     expect(payload.error.message).toContain("collectionId");
   });
 
-  it("lists chat sessions only for the requested collection", async () => {
-    const app = createApp();
-    const session = await login(app);
+  it.serial(
+    "lists chat sessions only for the requested collection",
+    async () => {
+      const app = createApp();
+      const session = await login(app);
 
-    const firstCollectionResponse = await app.handle(
-      new Request("http://localhost/api/kb/collections", {
-        method: "POST",
-        headers: {
-          ...authHeaders(session.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: "chat-filter-a",
-          name: "Chat Filter A",
-          description: "chat filter tests a",
+      const firstCollectionResponse = await app.handle(
+        new Request("http://localhost/api/kb/collections", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            id: "chat-filter-a",
+            name: "Chat Filter A",
+            description: "chat filter tests a",
+          }),
         }),
-      }),
-    );
-    const secondCollectionResponse = await app.handle(
-      new Request("http://localhost/api/kb/collections", {
-        method: "POST",
-        headers: {
-          ...authHeaders(session.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: "chat-filter-b",
-          name: "Chat Filter B",
-          description: "chat filter tests b",
+      );
+      const secondCollectionResponse = await app.handle(
+        new Request("http://localhost/api/kb/collections", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            id: "chat-filter-b",
+            name: "Chat Filter B",
+            description: "chat filter tests b",
+          }),
         }),
-      }),
-    );
-    const firstCollection = await readJson<{
-      collection: {
-        id: string;
-      };
-    }>(firstCollectionResponse);
-    const secondCollection = await readJson<{
-      collection: {
-        id: string;
-      };
-    }>(secondCollectionResponse);
+      );
+      const firstCollection = await readJson<{
+        collection: {
+          id: string;
+        };
+      }>(firstCollectionResponse);
+      const secondCollection = await readJson<{
+        collection: {
+          id: string;
+        };
+      }>(secondCollectionResponse);
 
-    await app.handle(
-      new Request("http://localhost/api/chat/sessions", {
-        method: "POST",
-        headers: {
-          ...authHeaders(session.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          collectionId: firstCollection.collection.id,
-          title: "A Session",
+      await app.handle(
+        new Request("http://localhost/api/chat/sessions", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            collectionId: firstCollection.collection.id,
+            title: "A Session",
+          }),
         }),
-      }),
-    );
-    await app.handle(
-      new Request("http://localhost/api/chat/sessions", {
-        method: "POST",
-        headers: {
-          ...authHeaders(session.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          collectionId: secondCollection.collection.id,
-          title: "B Session",
+      );
+      await app.handle(
+        new Request("http://localhost/api/chat/sessions", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            collectionId: secondCollection.collection.id,
+            title: "B Session",
+          }),
         }),
-      }),
-    );
+      );
 
-    const listResponse = await app.handle(
-      new Request(
-        `http://localhost/api/chat/sessions?collectionId=${encodeURIComponent(firstCollection.collection.id)}`,
-        {
+      const listResponse = await app.handle(
+        new Request(
+          `http://localhost/api/chat/sessions?collectionId=${encodeURIComponent(firstCollection.collection.id)}`,
+          {
+            headers: authHeaders(session.token),
+          },
+        ),
+      );
+      const listData = await readJson<{
+        sessions: Array<{
+          collectionId: string;
+          title: string;
+        }>;
+      }>(listResponse);
+
+      expect(listData.sessions).toHaveLength(1);
+      expect(listData.sessions[0]?.title).toBe("A Session");
+      expect(listData.sessions[0]?.collectionId).toBe(
+        firstCollection.collection.id,
+      );
+    },
+  );
+
+  it.serial(
+    "keeps manual text sources in the workspace filesystem across import, update, and delete",
+    async () => {
+      const app = createApp();
+      const session = await login(app);
+
+      const createCollectionResponse = await app.handle(
+        new Request("http://localhost/api/kb/collections", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            id: "api-text-mirror",
+            name: "API Text Mirror",
+            description: "text mirror tests",
+          }),
+        }),
+      );
+      const collectionData = await readJson<{
+        collection: {
+          id: string;
+        };
+      }>(createCollectionResponse);
+
+      const importResponse = await app.handle(
+        new Request(
+          `http://localhost/api/kb/collections/${collectionData.collection.id}/imports/text`,
+          {
+            method: "POST",
+            headers: {
+              ...authHeaders(session.token),
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              title: "Manual Source",
+              content: "first manual text body",
+            }),
+          },
+        ),
+      );
+      const importData = await readJson<{
+        source: {
+          id: string;
+          sourceFilename?: string;
+        };
+      }>(importResponse);
+
+      expect(importData.source.sourceFilename).toBe("Manual Source.txt");
+      const workspaceFilePath = getWorkspaceFilePath({
+        rootDir: workspaceFilesDir,
+        userId: session.user.id,
+        collectionId: collectionData.collection.id,
+        relativePath: "Manual Source.txt",
+      });
+      expect(await readFile(workspaceFilePath, "utf-8")).toBe(
+        "first manual text body",
+      );
+
+      const updateResponse = await app.handle(
+        new Request(`http://localhost/api/kb/sources/${importData.source.id}`, {
+          method: "PATCH",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            content: "updated manual text body",
+          }),
+        }),
+      );
+
+      expect(updateResponse.status).toBe(200);
+      expect(await readFile(workspaceFilePath, "utf-8")).toBe(
+        "updated manual text body",
+      );
+
+      const deleteResponse = await app.handle(
+        new Request(`http://localhost/api/kb/sources/${importData.source.id}`, {
+          method: "DELETE",
           headers: authHeaders(session.token),
-        },
-      ),
-    );
-    const listData = await readJson<{
-      sessions: Array<{
-        collectionId: string;
-        title: string;
-      }>;
-    }>(listResponse);
-
-    expect(listData.sessions).toHaveLength(1);
-    expect(listData.sessions[0]?.title).toBe("A Session");
-    expect(listData.sessions[0]?.collectionId).toBe(
-      firstCollection.collection.id,
-    );
-  });
-
-  it("keeps manual text sources in the workspace filesystem across import, update, and delete", async () => {
-    const app = createApp();
-    const session = await login(app);
-
-    const createCollectionResponse = await app.handle(
-      new Request("http://localhost/api/kb/collections", {
-        method: "POST",
-        headers: {
-          ...authHeaders(session.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: "api-text-mirror",
-          name: "API Text Mirror",
-          description: "text mirror tests",
         }),
-      }),
-    );
-    const collectionData = await readJson<{
-      collection: {
-        id: string;
-      };
-    }>(createCollectionResponse);
+      );
 
-    const importResponse = await app.handle(
-      new Request(
-        `http://localhost/api/kb/collections/${collectionData.collection.id}/imports/text`,
-        {
+      expect(deleteResponse.status).toBe(200);
+      await expect(readFile(workspaceFilePath, "utf-8")).rejects.toThrow();
+    },
+  );
+
+  it.serial(
+    "creates, loads, and updates export tasks through admin-backed endpoints",
+    async () => {
+      const app = createApp();
+      const session = await login(app);
+
+      const createCollectionResponse = await app.handle(
+        new Request("http://localhost/api/kb/collections", {
           method: "POST",
           headers: {
             ...authHeaders(session.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            title: "Manual Source",
-            content: "first manual text body",
+            id: "api-export-tasks",
+            name: "API Export Tasks",
+            description: "export task tests",
           }),
-        },
-      ),
-    );
-    const importData = await readJson<{
-      source: {
-        id: string;
-        sourceFilename?: string;
-      };
-    }>(importResponse);
-
-    expect(importData.source.sourceFilename).toBe("Manual Source.txt");
-    const workspaceFilePath = getWorkspaceFilePath({
-      rootDir: workspaceFilesDir,
-      userId: session.user.id,
-      collectionId: collectionData.collection.id,
-      relativePath: "Manual Source.txt",
-    });
-    expect(await readFile(workspaceFilePath, "utf-8")).toBe(
-      "first manual text body",
-    );
-
-    const updateResponse = await app.handle(
-      new Request(`http://localhost/api/kb/sources/${importData.source.id}`, {
-        method: "PATCH",
-        headers: {
-          ...authHeaders(session.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          content: "updated manual text body",
         }),
-      }),
-    );
-
-    expect(updateResponse.status).toBe(200);
-    expect(await readFile(workspaceFilePath, "utf-8")).toBe(
-      "updated manual text body",
-    );
-
-    const deleteResponse = await app.handle(
-      new Request(`http://localhost/api/kb/sources/${importData.source.id}`, {
-        method: "DELETE",
-        headers: authHeaders(session.token),
-      }),
-    );
-
-    expect(deleteResponse.status).toBe(200);
-    await expect(readFile(workspaceFilePath, "utf-8")).rejects.toThrow();
-  });
-
-  it("creates, loads, and updates export tasks through admin-backed endpoints", async () => {
-    const app = createApp();
-    const session = await login(app);
-
-    const createCollectionResponse = await app.handle(
-      new Request("http://localhost/api/kb/collections", {
-        method: "POST",
-        headers: {
-          ...authHeaders(session.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          id: "api-export-tasks",
-          name: "API Export Tasks",
-          description: "export task tests",
-        }),
-      }),
-    );
-    const collectionData = await readJson<{
-      collection: {
-        id: string;
-      };
-    }>(createCollectionResponse);
-
-    const importResponse = await app.handle(
-      new Request(
-        `http://localhost/api/kb/collections/${collectionData.collection.id}/imports/text`,
-        {
-          method: "POST",
-          headers: {
-            ...authHeaders(session.token),
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            title: "公文标题",
-            summary: "导出测试摘要",
-            content: "来文单位为综合办公室，文件标题为关于预算调整的请示。",
-          }),
-        },
-      ),
-    );
-    const importData = await readJson<{
-      source: {
-        id: string;
-      };
-    }>(importResponse);
-
-    const createTaskResponse = await app.handle(
-      new Request(
-        `http://localhost/api/kb/sources/${importData.source.id}/export-tasks`,
-        {
-          method: "POST",
-          headers: {
-            ...authHeaders(session.token),
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            templateId: "template-1",
-          }),
-        },
-      ),
-    );
-    const createdTask = await readJson<{
-      task: {
-        id: string;
-        sourceId: string;
-        status: string;
-      };
-    }>(createTaskResponse);
-
-    expect(createdTask.task.sourceId).toBe(importData.source.id);
-    expect(createdTask.task.status).toBe("pending");
-
-    const detailResponse = await app.handle(
-      new Request("http://localhost/api/kb/export-tasks/task-existing", {
-        headers: authHeaders(session.token),
-      }),
-    );
-    const detailData = await readJson<{
-      task: {
-        canEdit: boolean;
-        parameters: Record<string, string>;
-        template: {
-          fields: Array<{
-            name: string;
-          }>;
+      );
+      const collectionData = await readJson<{
+        collection: {
+          id: string;
         };
-      };
-    }>(detailResponse);
+      }>(createCollectionResponse);
 
-    expect(detailData.task.canEdit).toBe(true);
-    expect(detailData.task.parameters.opinion).toBe("既有拟办意见");
-    expect(detailData.task.template.fields).toHaveLength(2);
-
-    const updateResponse = await app.handle(
-      new Request("http://localhost/api/kb/export-tasks/task-existing", {
-        method: "PATCH",
-        headers: {
-          ...authHeaders(session.token),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          parameters: {
-            document_title: "更新后的标题",
-            opinion: "更新后的拟办意见",
+      const importResponse = await app.handle(
+        new Request(
+          `http://localhost/api/kb/collections/${collectionData.collection.id}/imports/text`,
+          {
+            method: "POST",
+            headers: {
+              ...authHeaders(session.token),
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              title: "公文标题",
+              summary: "导出测试摘要",
+              content: "来文单位为综合办公室，文件标题为关于预算调整的请示。",
+            }),
           },
-        }),
-      }),
-    );
-    const updatedTask = await readJson<{
-      task: {
-        exportFile?: {
-          outputFilename: string;
+        ),
+      );
+      const importData = await readJson<{
+        source: {
+          id: string;
         };
-        parameters: Record<string, string>;
-      };
-    }>(updateResponse);
+      }>(importResponse);
 
-    expect(updatedTask.task.parameters.document_title).toBe("更新后的标题");
-    expect(updatedTask.task.parameters.opinion).toBe("更新后的拟办意见");
-    expect(updatedTask.task.exportFile?.outputFilename).toBe(
-      "拟办意见-已更新.xlsx",
-    );
-  });
-
-  it("downloads export task files through the authenticated atlas-kb route", async () => {
-    const app = createApp();
-    const session = await login(app);
-
-    const response = await app.handle(
-      new Request(
-        "http://localhost/api/kb/export-tasks/task-existing/download",
-        {
-          headers: {
-            Authorization: `Bearer ${session.token}`,
+      const createTaskResponse = await app.handle(
+        new Request(
+          `http://localhost/api/kb/sources/${importData.source.id}/export-tasks`,
+          {
+            method: "POST",
+            headers: {
+              ...authHeaders(session.token),
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              templateId: "template-1",
+            }),
           },
-        },
-      ),
-    );
+        ),
+      );
+      const createdTask = await readJson<{
+        task: {
+          id: string;
+          sourceId: string;
+          status: string;
+        };
+      }>(createTaskResponse);
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe(
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    );
-    expect(response.headers.get("content-disposition")).toContain(
-      "mock-export.xlsx",
-    );
-    expect(await response.text()).toBe("mock export body");
-  });
+      expect(createdTask.task.sourceId).toBe(importData.source.id);
+      expect(createdTask.task.status).toBe("pending");
 
-  it("isolates data between authenticated users", async () => {
+      const detailResponse = await app.handle(
+        new Request("http://localhost/api/kb/export-tasks/task-existing", {
+          headers: authHeaders(session.token),
+        }),
+      );
+      const detailData = await readJson<{
+        task: {
+          canEdit: boolean;
+          parameters: Record<string, string>;
+          template: {
+            fields: Array<{
+              name: string;
+            }>;
+          };
+        };
+      }>(detailResponse);
+
+      expect(detailData.task.canEdit).toBe(true);
+      expect(detailData.task.parameters.opinion).toBe("既有拟办意见");
+      expect(detailData.task.template.fields).toHaveLength(2);
+
+      const updateResponse = await app.handle(
+        new Request("http://localhost/api/kb/export-tasks/task-existing", {
+          method: "PATCH",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            parameters: {
+              document_title: "更新后的标题",
+              opinion: "更新后的拟办意见",
+            },
+          }),
+        }),
+      );
+      const updatedTask = await readJson<{
+        task: {
+          exportFile?: {
+            outputFilename: string;
+          };
+          parameters: Record<string, string>;
+        };
+      }>(updateResponse);
+
+      expect(updatedTask.task.parameters.document_title).toBe("更新后的标题");
+      expect(updatedTask.task.parameters.opinion).toBe("更新后的拟办意见");
+      expect(updatedTask.task.exportFile?.outputFilename).toBe(
+        "拟办意见-已更新.xlsx",
+      );
+    },
+  );
+
+  it.serial(
+    "downloads export task files through the authenticated atlas-kb route",
+    async () => {
+      const app = createApp();
+      const session = await login(app);
+
+      const response = await app.handle(
+        new Request(
+          "http://localhost/api/kb/export-tasks/task-existing/download",
+          {
+            headers: {
+              Authorization: `Bearer ${session.token}`,
+            },
+          },
+        ),
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      expect(response.headers.get("content-disposition")).toContain(
+        "mock-export.xlsx",
+      );
+      expect(await response.text()).toBe("mock export body");
+    },
+  );
+
+  it.serial("isolates data between authenticated users", async () => {
     const app = createApp();
     const alpha = await login(app);
     await createUser({
@@ -1289,28 +1315,31 @@ describe("@atlas-kb/api knowledge endpoints", () => {
     expect(betaSearchResponse.status).toBe(404);
   });
 
-  it("loads template summaries from admin using the final atlas-kb contract", async () => {
-    const app = createApp();
-    const session = await login(app);
+  it.serial(
+    "loads template summaries from admin using the final atlas-kb contract",
+    async () => {
+      const app = createApp();
+      const session = await login(app);
 
-    const response = await app.handle(
-      new Request("http://localhost/api/kb/templates", {
-        headers: authHeaders(session.token),
-      }),
-    );
-    const data = await readJson<{
-      templates: Array<{
-        fieldCount: number;
-        parsedAt?: string;
-        templateType: string;
-        updatedAt: string;
-      }>;
-    }>(response);
+      const response = await app.handle(
+        new Request("http://localhost/api/kb/templates", {
+          headers: authHeaders(session.token),
+        }),
+      );
+      const data = await readJson<{
+        templates: Array<{
+          fieldCount: number;
+          parsedAt?: string;
+          templateType: string;
+          updatedAt: string;
+        }>;
+      }>(response);
 
-    expect(data.templates).toHaveLength(1);
-    expect(data.templates[0]?.templateType).toBe("xlsx");
-    expect(data.templates[0]?.fieldCount).toBe(2);
-    expect(data.templates[0]?.parsedAt).toBe("2026-04-07T15:10:24.000Z");
-    expect(data.templates[0]?.updatedAt).toBe("2026-04-07T15:10:24.000Z");
-  });
+      expect(data.templates).toHaveLength(1);
+      expect(data.templates[0]?.templateType).toBe("xlsx");
+      expect(data.templates[0]?.fieldCount).toBe(2);
+      expect(data.templates[0]?.parsedAt).toBe("2026-04-07T15:10:24.000Z");
+      expect(data.templates[0]?.updatedAt).toBe("2026-04-07T15:10:24.000Z");
+    },
+  );
 });

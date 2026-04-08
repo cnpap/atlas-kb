@@ -37,7 +37,6 @@ export {
   getKnowledgeCollectionSourcesData,
   getKnowledgeSourceById,
   getKnowledgeSourceData,
-  getStoredSourceRecord,
   listKnowledgeCollections,
   listKnowledgeSources,
   replaceSourceContent,

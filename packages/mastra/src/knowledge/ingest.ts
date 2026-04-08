@@ -15,6 +15,7 @@ import {
   buildTextSourceContent,
   extractFileContent,
 } from "./storage";
+import { buildSummary } from "./search-utils";
 import {
   getKnowledgeWorkspace,
   removeDocumentFromKnowledgeWorkspace,
@@ -63,9 +64,7 @@ async function resolveManagedImportFileName(args: {
   const usedNames = new Set(
     sources
       .filter((source) => source.id !== args.sourceId)
-      .map(
-        (source) => source.sourceFilename?.trim() || source.documentId?.trim(),
-      )
+      .map((source) => source.sourceFilename?.trim())
       .filter((value): value is string => Boolean(value)),
   );
 
@@ -173,8 +172,6 @@ async function createFileBackedSource(args: {
     mimeType: args.mimeType,
     byteSize: args.byteSize,
     status: "ready",
-    originalPath: documentId,
-    indexPath: documentId,
   });
 
   return {
@@ -221,7 +218,7 @@ export async function importKnowledgeFile(args: {
     byteSize: args.file.size,
     sourceFilename,
     sourceType: "file",
-    summary: args.input.summary?.trim() || extracted.excerpt,
+    summary: args.input.summary?.trim() || buildSummary(extracted.content, 160),
     tags: parseTags(args.input.tags),
     title,
   });
@@ -309,7 +306,7 @@ export async function importKnowledgeText(args: {
     byteSize: new TextEncoder().encode(extracted.content).byteLength,
     sourceFilename,
     sourceType: "text",
-    summary: args.input.summary?.trim() || extracted.excerpt,
+    summary: args.input.summary?.trim() || buildSummary(extracted.content, 160),
     tags: parseTags(args.input.tags),
     title: extracted.title,
   });
@@ -332,10 +329,11 @@ export async function updateKnowledgeSource(
   const nextTitle = input.title?.trim() || source.title;
   const nextSummary = input.summary?.trim() || source.summary;
   const nextTags = parseTags(input.tags ?? source.tags);
-  const documentId = source.documentId || source.sourceFilename;
+  const documentId = source.documentId;
+  const sourceFilename = source.sourceFilename;
 
-  if (!documentId) {
-    throw new BadRequestError(`资料 "${sourceId}" 缺少有效文件路径`);
+  if (!documentId || !sourceFilename) {
+    throw new BadRequestError(`资料 "${sourceId}" 缺少必要文件信息`);
   }
 
   const { filesystem, workspace } = await getMutableWorkspace({
@@ -356,7 +354,7 @@ export async function updateKnowledgeSource(
     mimeType: source.mimeType,
     metadata: buildIndexMetadata({
       collectionId: source.collectionId,
-      sourceFilename: source.sourceFilename || documentId,
+      sourceFilename,
       sourceType: source.sourceType,
       summary: nextSummary,
       tags: nextTags,
@@ -374,11 +372,9 @@ export async function updateKnowledgeSource(
     tags: nextTags,
     mimeType: source.mimeType,
     byteSize: new TextEncoder().encode(nextContent).byteLength,
-    sourceFilename: source.sourceFilename || documentId,
+    sourceFilename,
     status: "ready",
     failureMessage: undefined,
-    originalPath: documentId,
-    indexPath: documentId,
   });
 }
 

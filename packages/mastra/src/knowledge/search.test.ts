@@ -551,7 +551,7 @@ function mockProvidersWithOptions(options?: {
   }) as typeof fetch;
 }
 
-describe("@atlas-kb/mastra workspace search flow", () => {
+describe.serial("@atlas-kb/mastra workspace search flow", () => {
   let knowledgeDataDir = "";
   let workspaceFilesDir = "";
 
@@ -662,63 +662,66 @@ describe("@atlas-kb/mastra workspace search flow", () => {
     await rm(knowledgeDataDir, { force: true, recursive: true });
   });
 
-  it("returns hits only from the requested collection and current user", async () => {
-    const alpha = await ensureDefaultUser();
-    const beta = await createUser({
-      username: "beta-search",
-      password: "beta-pass",
-    });
+  it.serial(
+    "returns hits only from the requested collection and current user",
+    async () => {
+      const alpha = await ensureDefaultUser();
+      const beta = await createUser({
+        username: "beta-search",
+        password: "beta-pass",
+      });
 
-    const alphaCollection = await createKnowledgeCollection({
-      userId: alpha.id,
-      input: {
-        id: "alpha-search",
-        name: "Alpha Search",
-        description: "alpha private notes",
-      },
-    });
-    const betaCollection = await createKnowledgeCollection({
-      userId: beta.id,
-      input: {
-        id: "beta-search",
-        name: "Beta Search",
-        description: "beta private notes",
-      },
-    });
-
-    await importKnowledgeText({
-      userId: alpha.id,
-      collectionId: alphaCollection.id,
-      input: {
-        title: "Alpha Doc",
-        content: "alpha unique keyword is only visible to alpha user.",
-      },
-    });
-    await importKnowledgeText({
-      userId: beta.id,
-      collectionId: betaCollection.id,
-      input: {
-        title: "Beta Doc",
-        content: "beta unique keyword is only visible to beta user.",
-      },
-    });
-
-    const alphaResult = await searchKnowledge(
-      {
-        query: "alpha unique keyword",
-        collectionId: alphaCollection.id,
-      },
-      {
+      const alphaCollection = await createKnowledgeCollection({
         userId: alpha.id,
-      },
-    );
+        input: {
+          id: "alpha-search",
+          name: "Alpha Search",
+          description: "alpha private notes",
+        },
+      });
+      const betaCollection = await createKnowledgeCollection({
+        userId: beta.id,
+        input: {
+          id: "beta-search",
+          name: "Beta Search",
+          description: "beta private notes",
+        },
+      });
 
-    expect(alphaResult.total).toBe(1);
-    expect(alphaResult.hits[0]?.title).toBe("Alpha Doc");
-    expect(alphaResult.hits[0]?.collectionId).toBe(alphaCollection.id);
-  });
+      await importKnowledgeText({
+        userId: alpha.id,
+        collectionId: alphaCollection.id,
+        input: {
+          title: "Alpha Doc",
+          content: "alpha unique keyword is only visible to alpha user.",
+        },
+      });
+      await importKnowledgeText({
+        userId: beta.id,
+        collectionId: betaCollection.id,
+        input: {
+          title: "Beta Doc",
+          content: "beta unique keyword is only visible to beta user.",
+        },
+      });
 
-  it("answers from searched citations", async () => {
+      const alphaResult = await searchKnowledge(
+        {
+          query: "alpha unique keyword",
+          collectionId: alphaCollection.id,
+        },
+        {
+          userId: alpha.id,
+        },
+      );
+
+      expect(alphaResult.total).toBe(1);
+      expect(alphaResult.hits[0]?.title).toBe("Alpha Doc");
+      expect(alphaResult.hits[0]?.collectionId).toBe(alphaCollection.id);
+    },
+  );
+
+  it.serial("answers from searched citations", async () => {
     const user = await ensureDefaultUser();
     const collection = await createKnowledgeCollection({
       userId: user.id,
@@ -754,165 +757,179 @@ describe("@atlas-kb/mastra workspace search flow", () => {
     expect(result.mode).toBe("model");
   });
 
-  it("persists assistant replies when creating a chat reply", async () => {
-    const user = await ensureDefaultUser();
-    const collection = await createKnowledgeCollection({
-      userId: user.id,
-      input: {
-        id: "chat-search",
-        name: "Chat Search",
-        description: "chat tests",
-      },
-    });
+  it.serial(
+    "persists assistant replies when creating a chat reply",
+    async () => {
+      const user = await ensureDefaultUser();
+      const collection = await createKnowledgeCollection({
+        userId: user.id,
+        input: {
+          id: "chat-search",
+          name: "Chat Search",
+          description: "chat tests",
+        },
+      });
 
-    await importKnowledgeText({
-      userId: user.id,
-      collectionId: collection.id,
-      input: {
-        title: "部门职责",
-        content:
-          "Malware incidents on office devices are handled by the infosec team.",
-      },
-    });
+      await importKnowledgeText({
+        userId: user.id,
+        collectionId: collection.id,
+        input: {
+          title: "部门职责",
+          content:
+            "Malware incidents on office devices are handled by the infosec team.",
+        },
+      });
 
-    const session = await createChatSession({
-      userId: user.id,
-      collectionId: collection.id,
-    });
+      const session = await createChatSession({
+        userId: user.id,
+        collectionId: collection.id,
+      });
 
-    const reply = await createChatReply({
-      userId: user.id,
-      sessionId: session.id,
-      input: {
-        query: "Who handles malware incidents?",
-      },
-    });
-
-    expect(reply.assistantMessage.content).toBeTruthy();
-    expect(reply.assistantMessage.createdAt).toBeTruthy();
-  });
-
-  it("lists workspace files through the native workspace tool", async () => {
-    const user = await ensureDefaultUser();
-    const collection = await createKnowledgeCollection({
-      userId: user.id,
-      input: {
-        id: "chat-list-files",
-        name: "Chat List Files",
-        description: "file listing tests",
-      },
-    });
-
-    const fileImport = await importKnowledgeFiles({
-      userId: user.id,
-      collectionId: collection.id,
-      files: [
-        new File(
-          ["2026 年机关党建工作会议通知。"],
-          "2026年全市机关党的建设工作暨纪检工作会议通知.txt",
-          {
-            type: "text/plain",
-          },
-        ),
-      ],
-      input: {},
-    });
-
-    const session = await createChatSession({
-      userId: user.id,
-      collectionId: collection.id,
-    });
-
-    const reply = await createChatReply({
-      userId: user.id,
-      sessionId: session.id,
-      input: {
-        query: "我们现在有哪些文件？",
-      },
-    });
-
-    expect(fileImport.results[0]?.accepted).toBe(true);
-    expect(reply.assistantMessage.content).toContain(
-      "2026年全市机关党的建设工作暨纪检工作会议通知.txt",
-    );
-  });
-
-  it("guides the knowledge agent to investigate with tools before concluding", async () => {
-    const agent = createKnowledgeAgent({
-      collectionId: "research-space",
-      workspace: {} as never,
-    });
-    const instructions = await agent.getInstructions();
-    const text =
-      typeof instructions === "string" ? instructions : instructions.content;
-
-    expect(String(text)).toContain(
-      "利用现有工具查明当前 workspace 里的真实情况",
-    );
-    expect(String(text)).toContain("如果你还没有查看工具结果，不要直接下结论");
-    expect(String(text)).toContain("请查看文件列表");
-  });
-
-  it("logs diagnostics when gpt-5.4 returns an empty file-list answer without using tools", async () => {
-    mockProvidersWithOptions({
-      bareOpenAIFileListAnswer: true,
-    });
-
-    const user = await ensureDefaultUser();
-    const collection = await createKnowledgeCollection({
-      userId: user.id,
-      input: {
-        id: "gpt54-empty-file-list",
-        name: "GPT 5.4 Empty File List",
-        description: "fallback diagnostics",
-      },
-    });
-
-    await importKnowledgeText({
-      userId: user.id,
-      collectionId: collection.id,
-      input: {
-        title: "请示通知",
-        content: "first document body",
-      },
-    });
-
-    const session = await createChatSession({
-      userId: user.id,
-      collectionId: collection.id,
-    });
-
-    const originalConsoleError = console.error;
-    const errorLogs: unknown[][] = [];
-    console.error = (...args: unknown[]) => {
-      errorLogs.push(args);
-    };
-
-    try {
       const reply = await createChatReply({
         userId: user.id,
         sessionId: session.id,
         input: {
-          query: "当前我们有哪些文件？",
+          query: "Who handles malware incidents?",
         },
       });
 
-      expect(reply.assistantMessage.content).toBe(
-        "没有在当前资料文件夹中找到能直接回答该问题的证据。你可以换个问法，或者先导入更相关的资料。",
+      expect(reply.assistantMessage.content).toBeTruthy();
+      expect(reply.assistantMessage.createdAt).toBeTruthy();
+    },
+  );
+
+  it.serial(
+    "lists workspace files through the native workspace tool",
+    async () => {
+      const user = await ensureDefaultUser();
+      const collection = await createKnowledgeCollection({
+        userId: user.id,
+        input: {
+          id: "chat-list-files",
+          name: "Chat List Files",
+          description: "file listing tests",
+        },
+      });
+
+      const fileImport = await importKnowledgeFiles({
+        userId: user.id,
+        collectionId: collection.id,
+        files: [
+          new File(
+            ["2026 年机关党建工作会议通知。"],
+            "2026年全市机关党的建设工作暨纪检工作会议通知.txt",
+            {
+              type: "text/plain",
+            },
+          ),
+        ],
+        input: {},
+      });
+
+      const session = await createChatSession({
+        userId: user.id,
+        collectionId: collection.id,
+      });
+
+      const reply = await createChatReply({
+        userId: user.id,
+        sessionId: session.id,
+        input: {
+          query: "我们现在有哪些文件？",
+        },
+      });
+
+      expect(fileImport.results[0]?.accepted).toBe(true);
+      expect(reply.assistantMessage.content).toContain(
+        "2026年全市机关党的建设工作暨纪检工作会议通知.txt",
       );
-    } finally {
-      console.error = originalConsoleError;
-    }
+    },
+  );
 
-    expect(errorLogs.length).toBeGreaterThan(0);
-    expect(String(errorLogs[0]?.[0])).toContain(
-      "[knowledge-agent] empty-evidence fallback",
-    );
-    expect(JSON.stringify(errorLogs[0]?.[1])).toContain("openai/gpt-5.4");
-    expect(JSON.stringify(errorLogs[0]?.[1])).toContain(collection.id);
-  });
+  it.serial(
+    "guides the knowledge agent to investigate with tools before concluding",
+    async () => {
+      const agent = createKnowledgeAgent({
+        collectionId: "research-space",
+        workspace: {} as never,
+      });
+      const instructions = await agent.getInstructions();
+      const text =
+        typeof instructions === "string" ? instructions : instructions.content;
 
-  it("saves feedback on assistant replies", async () => {
+      expect(String(text)).toContain(
+        "利用现有工具查明当前 workspace 里的真实情况",
+      );
+      expect(String(text)).toContain(
+        "如果你还没有查看工具结果，不要直接下结论",
+      );
+      expect(String(text)).toContain("请查看文件列表");
+    },
+  );
+
+  it.serial(
+    "logs diagnostics when gpt-5.4 returns an empty file-list answer without using tools",
+    async () => {
+      mockProvidersWithOptions({
+        bareOpenAIFileListAnswer: true,
+      });
+
+      const user = await ensureDefaultUser();
+      const collection = await createKnowledgeCollection({
+        userId: user.id,
+        input: {
+          id: "gpt54-empty-file-list",
+          name: "GPT 5.4 Empty File List",
+          description: "fallback diagnostics",
+        },
+      });
+
+      await importKnowledgeText({
+        userId: user.id,
+        collectionId: collection.id,
+        input: {
+          title: "请示通知",
+          content: "first document body",
+        },
+      });
+
+      const session = await createChatSession({
+        userId: user.id,
+        collectionId: collection.id,
+      });
+
+      const originalConsoleError = console.error;
+      const errorLogs: unknown[][] = [];
+      console.error = (...args: unknown[]) => {
+        errorLogs.push(args);
+      };
+
+      try {
+        const reply = await createChatReply({
+          userId: user.id,
+          sessionId: session.id,
+          input: {
+            query: "当前我们有哪些文件？",
+          },
+        });
+
+        expect(reply.assistantMessage.content).toBe(
+          "没有在当前资料文件夹中找到能直接回答该问题的证据。你可以换个问法，或者先导入更相关的资料。",
+        );
+      } finally {
+        console.error = originalConsoleError;
+      }
+
+      expect(errorLogs.length).toBeGreaterThan(0);
+      expect(String(errorLogs[0]?.[0])).toContain(
+        "[knowledge-agent] empty-evidence fallback",
+      );
+      expect(JSON.stringify(errorLogs[0]?.[1])).toContain("openai/gpt-5.4");
+      expect(JSON.stringify(errorLogs[0]?.[1])).toContain(collection.id);
+    },
+  );
+
+  it.serial("saves feedback on assistant replies", async () => {
     const user = await ensureDefaultUser();
     const collection = await createKnowledgeCollection({
       userId: user.id,
@@ -955,47 +972,50 @@ describe("@atlas-kb/mastra workspace search flow", () => {
     expect(feedback.rating).toBe("up");
   });
 
-  it("maps listed workspace files back to real workspace filenames", async () => {
-    const user = await ensureDefaultUser();
-    const collection = await createKnowledgeCollection({
-      userId: user.id,
-      input: {
-        id: "catalog-space",
-        name: "Catalog Space",
-        description: "catalog tests",
-      },
-    });
+  it.serial(
+    "maps listed workspace files back to real workspace filenames",
+    async () => {
+      const user = await ensureDefaultUser();
+      const collection = await createKnowledgeCollection({
+        userId: user.id,
+        input: {
+          id: "catalog-space",
+          name: "Catalog Space",
+          description: "catalog tests",
+        },
+      });
 
-    await importKnowledgeText({
-      userId: user.id,
-      collectionId: collection.id,
-      input: {
-        title: "请示通知",
-        content: "first document body",
-      },
-    });
-    await importKnowledgeText({
-      userId: user.id,
-      collectionId: collection.id,
-      input: {
-        title: "会议纪要",
-        content: "second document body",
-      },
-    });
+      await importKnowledgeText({
+        userId: user.id,
+        collectionId: collection.id,
+        input: {
+          title: "请示通知",
+          content: "first document body",
+        },
+      });
+      await importKnowledgeText({
+        userId: user.id,
+        collectionId: collection.id,
+        input: {
+          title: "会议纪要",
+          content: "second document body",
+        },
+      });
 
-    const session = await createChatSession({
-      userId: user.id,
-      collectionId: collection.id,
-    });
-    const reply = await createChatReply({
-      userId: user.id,
-      sessionId: session.id,
-      input: {
-        query: "我们有哪些文件？",
-      },
-    });
+      const session = await createChatSession({
+        userId: user.id,
+        collectionId: collection.id,
+      });
+      const reply = await createChatReply({
+        userId: user.id,
+        sessionId: session.id,
+        input: {
+          query: "我们有哪些文件？",
+        },
+      });
 
-    expect(reply.assistantMessage.content).toContain("请示通知.txt");
-    expect(reply.assistantMessage.content).toContain("会议纪要.txt");
-  });
+      expect(reply.assistantMessage.content).toContain("请示通知.txt");
+      expect(reply.assistantMessage.content).toContain("会议纪要.txt");
+    },
+  );
 });

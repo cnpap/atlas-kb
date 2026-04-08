@@ -39,55 +39,20 @@ export type SourceRow = Pick<
   | "byte_size"
   | "collection_id"
   | "content"
-  | "content_preview"
   | "created_at"
   | "document_id"
-  | "excerpt"
   | "failure_message"
   | "id"
-  | "index_path"
-  | "last_processed_at"
-  | "latest_version"
   | "mime_type"
-  | "original_path"
   | "owner_user_id"
-  | "ready_at"
-  | "snapshot_updated_at"
   | "source_filename"
   | "source_type"
-  | "source_url"
   | "status"
   | "summary"
   | "tags_json"
   | "title"
   | "updated_at"
 >;
-
-export type StoredKnowledgeSourceRecord = {
-  id: string;
-  userId: string;
-  collectionId: string;
-  documentId: string;
-  title: string;
-  summary: string;
-  excerpt: string;
-  contentPreview: string;
-  content: string;
-  tags: string[];
-  sourceType: KnowledgeSource["sourceType"];
-  status: KnowledgeSource["status"];
-  sourceFilename?: string;
-  mimeType?: string;
-  byteSize?: number;
-  latestVersion: number;
-  readyAt?: string;
-  lastProcessedAt?: string;
-  failureMessage?: string;
-  originalPath?: string | null;
-  indexPath: string;
-  createdAt: string;
-  updatedAt: string;
-};
 
 export type ChatSessionRow = Pick<
   KbChatSessions,
@@ -137,23 +102,14 @@ export const SOURCE_COLUMNS = [
   "document_id",
   "title",
   "summary",
-  "excerpt",
-  "content_preview",
   "content",
   "tags_json",
   "source_type",
   "status",
   "source_filename",
-  "source_url",
   "mime_type",
   "byte_size",
-  "latest_version",
-  "ready_at",
-  "last_processed_at",
-  "snapshot_updated_at",
   "failure_message",
-  "original_path",
-  "index_path",
   "created_at",
   "updated_at",
 ] as const;
@@ -251,8 +207,6 @@ export function toSource(row: SourceRow): KnowledgeSource {
     collectionId: row.collection_id,
     title: row.title,
     summary: row.summary,
-    excerpt: row.excerpt,
-    contentPreview: row.content_preview,
     content: row.content,
     tags: parseJsonArray(row.tags_json),
     sourceType: row.source_type as KnowledgeSource["sourceType"],
@@ -263,43 +217,7 @@ export function toSource(row: SourceRow): KnowledgeSource {
       row.byte_size === null || row.byte_size === undefined
         ? undefined
         : Number(row.byte_size),
-    latestVersion: row.latest_version,
-    readyAt: toOptionalIsoTimestamp(row.ready_at),
-    lastProcessedAt: toOptionalIsoTimestamp(row.last_processed_at),
     failureMessage: row.failure_message ?? undefined,
-    createdAt: toIsoTimestamp(row.created_at),
-    updatedAt: toIsoTimestamp(row.updated_at),
-  };
-}
-
-export function toStoredSourceRecord(
-  row: SourceRow,
-): StoredKnowledgeSourceRecord {
-  return {
-    id: row.id,
-    userId: String(row.owner_user_id),
-    collectionId: row.collection_id,
-    documentId: row.document_id,
-    title: row.title,
-    summary: row.summary,
-    excerpt: row.excerpt,
-    contentPreview: row.content_preview,
-    content: row.content,
-    tags: parseJsonArray(row.tags_json),
-    sourceType: row.source_type as KnowledgeSource["sourceType"],
-    status: row.status as KnowledgeSource["status"],
-    sourceFilename: row.source_filename ?? undefined,
-    mimeType: row.mime_type ?? undefined,
-    byteSize:
-      row.byte_size === null || row.byte_size === undefined
-        ? undefined
-        : Number(row.byte_size),
-    latestVersion: row.latest_version,
-    readyAt: toOptionalIsoTimestamp(row.ready_at),
-    lastProcessedAt: toOptionalIsoTimestamp(row.last_processed_at),
-    failureMessage: row.failure_message ?? undefined,
-    originalPath: row.original_path,
-    indexPath: row.index_path,
     createdAt: toIsoTimestamp(row.created_at),
     updatedAt: toIsoTimestamp(row.updated_at),
   };

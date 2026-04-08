@@ -1,17 +1,10 @@
 import { NotFoundError } from "@atlas-kb/errors";
 import { basename } from "node:path";
 import { getPresignedGetUrl } from "./object-storage";
-import { getStoredSourceRecord, requireKnowledgeSource } from "./repository";
+import { requireKnowledgeSource } from "./repository";
 
-function buildDownloadFilename(params: {
-  sourceFilename?: string;
-  title: string;
-}) {
-  if (params.sourceFilename?.trim()) {
-    return basename(params.sourceFilename);
-  }
-
-  return `${params.title}.txt`;
+function buildDownloadFilename(sourceFilename: string) {
+  return basename(sourceFilename);
 }
 
 export async function getKnowledgeSourceDownloadUrl(params: {
@@ -23,17 +16,16 @@ export async function getKnowledgeSourceDownloadUrl(params: {
   mimeType: string;
 }> {
   const source = await requireKnowledgeSource(params.userId, params.sourceId);
-  const stored = await getStoredSourceRecord(params.userId, params.sourceId);
-
-  if (!stored) {
-    throw new NotFoundError(`Knowledge source "${params.sourceId}" not found`);
-  }
-
-  const relativePath = stored.originalPath || stored.documentId;
+  const relativePath = source.documentId;
 
   if (!relativePath) {
     throw new NotFoundError(
       `Knowledge source "${params.sourceId}" has no stored file`,
+    );
+  }
+  if (!source.sourceFilename) {
+    throw new NotFoundError(
+      `Knowledge source "${params.sourceId}" has no download filename`,
     );
   }
 
@@ -45,10 +37,7 @@ export async function getKnowledgeSourceDownloadUrl(params: {
 
   return {
     url,
-    filename: buildDownloadFilename({
-      sourceFilename: source.sourceFilename,
-      title: source.title,
-    }),
+    filename: buildDownloadFilename(source.sourceFilename),
     mimeType: source.mimeType || "application/octet-stream",
   };
 }

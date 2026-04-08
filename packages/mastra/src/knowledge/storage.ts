@@ -1,15 +1,9 @@
 import { basename, extname } from "node:path";
 import type { KnowledgeSource } from "@atlas-kb/schema";
-import {
-  buildContentPreview,
-  buildSummary,
-  normalizeWhitespace,
-} from "./search-utils";
+import { normalizeWhitespace } from "./search-utils";
 
 export type ExtractedSourceContent = {
   content: string;
-  contentPreview: string;
-  excerpt: string;
   mimeType: string;
   title: string;
 };
@@ -194,8 +188,6 @@ export async function extractFileContent(args: {
 
   return {
     content,
-    contentPreview: buildContentPreview(content),
-    excerpt: buildSummary(content, 160),
     mimeType: detectMimeType(args.fileName, args.mimeType),
     title: deriveTextTitle(args.fileName, content),
   } satisfies ExtractedSourceContent;
@@ -210,8 +202,6 @@ export function buildTextSourceContent(args: {
 
   return {
     content,
-    contentPreview: buildContentPreview(content),
-    excerpt: buildSummary(content, 160),
     mimeType: detectMimeType(args.fileName),
     title: args.title?.trim() || deriveTextTitle(args.fileName, content),
   } satisfies ExtractedSourceContent;
