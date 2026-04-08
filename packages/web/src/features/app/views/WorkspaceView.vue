@@ -400,11 +400,15 @@
       title: undefined,
     });
 
-    await loadSessions(activeCollectionId.value);
     suspendedMessageLoadSessionId.value = created.session.id;
-    await replaceWorkspaceQuery({
-      session: created.session.id,
-    });
+    await loadSessions(activeCollectionId.value);
+
+    if (activeSessionId.value !== created.session.id) {
+      suspendedMessageLoadSessionId.value = created.session.id;
+      await replaceWorkspaceQuery({
+        session: created.session.id,
+      });
+    }
 
     return created.session.id;
   }
@@ -529,8 +533,8 @@
       const created = await createChatSessionRequest({
         collectionId: activeCollectionId.value,
       });
-      await loadSessions(activeCollectionId.value);
       suspendedMessageLoadSessionId.value = created.session.id;
+      await loadSessions(activeCollectionId.value);
       messages.value = [];
       selectedAssistantMessageId.value = "";
       await replaceWorkspaceQuery({
@@ -609,6 +613,7 @@
     const tempUserId = createTempMessageId("user");
     const tempAssistantId = createTempMessageId("assistant");
     const draftCreatedAt = new Date().toISOString();
+    const draftSessionId = activeSessionId.value;
     let acceptedReply = false;
     let replyErrorMessage = "";
     const completedReplyState = {
@@ -616,28 +621,38 @@
     };
     let sessionId = "";
 
+    messages.value = [
+      ...messages.value,
+      {
+        id: tempUserId,
+        sessionId: draftSessionId,
+        role: "user",
+        content: trimmed,
+        citations: [],
+        createdAt: draftCreatedAt,
+      },
+      {
+        id: tempAssistantId,
+        sessionId: draftSessionId,
+        role: "assistant",
+        content: "",
+        citations: [],
+        createdAt: draftCreatedAt,
+      },
+    ];
+    selectedAssistantMessageId.value = tempAssistantId;
+
     try {
       sessionId = await ensureSession();
 
-      messages.value = [
-        ...messages.value,
-        {
-          id: tempUserId,
-          sessionId,
-          role: "user",
-          content: trimmed,
-          citations: [],
-          createdAt: draftCreatedAt,
-        },
-        {
-          id: tempAssistantId,
-          sessionId,
-          role: "assistant",
-          content: "",
-          citations: [],
-          createdAt: draftCreatedAt,
-        },
-      ];
+      messages.value = messages.value.map((message) =>
+        message.id === tempUserId || message.id === tempAssistantId
+          ? {
+              ...message,
+              sessionId,
+            }
+          : message,
+      );
       selectedAssistantMessageId.value = tempAssistantId;
 
       await streamChatReplyRequest({

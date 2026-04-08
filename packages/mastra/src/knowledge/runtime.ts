@@ -26,6 +26,7 @@ import {
   validateKnowledgeStorageConfig,
 } from "./config";
 import { buildKnowledgeSourceObjectPrefix } from "./object-storage";
+import type { SearchEngine } from "@mastra/core/workspace/search";
 
 type WorkspaceEntry = {
   indexName: string;
@@ -222,7 +223,9 @@ async function ensureVectorIndex(
     throw new Error("未能解析 embedding 维度");
   }
 
-  const existingIndexes = await vectorStore.listIndexes().catch(() => []);
+  const existingIndexes = await vectorStore
+    .listIndexes()
+    .catch((): string[] => []);
 
   if (!existingIndexes.includes(indexName)) {
     await vectorStore.createIndex({
@@ -369,7 +372,7 @@ export async function removeDocumentFromKnowledgeWorkspace(params: {
     collectionId: params.collectionId,
   });
   const searchEngine = (
-    workspace as { _searchEngine?: { remove?: (id: string) => Promise<void> } }
+    workspace as unknown as { _searchEngine?: SearchEngine }
   )._searchEngine;
 
   await searchEngine?.remove?.(params.documentId);
