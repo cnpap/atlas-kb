@@ -15,7 +15,6 @@ import {
   ChatReplyRequestSchema,
   ChatReplyStreamRequestSchema,
 } from "@atlas-kb/schema";
-import { buildKnowledgeMemoryResourceId } from "../memory";
 import {
   appendChatMessage,
   createChatSession,
@@ -25,7 +24,7 @@ import {
   requireChatSession,
   saveMessageFeedback,
   updateChatSession,
-} from "./repository";
+} from "./chat-repository";
 import {
   runKnowledgeAgentQuestion,
   streamKnowledgeAgentQuestion,
@@ -92,8 +91,6 @@ function writeStreamEvent(
   }
 }
 
-const TIMEOUT_ERROR_PATTERN = /timed out|timeout|ETIMEDOUT|AbortError/i;
-
 function readErrorText(error: unknown): string {
   if (!(error instanceof Error)) {
     return "";
@@ -109,12 +106,6 @@ function readErrorText(error: unknown): string {
 }
 
 function getErrorMessage(error: unknown): string {
-  const errorText = readErrorText(error);
-
-  if (TIMEOUT_ERROR_PATTERN.test(errorText)) {
-    return "知识库回答超时，请稍后重试。";
-  }
-
   if (error instanceof ApiHttpError && error.message.trim()) {
     return error.message;
   }
@@ -126,6 +117,54 @@ function getErrorMessage(error: unknown): string {
   return "AI 对话失败";
 }
 
+async function prepareChatReplyExecution(params: {
+  userId: string;
+  sessionId: string;
+  query: string;
+  limit?: number;
+}) {
+  const session = await requireChatSession(params.userId, params.sessionId);
+  const userMessage = await appendChatMessage({
+    userId: params.userId,
+    sessionId: session.id,
+    role: "user",
+    content: params.query,
+  });
+
+  return {
+    session,
+    userMessage,
+    agentParams: {
+      question: params.query,
+      collectionId: session.collectionId,
+      limit: params.limit,
+      userId: params.userId,
+      threadId: session.id,
+    },
+  };
+}
+
+async function completeChatReply(params: {
+  userId: string;
+  sessionId: string;
+  userMessage: ChatReplyFinal["userMessage"];
+  answer: string;
+}): Promise<ChatReplyFinal> {
+  const assistantMessage = await appendChatMessage({
+    userId: params.userId,
+    sessionId: params.sessionId,
+    role: "assistant",
+    content: params.answer,
+  });
+  const session = await requireChatSession(params.userId, params.sessionId);
+
+  return {
+    session,
+    userMessage: params.userMessage,
+    assistantMessage,
+  };
+}
+
 export async function createChatReply(params: {
   userId: string;
   sessionId: string;
@@ -135,42 +174,21 @@ export async function createChatReply(params: {
   // 1. 先保存用户消息
   // 2. 再用 sessionId 作为记忆线程调用绑定 workspace 的智能体
   // 3. 最后保存助手消息
-  const session = await requireChatSession(params.userId, params.sessionId);
   const parsedInput = ChatReplyRequestSchema.parse(params.input);
-  const collectionId = session.collectionId;
-  const resourceId = buildKnowledgeMemoryResourceId(
-    params.userId,
-    collectionId,
-  );
-
-  const userMessage = await appendChatMessage({
+  const execution = await prepareChatReplyExecution({
     userId: params.userId,
-    sessionId: session.id,
-    role: "user",
-    content: parsedInput.query,
-  });
-  const answer = await runKnowledgeAgentQuestion({
-    question: parsedInput.query,
-    collectionId,
+    sessionId: params.sessionId,
+    query: parsedInput.query,
     limit: parsedInput.limit,
-    userId: params.userId,
-    threadId: session.id,
-    resourceId,
   });
-  const assistantMessage = await appendChatMessage({
+  const answer = await runKnowledgeAgentQuestion(execution.agentParams);
+
+  return completeChatReply({
     userId: params.userId,
-    sessionId: session.id,
-    role: "assistant",
-    content: answer.answer,
+    sessionId: execution.session.id,
+    userMessage: execution.userMessage,
+    answer: answer.answer,
   });
-
-  const refreshedSession = await requireChatSession(params.userId, session.id);
-
-  return {
-    session: refreshedSession,
-    userMessage,
-    assistantMessage,
-  };
 }
 
 export async function streamChatReply(params: {
@@ -180,23 +198,13 @@ export async function streamChatReply(params: {
   // 流式对话和 createChatReply 保持同样的持久化顺序，只是对前端只发
   // 已接收、文本增量、已完成、错误 这几个最小事件。
   const parsedInput = ChatReplyStreamRequestSchema.parse(params.input);
-  const session = await requireChatSession(
-    params.userId,
-    parsedInput.sessionId,
-  );
-  const collectionId = session.collectionId;
-  const resourceId = buildKnowledgeMemoryResourceId(
-    params.userId,
-    collectionId,
-  );
-
-  const userMessage = await appendChatMessage({
+  const execution = await prepareChatReplyExecution({
     userId: params.userId,
-    sessionId: session.id,
-    role: "user",
-    content: parsedInput.query,
+    sessionId: parsedInput.sessionId,
+    query: parsedInput.query,
+    limit: parsedInput.limit,
   });
-
+  const { session, userMessage } = execution;
   const responseMessageId = crypto.randomUUID();
   const textPartId = `text:${responseMessageId}`;
 
@@ -247,16 +255,9 @@ export async function streamChatReply(params: {
 
         try {
           const answer = await streamKnowledgeAgentQuestion({
-            question: parsedInput.query,
-            collectionId,
-            limit: parsedInput.limit,
-            userId: params.userId,
-            threadId: session.id,
-            resourceId,
-            onStreamPart: async (part) => {
-              if (part.type === "text-delta") {
-                writeTextDelta(String(part.textDelta ?? ""));
-              }
+            ...execution.agentParams,
+            onTextDelta: async (delta) => {
+              writeTextDelta(delta);
             },
           });
 
@@ -266,23 +267,16 @@ export async function streamChatReply(params: {
 
           finishText();
 
-          const assistantMessage = await appendChatMessage({
+          const reply = await completeChatReply({
             userId: params.userId,
             sessionId: session.id,
-            role: "assistant",
-            content: answer.answer,
+            userMessage,
+            answer: answer.answer,
           });
-
-          const refreshedSession = await requireChatSession(
-            params.userId,
-            session.id,
-          );
 
           writeStreamEvent(writer, {
             type: "reply-completed",
-            session: refreshedSession,
-            userMessage,
-            assistantMessage,
+            ...reply,
           });
           writer.write({
             type: "finish",

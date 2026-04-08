@@ -12,6 +12,8 @@ import {
   createUser,
   ensureDefaultUser,
   importKnowledgeText,
+  listChatMessages,
+  listChatSessions,
   LocalFilesystem,
   resetKnowledgeRepository,
   resetKnowledgeRuntimeCache,
@@ -755,6 +757,7 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
 
     expect(result.answer).toBeTruthy();
     expect(result.mode).toBe("model");
+    await expect(listChatSessions(user.id)).resolves.toHaveLength(0);
   });
 
   it.serial(
@@ -792,9 +795,15 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
           query: "Who handles malware incidents?",
         },
       });
+      const messages = await listChatMessages(user.id, session.id);
 
       expect(reply.assistantMessage.content).toBeTruthy();
       expect(reply.assistantMessage.createdAt).toBeTruthy();
+      expect(messages).toHaveLength(2);
+      expect(messages[0]?.role).toBe("user");
+      expect(messages[0]?.content).toBe("Who handles malware incidents?");
+      expect(messages[1]?.role).toBe("assistant");
+      expect(messages[1]?.content).toBe(reply.assistantMessage.content);
     },
   );
 

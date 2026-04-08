@@ -1,33 +1,58 @@
 import type { ChunkType, FullOutput } from "@mastra/core/stream";
+import { ModelProviderUnavailableError } from "@atlas-kb/errors";
 import { createKnowledgeAgent } from "../agents";
 import { buildKnowledgeMemoryResourceId } from "../memory";
 import {
   getRuntimeModelLabel,
+  getRuntimeModelLogContext,
   mapRuntimeModelError,
 } from "../models/runtime-model";
-import { requireKnowledgeCollection } from "./repository";
+import { requireKnowledgeCollection } from "./collections-repository";
 import { getKnowledgeWorkspace } from "./runtime";
 
 const AGENT_EXECUTION_TIMEOUT_MS = 20_000;
 const MAX_AGENT_STEPS = 6;
+const KNOWLEDGE_AGENT_TIMEOUT_MESSAGE = "知识库回答超时，请稍后重试。";
 const KNOWLEDGE_EMPTY_EVIDENCE_ANSWER =
   "没有在当前资料文件夹中找到能直接回答该问题的证据。你可以换个问法，或者先导入更相关的资料。";
 
-class AgentPhaseTimeoutError extends Error {}
+class KnowledgeAgentTimeoutError extends Error {
+  constructor() {
+    super(KNOWLEDGE_AGENT_TIMEOUT_MESSAGE);
+    this.name = "KnowledgeAgentTimeoutError";
+  }
+}
 
-type StreamPart = {
-  type: string;
-  [key: string]: unknown;
+type KnowledgeExecutionParams = {
+  limit?: number;
+  question: string;
+  collectionId: string;
+  userId: string;
+  threadId?: string;
+  resourceId?: string;
 };
 
-function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  message: string,
-): Promise<T> {
+type KnowledgeAnswerResult = {
+  answer: string;
+  finishReason: string;
+  question: string;
+  collectionId: string;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+};
+
+type KnowledgeAgentOutput = Pick<
+  FullOutput<undefined>,
+  "finishReason" | "text" | "totalUsage"
+>;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(new AgentPhaseTimeoutError(message));
+      reject(new KnowledgeAgentTimeoutError());
     }, timeoutMs);
 
     promise.then(
@@ -43,7 +68,7 @@ function withTimeout<T>(
   });
 }
 
-function buildUsageSummary(output: FullOutput<undefined>) {
+function buildUsageSummary(output: KnowledgeAgentOutput) {
   return {
     completionTokens: output.totalUsage.outputTokens ?? 0,
     promptTokens: output.totalUsage.inputTokens ?? 0,
@@ -149,73 +174,146 @@ async function buildKnowledgeExecutionContext(params: {
     agent,
     options: {
       maxSteps: MAX_AGENT_STEPS,
-      memory:
-        params.threadId && params.resourceId
-          ? {
-              // sessionId 作为 thread 传入，这样观察记忆只会作用在当前会话内。
-              // resourceId 保持在用户+资料库维度稳定，是当前 Mastra 记忆运行时
-              // 的调用要求。
-              thread: params.threadId,
-              resource: params.resourceId,
-            }
-          : undefined,
+      memory: params.threadId
+        ? {
+            // sessionId 作为 thread 传入，这样观察记忆只会作用在当前会话内。
+            // resourceId 保持在用户+资料库维度稳定，是当前 Mastra 记忆运行时
+            // 的调用要求。
+            thread: params.threadId,
+            resource:
+              params.resourceId ??
+              buildKnowledgeMemoryResourceId(
+                params.userId,
+                params.collectionId,
+              ),
+          }
+        : undefined,
       temperature: 0,
     },
   };
 }
 
-export async function runKnowledgeAgentQuestion(params: {
-  limit?: number;
-  question: string;
+type KnowledgeExecutionContext = Awaited<
+  ReturnType<typeof buildKnowledgeExecutionContext>
+>;
+
+function buildKnowledgeAnswerResult(params: {
   collectionId: string;
-  userId: string;
-  threadId?: string;
-  resourceId?: string;
-}): Promise<{
+  output: KnowledgeAgentOutput;
+  question: string;
+}): KnowledgeAnswerResult {
+  const answer = params.output.text.trim() || KNOWLEDGE_EMPTY_EVIDENCE_ANSWER;
+
+  if (answer === KNOWLEDGE_EMPTY_EVIDENCE_ANSWER) {
+    logFallbackAnswer({
+      collectionId: params.collectionId,
+      output: params.output,
+      question: params.question,
+    });
+  }
+
+  return {
+    answer,
+    finishReason: params.output.finishReason || "stop",
+    question: params.question,
+    collectionId: params.collectionId,
+    usage: buildUsageSummary(params.output),
+  };
+}
+
+function mapKnowledgeExecutionError(error: unknown) {
+  if (error instanceof KnowledgeAgentTimeoutError) {
+    console.error("[knowledge-agent] timeout", {
+      errorMessage: error.message,
+      errorName: error.name,
+      ...getRuntimeModelLogContext(),
+    });
+
+    return new ModelProviderUnavailableError(
+      KNOWLEDGE_AGENT_TIMEOUT_MESSAGE,
+      error,
+    );
+  }
+
+  return mapRuntimeModelError(error, "AI 对话");
+}
+
+async function streamKnowledgeExecutionOutput(
+  context: KnowledgeExecutionContext,
+  params: {
+    onTextDelta: (delta: string) => Promise<void> | void;
+    question: string;
+  },
+): Promise<KnowledgeAgentOutput> {
+  const stream = await withTimeout(
+    context.agent.stream(params.question, context.options),
+    AGENT_EXECUTION_TIMEOUT_MS,
+  );
+
+  return withTimeout(
+    (async () => {
+      for await (const chunk of stream.fullStream as AsyncIterable<
+        ChunkType<undefined>
+      >) {
+        if (chunk.type === "text-delta") {
+          await params.onTextDelta(chunk.payload.text);
+        }
+      }
+
+      return stream.getFullOutput();
+    })(),
+    AGENT_EXECUTION_TIMEOUT_MS,
+  );
+}
+
+async function executeKnowledgeQuestion(
+  params: KnowledgeExecutionParams & {
+    onTextDelta?: (delta: string) => Promise<void> | void;
+  },
+): Promise<KnowledgeAnswerResult> {
+  try {
+    const context = await buildKnowledgeExecutionContext(params);
+    const output = params.onTextDelta
+      ? await streamKnowledgeExecutionOutput(context, {
+          onTextDelta: params.onTextDelta,
+          question: params.question,
+        })
+      : await withTimeout(
+          context.agent.generate(params.question, context.options),
+          AGENT_EXECUTION_TIMEOUT_MS,
+        );
+
+    return buildKnowledgeAnswerResult({
+      collectionId: params.collectionId,
+      output,
+      question: params.question,
+    });
+  } catch (error) {
+    throw mapKnowledgeExecutionError(error);
+  }
+}
+
+export async function runKnowledgeAgentQuestion(
+  params: KnowledgeExecutionParams,
+): Promise<{
   answer: string;
   question: string;
   collectionId: string;
 }> {
-  try {
-    const context = await buildKnowledgeExecutionContext(params);
-    const output = await withTimeout(
-      context.agent.generate(params.question, context.options),
-      AGENT_EXECUTION_TIMEOUT_MS,
-      "知识库回答超时，请重试。",
-    );
-    const answer = output.text.trim() || KNOWLEDGE_EMPTY_EVIDENCE_ANSWER;
+  const answer = await executeKnowledgeQuestion(params);
 
-    if (answer === KNOWLEDGE_EMPTY_EVIDENCE_ANSWER) {
-      logFallbackAnswer({
-        collectionId: params.collectionId,
-        output,
-        question: params.question,
-      });
-    }
-
-    return {
-      answer,
-      question: params.question,
-      collectionId: params.collectionId,
-    };
-  } catch (error) {
-    if (error instanceof AgentPhaseTimeoutError) {
-      throw error;
-    }
-
-    throw mapRuntimeModelError(error, "AI 对话");
-  }
+  return {
+    answer: answer.answer,
+    question: answer.question,
+    collectionId: answer.collectionId,
+  };
 }
 
-export async function streamKnowledgeAgentQuestion(params: {
-  limit?: number;
-  question: string;
-  collectionId: string;
-  userId: string;
-  threadId?: string;
-  resourceId?: string;
-  onStreamPart?: (part: StreamPart) => Promise<void> | void;
-}): Promise<{
+export async function streamKnowledgeAgentQuestion(
+  params: KnowledgeExecutionParams & {
+    onTextDelta?: (delta: string) => Promise<void> | void;
+  },
+): Promise<{
   answer: string;
   finishReason: string;
   question: string;
@@ -226,55 +324,13 @@ export async function streamKnowledgeAgentQuestion(params: {
     totalTokens: number;
   };
 }> {
-  try {
-    const context = await buildKnowledgeExecutionContext(params);
-    const stream = await withTimeout(
-      context.agent.stream(params.question, context.options),
-      AGENT_EXECUTION_TIMEOUT_MS,
-      "知识库回答超时，请重试。",
-    );
-    const output = await withTimeout(
-      (async () => {
-        for await (const chunk of stream.fullStream as AsyncIterable<
-          ChunkType<undefined>
-        >) {
-          if (chunk.type === "text-delta") {
-            await params.onStreamPart?.({
-              type: "text-delta",
-              textDelta: chunk.payload.text,
-            });
-          }
-        }
-
-        return stream.getFullOutput();
-      })(),
-      AGENT_EXECUTION_TIMEOUT_MS,
-      "知识库回答超时，请重试。",
-    );
-    const answer = output.text.trim() || KNOWLEDGE_EMPTY_EVIDENCE_ANSWER;
-
-    if (answer === KNOWLEDGE_EMPTY_EVIDENCE_ANSWER) {
-      logFallbackAnswer({
-        collectionId: params.collectionId,
-        output,
-        question: params.question,
-      });
-    }
-
-    return {
-      answer,
-      finishReason: output.finishReason || "stop",
-      question: params.question,
-      collectionId: params.collectionId,
-      usage: buildUsageSummary(output),
-    };
-  } catch (error) {
-    if (error instanceof AgentPhaseTimeoutError) {
-      throw error;
-    }
-
-    throw mapRuntimeModelError(error, "AI 对话");
-  }
+  return executeKnowledgeQuestion(params).then((answer) => ({
+    answer: answer.answer,
+    finishReason: answer.finishReason,
+    question: answer.question,
+    collectionId: answer.collectionId,
+    usage: answer.usage,
+  }));
 }
 
 export async function answerKnowledgeQuestion(
@@ -291,10 +347,6 @@ export async function answerKnowledgeQuestion(
     limit: input.limit,
     userId: options.userId,
     threadId: `ask:${crypto.randomUUID()}`,
-    resourceId: buildKnowledgeMemoryResourceId(
-      options.userId,
-      input.collectionId,
-    ),
   });
 
   return {
