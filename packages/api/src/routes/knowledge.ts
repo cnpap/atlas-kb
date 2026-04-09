@@ -15,6 +15,7 @@ import {
   listKnowledgeExportTasksFromAdmin,
   listKnowledgeCollections,
   listKnowledgeTemplatesFromAdmin,
+  processNextKnowledgeImportJob,
   requireKnowledgeCollection,
   requireKnowledgeSource,
   searchKnowledge,
@@ -41,6 +42,7 @@ import {
   KnowledgeExportTaskUpdateRequestSchema,
   KnowledgeExportTasksQuerySchema,
   KnowledgeExportTasksResponseSchema,
+  KnowledgeImportJobProcessResponseSchema,
   KnowledgeImportResponseSchema,
   KnowledgeSourceIdParamsSchema,
   KnowledgeSourceResponseSchema,
@@ -419,6 +421,18 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
     {
       body: KnowledgeExportTaskGenerateRequestSchema,
       response: KnowledgeExportTaskGenerateResponseSchema,
+    },
+  )
+  .post(
+    "/internal/import-jobs/process-next",
+    async ({ headers }) => {
+      requireInternalSecret(headers);
+      return success({
+        result: await processNextKnowledgeImportJob(),
+      });
+    },
+    {
+      response: KnowledgeImportJobProcessResponseSchema,
     },
   )
   .post(

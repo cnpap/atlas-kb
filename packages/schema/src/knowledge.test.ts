@@ -45,7 +45,7 @@ describe("@atlas-kb/schema knowledge contracts", () => {
     expect(result.data.collections[0]?.id).toBe("writing-system");
   });
 
-  it("parses synchronous import responses", () => {
+  it("parses import responses", () => {
     const payload = success({
       collection: {
         id: "research",
@@ -76,13 +76,12 @@ describe("@atlas-kb/schema knowledge contracts", () => {
         updatedAt: "2026-03-23T10:00:00.000Z",
       },
       engine: "hybrid",
-      indexed: true,
     });
 
     const result = KnowledgeImportResponseSchema.parse(payload);
 
     expect(result.data.source.documentId).toBe("客户访谈纪要.txt");
-    expect(result.data.indexed).toBeTrue();
+    expect(result.data.source.status).toBe("ready");
   });
 
   it("parses chat reply envelopes with citations", () => {

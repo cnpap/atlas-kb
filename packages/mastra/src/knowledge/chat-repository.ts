@@ -5,6 +5,7 @@ import type {
   ChatMessageFeedbackRequest,
   ChatSession,
 } from "@atlas-kb/schema";
+import { sql } from "kysely";
 import { ensureKnowledgeDatabase } from "./db";
 import {
   CHAT_SESSION_COLUMNS,
@@ -193,6 +194,10 @@ export async function listChatMessages(
     .where("m.owner_user_id", "=", toDbUserId(userId))
     .where("m.session_id", "=", sessionId)
     .orderBy("m.created_at", "asc")
+    .orderBy(
+      sql<number>`case when ${sql.ref("m.role")} = 'user' then 0 else 1 end`,
+      "asc",
+    )
     .execute();
 
   return rows.map((row) => toChatMessage(row));

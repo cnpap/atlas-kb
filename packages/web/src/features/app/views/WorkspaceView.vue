@@ -7,7 +7,7 @@
     KnowledgeSource,
   } from "@atlas-kb/schema";
   import { useToast } from "@nuxt/ui/composables";
-  import { computed, onMounted, ref, watch } from "vue";
+  import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
   import { useRoute, useRouter } from "vue-router";
   import {
     createChatSessionRequest,
@@ -49,6 +49,7 @@
   import { useWorkspaceExports } from "@/features/app/composables/useWorkspaceExports";
 
   type PanelMode = "library" | "exports";
+  const SOURCE_POLL_INTERVAL_MS = 4_000;
 
   const route = useRoute();
   const router = useRouter();
@@ -143,6 +144,9 @@
   const selectedSource = computed(
     () => sources.value.find((item) => item.id === routeSourceId.value) || null,
   );
+  const hasProcessingSources = computed(() =>
+    sources.value.some((source) => source.status === "processing"),
+  );
   const activeSessionCollectionLabel = computed(() => {
     if (activeSession.value) {
       return getCollectionName(activeSession.value.collectionId, "未选择分组");
@@ -157,6 +161,7 @@
   const userLoading = computed(
     () => !authInitialized.value || (authPending.value && !currentUser.value),
   );
+  let sourcePollTimer: ReturnType<typeof setInterval> | null = null;
 
   function createTempMessageId(prefix: "user" | "assistant"): string {
     return generateClientId(`temp:${prefix}`);
@@ -269,8 +274,10 @@
     sources.value = data.sources;
   }
 
-  async function loadCollections() {
-    loadingCollections.value = true;
+  async function loadCollections(options: { silent?: boolean } = {}) {
+    if (!options.silent) {
+      loadingCollections.value = true;
+    }
 
     try {
       const data = await listKnowledgeCollections();
@@ -292,7 +299,9 @@
       error.value =
         cause instanceof Error ? cause.message : "资料文件夹加载失败";
     } finally {
-      loadingCollections.value = false;
+      if (!options.silent) {
+        loadingCollections.value = false;
+      }
     }
   }
 
@@ -358,6 +367,53 @@
         loadingSources.value = false;
       }
     }
+  }
+
+  function stopSourcePolling() {
+    if (!sourcePollTimer) {
+      return;
+    }
+
+    clearInterval(sourcePollTimer);
+    sourcePollTimer = null;
+  }
+
+  async function pollProcessingSources() {
+    const collectionId = activeCollection.value?.id;
+
+    if (!collectionId || !hasProcessingSources.value) {
+      stopSourcePolling();
+      return;
+    }
+
+    try {
+      await Promise.all([
+        loadSources(collectionId, {
+          silent: true,
+        }),
+        loadCollections({
+          silent: true,
+        }),
+      ]);
+    } catch (cause) {
+      stopSourcePolling();
+      error.value = cause instanceof Error ? cause.message : "资料状态刷新失败";
+    }
+  }
+
+  function ensureSourcePolling() {
+    if (!activeCollection.value?.id || !hasProcessingSources.value) {
+      stopSourcePolling();
+      return;
+    }
+
+    if (sourcePollTimer) {
+      return;
+    }
+
+    sourcePollTimer = setInterval(() => {
+      void pollProcessingSources();
+    }, SOURCE_POLL_INTERVAL_MS);
   }
 
   async function loadMessages(sessionId: string) {
@@ -751,10 +807,11 @@
 
     const collectionId = activeCollection.value.id;
     let acceptedCount = 0;
+    let queuedForProcessingCount = 0;
 
     try {
       for (const file of payload.files) {
-        await uploadKnowledgeFileRequest({
+        const result = await uploadKnowledgeFileRequest({
           collectionId,
           file,
           summary: payload.summary,
@@ -762,13 +819,18 @@
         });
 
         acceptedCount += 1;
+        if (result.source.status === "processing") {
+          queuedForProcessingCount += 1;
+        }
       }
 
       await loadCollections();
       await loadSources(collectionId);
       showImportModal.value = false;
 
-      if (acceptedCount > 0) {
+      if (queuedForProcessingCount > 0) {
+        showToast("文件已上传，正在后台解析与建立索引", "info");
+      } else if (acceptedCount > 0) {
         showToast("文件已加入知识库");
       } else {
         showToast("没有成功导入的文件", "warning");
@@ -1049,8 +1111,32 @@
     },
   );
 
+  watch(
+    [activeCollectionId, hasProcessingSources],
+    ([collectionId, hasProcessing]) => {
+      if (bootstrappingWorkspace.value) {
+        return;
+      }
+
+      if (!collectionId || !hasProcessing) {
+        stopSourcePolling();
+        return;
+      }
+
+      ensureSourcePolling();
+    },
+    {
+      immediate: true,
+    },
+  );
+
   onMounted(async () => {
     await restoreWorkspaceState();
+  });
+
+  onBeforeUnmount(() => {
+    stopExportTaskPolling();
+    stopSourcePolling();
   });
 </script>
 

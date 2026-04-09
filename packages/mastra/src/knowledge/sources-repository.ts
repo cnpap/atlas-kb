@@ -1,7 +1,10 @@
 import { NotFoundError } from "@atlas-kb/errors";
 import type { KnowledgeCollection, KnowledgeSource } from "@atlas-kb/schema";
+import { buildKnowledgeTenantId, shouldSyncTenantIndex } from "./ops-agent-kit";
+import { deleteKnowledgeImportJobsForSource } from "./import-jobs-repository";
 import { ensureKnowledgeDatabase } from "./db";
 import {
+  getKnowledgeTenantIndexService,
   getKnowledgeWorkspace,
   removeDocumentFromKnowledgeWorkspace,
 } from "./runtime";
@@ -186,11 +189,21 @@ export async function deleteKnowledgeSource(
 ): Promise<void> {
   const source = await requireKnowledgeSource(userId, sourceId);
   const db = await ensureKnowledgeDatabase();
-  const documentId = source.documentId || source.sourceFilename;
-  const workspace = await getKnowledgeWorkspace({
+  await deleteKnowledgeImportJobsForSource({
     userId,
-    collectionId: source.collectionId,
-  }).catch(() => undefined);
+    sourceId,
+  });
+  const documentId = source.documentId || source.sourceFilename;
+  const [tenantIndexService, workspace] = await Promise.all([
+    getKnowledgeTenantIndexService({
+      userId,
+      collectionId: source.collectionId,
+    }).catch(() => undefined),
+    getKnowledgeWorkspace({
+      userId,
+      collectionId: source.collectionId,
+    }).catch(() => undefined),
+  ]);
 
   if (documentId) {
     await removeDocumentFromKnowledgeWorkspace({
@@ -198,6 +211,25 @@ export async function deleteKnowledgeSource(
       collectionId: source.collectionId,
       documentId,
     }).catch(() => undefined);
+
+    if (
+      tenantIndexService &&
+      shouldSyncTenantIndex({
+        sourceType: source.sourceType,
+        fileName: source.sourceFilename ?? documentId,
+        mimeType: source.mimeType,
+      })
+    ) {
+      await tenantIndexService
+        .deleteIndex({
+          tenantId: buildKnowledgeTenantId({
+            userId,
+            collectionId: source.collectionId,
+          }),
+          path: documentId,
+        })
+        .catch(() => undefined);
+    }
   }
 
   await db

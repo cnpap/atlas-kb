@@ -1,5 +1,10 @@
 import { basename, extname } from "node:path";
 import type { KnowledgeSource } from "@atlas-kb/schema";
+import {
+  detectKnowledgeMimeType,
+  deriveKnowledgeSourceTitleFromFileName,
+  getDefaultExtensionForMimeType,
+} from "./document-file-types";
 import { normalizeWhitespace } from "./search-utils";
 
 type ExtractedSourceContent = {
@@ -7,38 +12,6 @@ type ExtractedSourceContent = {
   mimeType: string;
   title: string;
 };
-
-const MIME_BY_EXTENSION = new Map<string, string>([
-  [".cjs", "text/javascript"],
-  [".css", "text/css"],
-  [".csv", "text/csv"],
-  [".html", "text/html"],
-  [".js", "text/javascript"],
-  [".json", "application/json"],
-  [".jsx", "text/javascript"],
-  [".md", "text/markdown"],
-  [".mjs", "text/javascript"],
-  [".py", "text/x-python"],
-  [".sh", "text/x-shellscript"],
-  [".sql", "text/plain"],
-  [".ts", "text/plain"],
-  [".tsx", "text/plain"],
-  [".txt", "text/plain"],
-  [".vue", "text/plain"],
-  [".xml", "application/xml"],
-  [".yaml", "application/yaml"],
-  [".yml", "application/yaml"],
-]);
-
-const DEFAULT_EXTENSION_BY_MIME = new Map<string, string>([
-  ["application/json", ".json"],
-  ["application/xml", ".xml"],
-  ["text/csv", ".csv"],
-  ["text/html", ".html"],
-  ["text/markdown", ".md"],
-  ["text/plain", ".txt"],
-  ["application/yaml", ".yaml"],
-]);
 
 function stripControlCharacters(value: string) {
   return Array.from(value)
@@ -76,14 +49,10 @@ function getFallbackExtension(args: {
   mimeType?: string;
   sourceType: KnowledgeSource["sourceType"];
 }) {
-  const mimeType = args.mimeType?.split(";", 1)[0]?.trim().toLowerCase();
+  const matchedExtension = getDefaultExtensionForMimeType(args.mimeType);
 
-  if (mimeType) {
-    const matchedExtension = DEFAULT_EXTENSION_BY_MIME.get(mimeType);
-
-    if (matchedExtension) {
-      return matchedExtension;
-    }
+  if (matchedExtension) {
+    return matchedExtension;
   }
 
   switch (args.sourceType) {
@@ -152,15 +121,7 @@ function deriveTextTitle(fileName: string, content: string): string {
     return firstLine.replace(/^#{1,6}\s+/, "").slice(0, 160);
   }
 
-  return basename(fileName, extname(fileName)) || "Untitled Source";
-}
-
-function detectMimeType(fileName: string, mimeType?: string): string {
-  if (mimeType?.trim()) {
-    return mimeType.trim();
-  }
-
-  return MIME_BY_EXTENSION.get(extname(fileName).toLowerCase()) || "text/plain";
+  return deriveKnowledgeSourceTitleFromFileName(fileName);
 }
 
 function decodeTextContent(bytes: Uint8Array): string {
@@ -188,7 +149,7 @@ export async function extractFileContent(args: {
 
   return {
     content,
-    mimeType: detectMimeType(args.fileName, args.mimeType),
+    mimeType: detectKnowledgeMimeType(args.fileName, args.mimeType),
     title: deriveTextTitle(args.fileName, content),
   } satisfies ExtractedSourceContent;
 }
@@ -202,7 +163,7 @@ export function buildTextSourceContent(args: {
 
   return {
     content,
-    mimeType: detectMimeType(args.fileName),
+    mimeType: detectKnowledgeMimeType(args.fileName),
     title: args.title?.trim() || deriveTextTitle(args.fileName, content),
   } satisfies ExtractedSourceContent;
 }

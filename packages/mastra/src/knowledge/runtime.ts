@@ -6,6 +6,7 @@ import {
   type WorkspaceFilesystem,
 } from "@mastra/core/workspace";
 import type { SearchEngine } from "@mastra/core/workspace/search";
+import type { TenantIndexService } from "@cnpap/ops-agent-kit";
 import { QdrantVector } from "@mastra/qdrant";
 import { S3Filesystem } from "@mastra/s3";
 import {
@@ -27,9 +28,16 @@ import {
   validateKnowledgeStorageConfig,
 } from "./config";
 import { buildKnowledgeSourceObjectPrefix } from "./object-storage";
+import {
+  createKnowledgeTenantIndexService,
+  resetOpsAgentKitConfigCache,
+  wrapKnowledgeFilesystemForReading,
+} from "./ops-agent-kit";
 
 type WorkspaceEntry = {
   indexName: string;
+  rawWorkspace: Workspace<WorkspaceFilesystem>;
+  tenantIndexService?: TenantIndexService;
   vectorStore?: QdrantVector;
   workspace: Workspace<WorkspaceFilesystem>;
 };
@@ -50,6 +58,11 @@ interface EmbeddingResponse {
   }>;
 }
 
+const DEFAULT_EMBEDDING_MAX_CONCURRENCY = 2;
+const DEFAULT_EMBEDDING_MAX_RETRIES = 4;
+const DEFAULT_EMBEDDING_RETRY_BASE_MS = 500;
+const RETRIABLE_EMBEDDING_STATUSES = new Set([408, 409, 425, 429]);
+
 function summarizeProviderError(payload: string): string | undefined {
   const normalized = payload.replace(/\s+/g, " ").trim();
 
@@ -66,6 +79,26 @@ let filesystemFactoryOverride: KnowledgeFilesystemFactory | undefined;
 let storagePrefixFilesystemFactoryOverride:
   | KnowledgeStoragePrefixFilesystemFactory
   | undefined;
+let activeEmbeddingRequests = 0;
+const pendingEmbeddingRequestResolvers: Array<() => void> = [];
+
+class EmbeddingRequestError extends UpstreamServiceError {
+  readonly details?: string;
+  readonly retriable: boolean;
+  readonly status?: number;
+
+  constructor(args: {
+    cause?: unknown;
+    details?: string;
+    retriable: boolean;
+    status?: number;
+  }) {
+    super("向量索引创建失败，请检查嵌入模型配置后重试。", args.cause);
+    this.details = args.details;
+    this.retriable = args.retriable;
+    this.status = args.status;
+  }
+}
 
 function getCacheKey(userId: string, collectionId: string): string {
   return `${userId}:${collectionId}`;
@@ -74,6 +107,95 @@ function getCacheKey(userId: string, collectionId: string): string {
 function sanitizeSegment(value: string): string {
   const sanitized = value.replace(/[^a-zA-Z0-9_]+/g, "_");
   return /^[a-zA-Z_]/.test(sanitized) ? sanitized : `_${sanitized || "item"}`;
+}
+
+function parsePositiveIntegerEnv(
+  value: string | undefined,
+  fallback: number,
+): number {
+  const parsed = Number.parseInt(value?.trim() ?? "", 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function getEmbeddingMaxConcurrency(): number {
+  return parsePositiveIntegerEnv(
+    process.env.EMBEDDING_MAX_CONCURRENCY,
+    DEFAULT_EMBEDDING_MAX_CONCURRENCY,
+  );
+}
+
+function getEmbeddingMaxRetries(): number {
+  return parsePositiveIntegerEnv(
+    process.env.EMBEDDING_MAX_RETRIES,
+    DEFAULT_EMBEDDING_MAX_RETRIES,
+  );
+}
+
+function getEmbeddingRetryBaseDelayMs(): number {
+  return parsePositiveIntegerEnv(
+    process.env.EMBEDDING_RETRY_BASE_MS,
+    DEFAULT_EMBEDDING_RETRY_BASE_MS,
+  );
+}
+
+function sleep(delayMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+}
+
+async function acquireEmbeddingRequestSlot(): Promise<void> {
+  const limit = getEmbeddingMaxConcurrency();
+
+  if (activeEmbeddingRequests < limit) {
+    activeEmbeddingRequests += 1;
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    pendingEmbeddingRequestResolvers.push(resolve);
+  });
+  activeEmbeddingRequests += 1;
+}
+
+function releaseEmbeddingRequestSlot(): void {
+  activeEmbeddingRequests = Math.max(0, activeEmbeddingRequests - 1);
+  const next = pendingEmbeddingRequestResolvers.shift();
+  next?.();
+}
+
+export function isRetriableEmbeddingFailure(args: {
+  details?: string;
+  error?: unknown;
+  status?: number;
+}): boolean {
+  if (
+    typeof args.status === "number" &&
+    (RETRIABLE_EMBEDDING_STATUSES.has(args.status) || args.status >= 500)
+  ) {
+    return true;
+  }
+
+  const normalizedDetails = args.details?.toLowerCase();
+
+  if (
+    normalizedDetails &&
+    (normalizedDetails.includes("limit_requests") ||
+      normalizedDetails.includes("rate limit") ||
+      normalizedDetails.includes("too many requests") ||
+      normalizedDetails.includes("temporarily unavailable") ||
+      normalizedDetails.includes("timeout"))
+  ) {
+    return true;
+  }
+
+  return args.error instanceof TypeError;
+}
+
+function getEmbeddingRetryDelayMs(attempt: number): number {
+  const baseDelayMs = getEmbeddingRetryBaseDelayMs();
+  const jitterMs = Math.floor(Math.random() * 100);
+  return baseDelayMs * 2 ** attempt + jitterMs;
 }
 
 function getWorkspaceIndexName(userId: string, collectionId: string): string {
@@ -159,27 +281,41 @@ function createMountedS3Filesystem(args: {
   });
 }
 
-async function fetchEmbeddingVector(text: string): Promise<number[]> {
+async function requestEmbeddingVector(text: string): Promise<number[]> {
   const apiKey = getEmbeddingApiKey();
 
   if (!apiKey) {
     throw new Error("缺少 EMBEDDING_API_KEY，无法创建向量索引");
   }
 
-  const response = await fetch(getEmbeddingUrl("embeddings"), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      input: [text],
-      model: getEmbeddingModel(),
-    }),
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(getEmbeddingUrl("embeddings"), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        input: [text],
+        model: getEmbeddingModel(),
+      }),
+    });
+  } catch (error) {
+    throw new EmbeddingRequestError({
+      cause: error,
+      details: error instanceof Error ? error.message : undefined,
+      retriable: isRetriableEmbeddingFailure({ error }),
+    });
+  }
 
   if (!response.ok) {
     const details = summarizeProviderError(await response.text());
+    const retriable = isRetriableEmbeddingFailure({
+      status: response.status,
+      details,
+    });
 
     console.error("[runtime] embedding request failed", {
       status: response.status,
@@ -187,9 +323,11 @@ async function fetchEmbeddingVector(text: string): Promise<number[]> {
       model: getEmbeddingModel(),
     });
 
-    throw new UpstreamServiceError(
-      "向量索引创建失败，请检查嵌入模型配置后重试。",
-    );
+    throw new EmbeddingRequestError({
+      details,
+      retriable,
+      status: response.status,
+    });
   }
 
   const payload = (await response.json()) as EmbeddingResponse;
@@ -199,12 +337,58 @@ async function fetchEmbeddingVector(text: string): Promise<number[]> {
     console.error("[runtime] embedding provider returned an empty vector", {
       model: getEmbeddingModel(),
     });
-    throw new UpstreamServiceError(
-      "向量索引创建失败，请检查嵌入模型配置后重试。",
-    );
+    throw new EmbeddingRequestError({
+      details: "empty embedding vector",
+      retriable: false,
+    });
   }
 
   return vector;
+}
+
+export async function fetchKnowledgeEmbeddingVector(
+  text: string,
+): Promise<number[]> {
+  let attempt = 0;
+
+  while (true) {
+    let retryDelayMs: number | undefined;
+
+    await acquireEmbeddingRequestSlot();
+
+    try {
+      return await requestEmbeddingVector(text);
+    } catch (error) {
+      if (
+        !(error instanceof EmbeddingRequestError) ||
+        !error.retriable ||
+        attempt >= getEmbeddingMaxRetries()
+      ) {
+        throw error;
+      }
+
+      retryDelayMs = getEmbeddingRetryDelayMs(attempt);
+
+      console.warn("[runtime] embedding request retrying", {
+        attempt: attempt + 1,
+        delayMs: retryDelayMs,
+        status: error.status,
+        details: error.details,
+        model: getEmbeddingModel(),
+      });
+    } finally {
+      releaseEmbeddingRequestSlot();
+    }
+
+    if (retryDelayMs === undefined) {
+      throw new UpstreamServiceError(
+        "向量索引创建失败，请检查嵌入模型配置后重试。",
+      );
+    }
+
+    await sleep(retryDelayMs);
+    attempt += 1;
+  }
 }
 
 async function resolveEmbeddingDimension(): Promise<number | undefined> {
@@ -219,7 +403,9 @@ async function resolveEmbeddingDimension(): Promise<number | undefined> {
   }
 
   if (!embeddingDimensionPromise) {
-    embeddingDimensionPromise = fetchEmbeddingVector("atlas kb workspace")
+    embeddingDimensionPromise = fetchKnowledgeEmbeddingVector(
+      "atlas kb workspace",
+    )
       .then((vector) => vector.length)
       .catch((error) => {
         embeddingDimensionPromise = undefined;
@@ -275,6 +461,50 @@ export function createKnowledgeCollectionFilesystem(args: {
   userId: string;
   readOnly?: boolean;
 }): WorkspaceFilesystem {
+  const rawFilesystem =
+    filesystemFactoryOverride?.({
+      userId: args.userId,
+      collectionId: args.collectionId,
+    }) ??
+    createMountedS3Filesystem({
+      filesystemId: `knowledge-s3:${args.userId}:${args.collectionId}`,
+      prefix: buildKnowledgeSourceObjectPrefix(args),
+      displayName: "Atlas KB S3",
+      description: "Atlas KB 知识库资料文件存储。",
+      readOnly: args.readOnly,
+    });
+
+  return wrapKnowledgeFilesystemForReading(rawFilesystem);
+}
+
+export function createKnowledgeStoragePrefixFilesystem(args: {
+  storagePrefix: string;
+  userId: string;
+  readOnly?: boolean;
+}): WorkspaceFilesystem {
+  const rawFilesystem =
+    storagePrefixFilesystemFactoryOverride?.({
+      userId: args.userId,
+      storagePrefix: args.storagePrefix,
+    }) ??
+    createMountedS3Filesystem({
+      filesystemId: `knowledge-s3:${args.userId}:prefix:${sanitizeSegment(
+        args.storagePrefix,
+      )}`,
+      prefix: args.storagePrefix,
+      displayName: "Atlas KB Reference Library",
+      description: "Atlas KB 模板资料库文件存储。",
+      readOnly: args.readOnly,
+    });
+
+  return wrapKnowledgeFilesystemForReading(rawFilesystem);
+}
+
+function createRawKnowledgeCollectionFilesystem(args: {
+  collectionId: string;
+  userId: string;
+  readOnly?: boolean;
+}): WorkspaceFilesystem {
   return (
     filesystemFactoryOverride?.({
       userId: args.userId,
@@ -290,39 +520,23 @@ export function createKnowledgeCollectionFilesystem(args: {
   );
 }
 
-export function createKnowledgeStoragePrefixFilesystem(args: {
-  storagePrefix: string;
-  userId: string;
-  readOnly?: boolean;
-}): WorkspaceFilesystem {
-  return (
-    storagePrefixFilesystemFactoryOverride?.({
-      userId: args.userId,
-      storagePrefix: args.storagePrefix,
-    }) ??
-    createMountedS3Filesystem({
-      filesystemId: `knowledge-s3:${args.userId}:prefix:${sanitizeSegment(
-        args.storagePrefix,
-      )}`,
-      prefix: args.storagePrefix,
-      displayName: "Atlas KB Reference Library",
-      description: "Atlas KB 模板资料库文件存储。",
-      readOnly: args.readOnly,
-    })
-  );
-}
-
 async function createWorkspaceEntry(
   userId: string,
   collectionId: string,
 ): Promise<WorkspaceEntry> {
   const indexName = getWorkspaceIndexName(userId, collectionId);
-  const filesystem = createKnowledgeCollectionFilesystem({
+  const rawFilesystem = createRawKnowledgeCollectionFilesystem({
     userId,
     collectionId,
   });
+  const filesystem = wrapKnowledgeFilesystemForReading(rawFilesystem);
 
   const vectorStore = createVectorStore();
+  const rawWorkspace = new Workspace({
+    id: `workspace:${userId}:${collectionId}:raw`,
+    name: `${collectionId} Raw Workspace`,
+    filesystem: rawFilesystem,
+  });
   const workspace = new Workspace({
     id: `workspace:${userId}:${collectionId}`,
     name: `${collectionId} Workspace`,
@@ -331,7 +545,7 @@ async function createWorkspaceEntry(
     ...(vectorStore
       ? {
           vectorStore,
-          embedder: fetchEmbeddingVector,
+          embedder: fetchKnowledgeEmbeddingVector,
           searchIndexName: indexName,
         }
       : {}),
@@ -345,6 +559,12 @@ async function createWorkspaceEntry(
 
   return {
     indexName,
+    rawWorkspace,
+    tenantIndexService: createKnowledgeTenantIndexService({
+      workspace: rawWorkspace,
+      vectorStore,
+      embedder: fetchKnowledgeEmbeddingVector,
+    }),
     vectorStore,
     workspace,
   };
@@ -397,9 +617,33 @@ export async function invalidateKnowledgeWorkspace(params: {
 
   try {
     await entry.workspace.destroy();
+    await entry.rawWorkspace.destroy();
   } catch {
     return;
   }
+}
+
+export async function getKnowledgeTenantIndexService(params: {
+  collectionId: string;
+  userId: string;
+}): Promise<TenantIndexService | undefined> {
+  const key = getCacheKey(params.userId, params.collectionId);
+  const cached = workspaceCache.get(key);
+
+  if (cached) {
+    return (await cached).tenantIndexService;
+  }
+
+  const pendingEntry = createWorkspaceEntry(
+    params.userId,
+    params.collectionId,
+  ).catch((error) => {
+    workspaceCache.delete(key);
+    throw error;
+  });
+
+  workspaceCache.set(key, pendingEntry);
+  return (await pendingEntry).tenantIndexService;
 }
 
 export async function removeDocumentFromKnowledgeWorkspace(params: {
@@ -426,13 +670,19 @@ export async function removeDocumentFromKnowledgeWorkspace(params: {
 export function resetKnowledgeRuntimeCache(): void {
   for (const pendingEntry of workspaceCache.values()) {
     void pendingEntry
-      .then((entry) => entry.workspace.destroy())
+      .then(async (entry) => {
+        await entry.workspace.destroy();
+        await entry.rawWorkspace.destroy();
+      })
       .catch(() => undefined);
   }
 
   embeddingDimensionPromise = undefined;
+  activeEmbeddingRequests = 0;
+  pendingEmbeddingRequestResolvers.length = 0;
   workspaceCache.clear();
   resetKnowledgeConfigCache();
+  resetOpsAgentKitConfigCache();
 }
 
 export function setKnowledgeFilesystemFactoryForTests(

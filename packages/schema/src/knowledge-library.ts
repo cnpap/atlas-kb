@@ -112,7 +112,6 @@ export const KnowledgeImportDataSchema = z.object({
   collection: KnowledgeCollectionSchema,
   source: KnowledgeSourceSchema,
   engine: KnowledgeRetrievalEngineSchema,
-  indexed: z.boolean(),
 });
 
 const KnowledgeBatchImportAcceptedItemSchema = z.object({

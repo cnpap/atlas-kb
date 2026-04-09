@@ -33,6 +33,31 @@
   const tags = ref("");
   const content = ref("");
 
+  function isDoclingManagedSource(source: KnowledgeSource | null): boolean {
+    if (!source) {
+      return false;
+    }
+
+    const normalizedMimeType = source.mimeType
+      ?.split(";", 1)[0]
+      ?.trim()
+      .toLowerCase();
+
+    if (
+      normalizedMimeType === "application/pdf" ||
+      normalizedMimeType ===
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+      normalizedMimeType ===
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    ) {
+      return true;
+    }
+
+    return /\.(pdf|docx|xlsx)$/i.test(
+      source.sourceFilename || source.documentId || "",
+    );
+  }
+
   watch(
     () => [props.source, props.open] as const,
     ([source, isOpen]) => {
@@ -66,7 +91,11 @@
   <UModal
     :open="open"
     title="资料编辑器"
-    description="编辑标题、摘要、标签和正文内容，保存后会立即更新检索。"
+    :description="
+      isDoclingManagedSource(source)
+        ? '当前 PDF、Word、Excel 资料的正文为只读提取结果；你仍然可以更新标题、摘要和标签。'
+        : '编辑标题、摘要、标签和正文内容，保存后会立即更新检索。'
+    "
     :close="!saving"
     @update:open="updateOpen"
   >
@@ -107,7 +136,12 @@
           <textarea
             v-model="content"
             class="field-shell w-full text-sm !min-h-[260px] font-mono leading-6"
-            placeholder="编辑当前资料正文"
+            :disabled="isDoclingManagedSource(source)"
+            :placeholder="
+              isDoclingManagedSource(source)
+                ? '当前文件正文由系统提取生成，仅供查看。若要替换文件内容，请重新上传原文件。'
+                : '编辑当前资料正文'
+            "
           />
         </div>
       </div>

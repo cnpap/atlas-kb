@@ -17,7 +17,10 @@ import { createApp } from "./app";
 
 const originalFetch = globalThis.fetch;
 const originalApiKey = process.env.OPENAI_API_KEY;
+const originalOpenAIBaseUrl = process.env.OPENAI_BASE_URL;
 const originalEmbeddingApiKey = process.env.EMBEDDING_API_KEY;
+const originalEmbeddingDimensions = process.env.EMBEDDING_DIMENSIONS;
+const originalQdrantApiKey = process.env.QDRANT_API_KEY;
 const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
 const originalQdrantUrl = process.env.QDRANT_URL;
 const originalS3Endpoint = process.env.ATLAS_KB_S3_ENDPOINT;
@@ -461,8 +464,19 @@ function mockProviders() {
 async function readJson<T>(response: Response): Promise<T> {
   const payload = (await response.json()) as {
     data: T;
+    error?: {
+      code?: string;
+      message?: string;
+    };
     success: boolean;
   };
+
+  if (!payload.success) {
+    throw new Error(
+      `API request failed: ${payload.error?.code ?? "UNKNOWN"} ${payload.error?.message ?? "Unknown error"}`,
+    );
+  }
+
   return payload.data;
 }
 
@@ -556,9 +570,12 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
     knowledgeDataDir = await mkdtemp(join(tmpdir(), "atlas-kb-api-test-"));
     workspaceFilesDir = join(knowledgeDataDir, "workspace-files");
     process.env.ATLAS_KB_DATA_DIR = knowledgeDataDir;
-    process.env.QDRANT_URL = "http://127.0.0.1:6333";
-    process.env.OPENAI_API_KEY = "test-openai-key";
-    process.env.EMBEDDING_API_KEY = "test-embedding-key";
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_BASE_URL;
+    delete process.env.QDRANT_URL;
+    delete process.env.QDRANT_API_KEY;
+    delete process.env.EMBEDDING_API_KEY;
+    delete process.env.EMBEDDING_DIMENSIONS;
     process.env.ATLAS_KB_S3_ENDPOINT = "http://127.0.0.1:9000";
     process.env.ATLAS_KB_S3_REGION = "us-east-1";
     process.env.ATLAS_KB_S3_BUCKET = "atlas-kb-test";
@@ -599,10 +616,28 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
       process.env.OPENAI_API_KEY = originalApiKey;
     }
 
+    if (originalOpenAIBaseUrl === undefined) {
+      delete process.env.OPENAI_BASE_URL;
+    } else {
+      process.env.OPENAI_BASE_URL = originalOpenAIBaseUrl;
+    }
+
     if (originalEmbeddingApiKey === undefined) {
       delete process.env.EMBEDDING_API_KEY;
     } else {
       process.env.EMBEDDING_API_KEY = originalEmbeddingApiKey;
+    }
+
+    if (originalEmbeddingDimensions === undefined) {
+      delete process.env.EMBEDDING_DIMENSIONS;
+    } else {
+      process.env.EMBEDDING_DIMENSIONS = originalEmbeddingDimensions;
+    }
+
+    if (originalQdrantApiKey === undefined) {
+      delete process.env.QDRANT_API_KEY;
+    } else {
+      process.env.QDRANT_API_KEY = originalQdrantApiKey;
     }
 
     if (originalS3Endpoint === undefined) {

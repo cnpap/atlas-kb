@@ -7,7 +7,13 @@ import type {
 } from "@atlas-kb/schema";
 import { sql } from "kysely";
 import { ensureKnowledgeDatabase } from "./db";
-import { invalidateKnowledgeWorkspace, getKnowledgeWorkspace } from "./runtime";
+import { deleteKnowledgeImportJobsForCollection } from "./import-jobs-repository";
+import { buildKnowledgeTenantId } from "./ops-agent-kit";
+import {
+  getKnowledgeTenantIndexService,
+  invalidateKnowledgeWorkspace,
+  getKnowledgeWorkspace,
+} from "./runtime";
 import { slugify } from "./search-utils";
 import {
   nowIso,
@@ -226,16 +232,35 @@ export async function deleteKnowledgeCollection(
   collectionId: string,
 ): Promise<void> {
   const db = await ensureKnowledgeDatabase();
-  const workspace = await getKnowledgeWorkspace({
+  await deleteKnowledgeImportJobsForCollection({
     userId,
     collectionId,
-  }).catch(() => undefined);
+  });
+  const [tenantIndexService, workspace] = await Promise.all([
+    getKnowledgeTenantIndexService({
+      userId,
+      collectionId,
+    }).catch(() => undefined),
+    getKnowledgeWorkspace({
+      userId,
+      collectionId,
+    }).catch(() => undefined),
+  ]);
 
   await db
     .deleteFrom("kb_collections")
     .where("owner_user_id", "=", toDbUserId(userId))
     .where("id", "=", collectionId)
     .execute();
+
+  await tenantIndexService
+    ?.clear({
+      tenantId: buildKnowledgeTenantId({
+        userId,
+        collectionId,
+      }),
+    })
+    .catch(() => undefined);
 
   await workspace?.filesystem
     ?.rmdir("", { recursive: true })
