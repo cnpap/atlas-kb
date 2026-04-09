@@ -4,14 +4,20 @@ ENV COMPOSER_ALLOW_SUPERUSER=1
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
+    $PHPIZE_DEPS \
     curl \
     git \
     libicu-dev \
     libonig-dev \
     libpq-dev \
+    libssl-dev \
     libxml2-dev \
     libzip-dev \
     unzip \
+    zlib1g-dev \
+  && docker-php-ext-install sockets \
+  && pecl install -D 'enable-sockets="yes" enable-openssl="yes" enable-http2="yes"' openswoole \
+  && docker-php-ext-enable openswoole \
   && docker-php-ext-install \
     bcmath \
     dom \
@@ -38,6 +44,8 @@ ENV DB_CONNECTION=sqlite
 ENV DB_DATABASE=/app/database/database.sqlite
 ENV QUEUE_CONNECTION=sync
 ENV SESSION_DRIVER=array
+
+RUN mv /usr/local/etc/php/conf.d/docker-php-ext-openswoole.ini /usr/local/etc/php/conf.d/zz-docker-php-ext-openswoole.ini
 
 COPY composer.json composer.lock ./
 
@@ -95,6 +103,11 @@ ENV APP_ENV=production
 ENV APP_DEBUG=false
 ENV APP_SERVER_HOST=0.0.0.0
 ENV APP_SERVER_PORT=8000
+ENV OCTANE_SERVER=swoole
+ENV OCTANE_HOST=0.0.0.0
+ENV OCTANE_PORT=8000
+
+RUN mv /usr/local/etc/php/conf.d/docker-php-ext-openswoole.ini /usr/local/etc/php/conf.d/zz-docker-php-ext-openswoole.ini
 
 COPY --from=vendor /app /app
 COPY --from=frontend-build /app/public/build /app/public/build
@@ -108,4 +121,4 @@ USER www-data
 EXPOSE 8000
 
 ENTRYPOINT ["atlas-kb-admin-entrypoint"]
-CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
+CMD ["octane-web"]

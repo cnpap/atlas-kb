@@ -14,6 +14,23 @@ endef
 
 env-check:
 	@test -f "$(ENV_FILE)" || { echo "Missing $(ENV_FILE). Copy .env.deploy.example first." >&2; exit 1; }
+	@source "$(ENV_FILE)"; \
+	required_vars=(ATLAS_KB_ADMIN_IMAGE APP_KEY DB_HOST DB_PORT DB_DATABASE DB_USERNAME DB_PASSWORD ATLAS_KB_INTERNAL_SECRET ATLAS_KB_PUBLIC_API_BASE_URL); \
+	missing=(); \
+	for var in "$${required_vars[@]}"; do \
+		if [ -z "$${!var:-}" ]; then \
+			missing+=("$$var"); \
+		fi; \
+	done; \
+	octane_server="$${OCTANE_SERVER:-swoole}"; \
+	if [ "$$octane_server" != "swoole" ]; then \
+		echo "OCTANE_SERVER must be swoole in $(ENV_FILE), got: $$octane_server" >&2; \
+		exit 1; \
+	fi; \
+	if [ "$${#missing[@]}" -gt 0 ]; then \
+		echo "Missing required variables in $(ENV_FILE): $${missing[*]}" >&2; \
+		exit 1; \
+	fi
 
 ensure-network: env-check
 	@source "$(ENV_FILE)"; \
@@ -44,14 +61,15 @@ ps: env-check
 
 health: env-check
 	@source "$(ENV_FILE)"; \
-	health_url="http://127.0.0.1:$${ATLAS_KB_ADMIN_HOST_PORT:-8000}/up"; \
-	for attempt in $$(seq 1 20); do \
-		if curl -fsS "$$health_url" >/dev/null; then \
+	health_port="$${ATLAS_KB_ADMIN_HOST_PORT:-$${OCTANE_PORT:-8000}}"; \
+	health_url="http://127.0.0.1:$$health_port/up"; \
+	for attempt in $$(seq 1 30); do \
+		if $(compose_cmd) exec -T web sh -lc 'php -m | grep -qi "^openswoole$$"' >/dev/null 2>&1 && curl -fsS "$$health_url" >/dev/null; then \
 			exit 0; \
 		fi; \
 		sleep 2; \
 	done; \
-	echo "Atlas KB Admin health check failed: $$health_url did not become ready" >&2; \
+	echo "Atlas KB Admin health check failed: Octane/OpenSwoole web service did not become ready at $$health_url" >&2; \
 	exit 1
 
 deploy: build migrate

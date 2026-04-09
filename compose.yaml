@@ -7,16 +7,26 @@ services:
     restart: unless-stopped
     env_file:
       - .env.deploy
+    environment:
+      OCTANE_SERVER: ${OCTANE_SERVER:-swoole}
+      OCTANE_HOST: ${OCTANE_HOST:-0.0.0.0}
+      OCTANE_PORT: ${OCTANE_PORT:-8000}
+      OCTANE_WORKERS: ${OCTANE_WORKERS:-4}
+      OCTANE_TASK_WORKERS: ${OCTANE_TASK_WORKERS:-2}
+      OCTANE_MAX_REQUESTS: ${OCTANE_MAX_REQUESTS:-500}
+      OCTANE_HTTPS: ${OCTANE_HTTPS:-false}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command:
-      - php
-      - artisan
-      - serve
-      - --host=0.0.0.0
-      - --port=8000
     ports:
-      - "${ATLAS_KB_ADMIN_HOST_PORT:-8000}:8000"
+      - "${ATLAS_KB_ADMIN_HOST_PORT:-8000}:${OCTANE_PORT:-8000}"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - php -m | grep -qi '^openswoole$$' && curl -fsS http://127.0.0.1:${OCTANE_PORT:-8000}/up >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     networks:
       atlas-app-network:
         aliases:
@@ -28,6 +38,14 @@ services:
     restart: unless-stopped
     env_file:
       - .env.deploy
+    environment:
+      OCTANE_SERVER: ${OCTANE_SERVER:-swoole}
+      OCTANE_HOST: ${OCTANE_HOST:-0.0.0.0}
+      OCTANE_PORT: ${OCTANE_PORT:-8000}
+      OCTANE_WORKERS: ${OCTANE_WORKERS:-4}
+      OCTANE_TASK_WORKERS: ${OCTANE_TASK_WORKERS:-2}
+      OCTANE_MAX_REQUESTS: ${OCTANE_MAX_REQUESTS:-500}
+      OCTANE_HTTPS: ${OCTANE_HTTPS:-false}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command:
@@ -37,7 +55,8 @@ services:
       - --tries=1
       - --timeout=0
     depends_on:
-      - web
+      web:
+        condition: service_healthy
     networks:
       atlas-app-network:
         aliases:
