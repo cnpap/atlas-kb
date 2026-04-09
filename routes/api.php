@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\Internal\AtlasKbImportJobDispatchController;
 use App\Http\Controllers\Api\Internal\KnowledgeTemplateExportTaskDownloadController as InternalKnowledgeTemplateExportTaskDownloadController;
 use App\Http\Controllers\Api\Internal\KnowledgeTemplateExportTaskIndexController as InternalKnowledgeTemplateExportTaskIndexController;
 use App\Http\Controllers\Api\Internal\KnowledgeTemplateExportTaskShowController as InternalKnowledgeTemplateExportTaskShowController;
@@ -41,4 +42,5 @@ Route::prefix('internal')
         Route::get('knowledge-template-export-tasks/{taskId}', InternalKnowledgeTemplateExportTaskShowController::class);
         Route::get('knowledge-template-export-tasks/{taskId}/download', InternalKnowledgeTemplateExportTaskDownloadController::class);
         Route::patch('knowledge-template-export-tasks/{taskId}', InternalKnowledgeTemplateExportTaskUpdateController::class);
+        Route::post('atlas-kb-import-jobs/dispatch', AtlasKbImportJobDispatchController::class);
     });

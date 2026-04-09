@@ -1,5 +1,6 @@
 <?php
 
+use App\Jobs\DrainAtlasKbImportJobs;
 use App\Support\KnowledgeTemplates\TemplateExportPruner;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
@@ -14,3 +15,4 @@ Artisan::command('knowledge-templates:prune-exports', function (TemplateExportPr
 })->purpose('Prune expired knowledge template exports');
 
 Schedule::command('knowledge-templates:prune-exports')->daily();
+Schedule::job(new DrainAtlasKbImportJobs)->everyMinute()->withoutOverlapping();
