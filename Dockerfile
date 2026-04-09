@@ -1,6 +1,23 @@
-# syntax=docker/dockerfile:1.10
+FROM public.ecr.aws/docker/library/debian:bookworm-slim AS bun-base
+ARG BUN_VERSION=1.3.10
+WORKDIR /app
 
-FROM oven/bun:1 AS deps
+ENV BUN_INSTALL=/opt/bun
+ENV PATH=${BUN_INSTALL}/bin:${PATH}
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    unzip \
+  && rm -rf /var/lib/apt/lists/* \
+  && curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION} \
+  && groupadd --system bun \
+  && useradd --system --gid bun --create-home --home-dir /home/bun bun \
+  && ln -s ${BUN_INSTALL}/bin/bun /usr/local/bin/bun
+
+FROM bun-base AS deps
 WORKDIR /app
 
 ENV BUN_INSTALL_CACHE_DIR=/root/.bun/install/cache
@@ -13,8 +30,10 @@ COPY packages/schema/package.json ./packages/schema/package.json
 COPY packages/web/package.json ./packages/web/package.json
 
 RUN --mount=type=cache,id=atlas-kb-bun-cache,target=/root/.bun/install/cache \
-  --mount=type=secret,id=github_token_classic \
-  export GITHUB_TOKEN_CLASSIC="$(cat /run/secrets/github_token_classic)" \
+  --mount=type=secret,id=github_token_classic,required=false \
+  if [ -f /run/secrets/github_token_classic ]; then \
+    export GITHUB_TOKEN_CLASSIC="$(cat /run/secrets/github_token_classic)"; \
+  fi \
   && bun install --frozen-lockfile
 
 FROM deps AS ci-runner
@@ -33,20 +52,29 @@ FROM ci-runner AS api-build
 
 RUN bun run api:build
 
-FROM oven/bun:1 AS api-runtime
+FROM bun-base AS api-runtime
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV API_HOST=0.0.0.0
-ENV API_PORT=8080
+ENV API_PORT=6112
+ENV BUN_INSTALL_CACHE_DIR=/var/lib/atlas-kb/bun-install-cache
 
 COPY --chown=bun:bun --from=api-build /app/packages/api/dist ./dist
 
-RUN mkdir -p /var/lib/atlas-kb && chown bun:bun /var/lib/atlas-kb
+RUN mkdir -p /var/lib/atlas-kb/bun-install-cache \
+  && chown -R bun:bun /var/lib/atlas-kb
 
 USER bun
-EXPOSE 8080
+EXPOSE 6112
 
 CMD ["bun", "dist/server.js"]
+
+FROM public.ecr.aws/docker/library/caddy:2-alpine AS web-runtime
+
+COPY deploy/caddy/web.Caddyfile /etc/caddy/Caddyfile
+COPY --from=web-build /app/packages/web/dist /srv
+
+EXPOSE 80
 
 FROM api-runtime AS runtime

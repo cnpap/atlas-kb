@@ -1,0 +1,37 @@
+name: ${COMPOSE_PROJECT_NAME:-atlas-kb}
+
+services:
+  api:
+    image: ${ATLAS_KB_API_IMAGE:?ATLAS_KB_API_IMAGE is required}
+    pull_policy: never
+    restart: unless-stopped
+    env_file:
+      - .env.deploy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${ATLAS_KB_API_HOST_PORT:-6112}:${ATLAS_KB_API_CONTAINER_PORT:-6112}"
+    networks:
+      atlas-app-network:
+        aliases:
+          - atlas-kb-api
+
+  web:
+    image: ${ATLAS_KB_WEB_IMAGE:?ATLAS_KB_WEB_IMAGE is required}
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      - api
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${ATLAS_KB_WEB_HOST_PORT:-6111}:80"
+    networks:
+      atlas-app-network:
+        aliases:
+          - atlas-kb-web
+
+networks:
+  atlas-app-network:
+    external: true
+    name: ${ATLAS_KB_DOCKER_NETWORK:-atlas-app-network}
