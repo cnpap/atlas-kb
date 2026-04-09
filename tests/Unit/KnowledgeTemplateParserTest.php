@@ -55,12 +55,15 @@ test('parser extracts placeholders from docx including split runs and headers', 
 
     expect($parsed['template_type'])->toBe('docx')
         ->and(array_column($parsed['fields'], 'name'))->toBe([
+            'value_1',
+            'value_2',
+            'value_3',
+        ])
+        ->and(array_column($parsed['fields'], 'placeholder_name'))->toBe([
             'customer_name',
             'contract_code',
             'received_at',
-        ])
-        ->and($parsed['fields'][1]['locations'][0]['part'])->toBe('word/document.xml')
-        ->and($parsed['fields'][2]['locations'][0]['part'])->toBe('word/header1.xml');
+        ]);
 });
 
 test('parser extracts placeholders from xlsx shared strings and inline strings', function () {
@@ -104,11 +107,39 @@ test('parser extracts placeholders from xlsx shared strings and inline strings',
 
     expect($parsed['template_type'])->toBe('xlsx')
         ->and(array_column($parsed['fields'], 'name'))->toBe([
+            'value_1',
+            'value_2',
+        ])
+        ->and(array_column($parsed['fields'], 'placeholder_name'))->toBe([
             '来文机关',
             '收文时间',
+        ]);
+});
+
+test('parser deduplicates repeated placeholders while preserving first-seen order', function () {
+    $contents = createDocxTemplate([
+        'word/document.xml' => <<<'XML'
+        <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:body>
+            <w:p><w:r><w:t>{{来文机关}}</w:t></w:r></w:p>
+            <w:p><w:r><w:t>{{来文机关}}</w:t></w:r></w:p>
+            <w:p><w:r><w:t>{{收文时间}}</w:t></w:r></w:p>
+          </w:body>
+        </w:document>
+        XML,
+    ]);
+
+    $parsed = (new TemplateParser)->parse($contents, 'briefing-template.docx');
+
+    expect($parsed['fields'])->toHaveCount(2)
+        ->and(array_column($parsed['fields'], 'name'))->toBe([
+            'value_1',
+            'value_2',
         ])
-        ->and($parsed['fields'][0]['locations'][0]['sheet'])->toBe('模板一')
-        ->and($parsed['fields'][1]['locations'][0]['cell'])->toBe('B2');
+        ->and(array_column($parsed['fields'], 'placeholder_name'))->toBe([
+            '来文机关',
+            '收文时间',
+        ]);
 });
 
 test('parser rejects templates without placeholders', function () {

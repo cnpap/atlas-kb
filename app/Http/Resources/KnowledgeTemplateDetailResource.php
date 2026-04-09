@@ -32,7 +32,6 @@ class KnowledgeTemplateDetailResource extends JsonResource
                         'label' => $field->label,
                         'description' => $field->description,
                         'sort_order' => $field->sort_order,
-                        'locations' => $field->locations_json,
                     ];
                 })
                 ->all(),

@@ -17,8 +17,8 @@ class TemplateParser
      *     template_type: string,
      *     fields: list<array{
      *         name: string,
+     *         placeholder_name: string,
      *         sort_order: int,
-     *         locations: list<array<string, string>>
      *     }>
      * }
      */
@@ -48,7 +48,7 @@ class TemplateParser
     }
 
     /**
-     * @return array<string, array{name: string, sort_order: int, locations: list<array<string, string>>}>
+     * @return array<string, array{name: string, placeholder_name: string, sort_order: int}>
      */
     protected function parseDocx(OfficeOpenXmlArchive $archive): array
     {
@@ -64,7 +64,7 @@ class TemplateParser
                 throw new RuntimeException("无法读取模板段落节点 [{$entryName}]。");
             }
 
-            foreach ($paragraphs as $offset => $paragraph) {
+            foreach ($paragraphs as $paragraph) {
                 if (! $paragraph instanceof DOMElement) {
                     continue;
                 }
@@ -72,11 +72,7 @@ class TemplateParser
                 $text = $this->extractDocxParagraphText($paragraph);
 
                 if ($text !== '') {
-                    $this->recordPlaceholderMatches($fields, $text, [
-                        'kind' => 'docx',
-                        'part' => $entryName,
-                        'block' => '段落 '.($offset + 1),
-                    ]);
+                    $this->recordPlaceholderMatches($fields, $text);
                 }
             }
         }
@@ -85,7 +81,7 @@ class TemplateParser
     }
 
     /**
-     * @return array<string, array{name: string, sort_order: int, locations: list<array<string, string>>}>
+     * @return array<string, array{name: string, placeholder_name: string, sort_order: int}>
      */
     protected function parseXlsx(OfficeOpenXmlArchive $archive): array
     {
@@ -93,7 +89,7 @@ class TemplateParser
         $sharedStrings = $this->readSharedStrings($archive);
         $sheetMap = $this->readWorkbookSheetMap($archive);
 
-        foreach ($sheetMap as $sheetName => $entryName) {
+        foreach ($sheetMap as $entryName) {
             $document = $archive->loadXmlDocument($entryName);
             $xpath = new DOMXPath($document);
             $xpath->registerNamespace('main', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
@@ -111,11 +107,7 @@ class TemplateParser
                 $text = $this->extractWorksheetCellText($xpath, $cell, $sharedStrings);
 
                 if ($text !== '') {
-                    $this->recordPlaceholderMatches($fields, $text, [
-                        'kind' => 'xlsx',
-                        'sheet' => $sheetName,
-                        'cell' => (string) $cell->getAttribute('r'),
-                    ]);
+                    $this->recordPlaceholderMatches($fields, $text);
                 }
             }
         }
@@ -298,10 +290,9 @@ class TemplateParser
     }
 
     /**
-     * @param  array<string, array{name: string, sort_order: int, locations: list<array<string, string>>}>  $fields
-     * @param  array<string, string>  $location
+     * @param  array<string, array{name: string, placeholder_name: string, sort_order: int}>  $fields
      */
-    protected function recordPlaceholderMatches(array &$fields, string $text, array $location): void
+    protected function recordPlaceholderMatches(array &$fields, string $text): void
     {
         preg_match_all(static::PLACEHOLDER_PATTERN, $text, $matches);
 
@@ -312,13 +303,11 @@ class TemplateParser
 
             if (! array_key_exists($placeholderName, $fields)) {
                 $fields[$placeholderName] = [
-                    'name' => $placeholderName,
+                    'name' => 'value_'.(count($fields) + 1),
+                    'placeholder_name' => $placeholderName,
                     'sort_order' => count($fields) + 1,
-                    'locations' => [],
                 ];
             }
-
-            $fields[$placeholderName]['locations'][] = $location;
         }
     }
 

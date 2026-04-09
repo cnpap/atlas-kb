@@ -26,7 +26,7 @@ function createJobDocxTemplate(array $entries): string
     return $contents;
 }
 
-test('parse knowledge template job syncs fields and preserves manual metadata', function () {
+test('parse knowledge template job rebuilds fields with generated value names', function () {
     Storage::fake('kb_templates');
     config()->set('knowledge-templates.storage_disk', 'kb_templates');
     config()->set('knowledge-templates.ai', [
@@ -45,12 +45,12 @@ test('parse knowledge template job syncs fields and preserves manual metadata', 
                     'content' => json_encode([
                         'fields' => [
                             [
-                                'name' => 'customer_name',
+                                'name' => 'value_1',
                                 'label' => '客户姓名（AI）',
                                 'description' => 'AI 生成的客户姓名字段说明。',
                             ],
                             [
-                                'name' => 'contract_code',
+                                'name' => 'value_2',
                                 'label' => '合同编号',
                                 'description' => '用于标识该模板中的合同编号。',
                             ],
@@ -88,21 +88,21 @@ test('parse knowledge template job syncs fields and preserves manual metadata', 
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
         'name' => 'customer_name',
+        'placeholder_name' => 'customer_name',
         'label' => '客户姓名（人工）',
         'description' => '人工确认说明',
         'meta_source' => KnowledgeTemplateField::META_SOURCE_MANUAL,
         'sort_order' => 9,
-        'locations_json' => [],
     ]);
 
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
         'name' => 'obsolete_field',
+        'placeholder_name' => 'obsolete_field',
         'label' => '旧字段',
         'description' => null,
         'meta_source' => KnowledgeTemplateField::META_SOURCE_DEFAULT,
         'sort_order' => 10,
-        'locations_json' => [],
     ]);
 
     (new ParseKnowledgeTemplate($template->getKey(), $checksum))
@@ -115,19 +115,21 @@ test('parse knowledge template job syncs fields and preserves manual metadata', 
         ->and($template->parse_error)->toBeNull()
         ->and($template->parsed_at)->not->toBeNull()
         ->and($template->fields->pluck('name')->all())->toBe([
-            'customer_name',
-            'contract_code',
+            'value_1',
+            'value_2',
         ]);
 
-    $customerField = $template->fields->firstWhere('name', 'customer_name');
-    $contractField = $template->fields->firstWhere('name', 'contract_code');
+    $customerField = $template->fields->firstWhere('name', 'value_1');
+    $contractField = $template->fields->firstWhere('name', 'value_2');
 
     expect($customerField)->not->toBeNull()
-        ->and($customerField->label)->toBe('客户姓名（人工）')
-        ->and($customerField->description)->toBe('人工确认说明')
-        ->and($customerField->meta_source)->toBe(KnowledgeTemplateField::META_SOURCE_MANUAL);
+        ->and($customerField->placeholder_name)->toBe('customer_name')
+        ->and($customerField->label)->toBe('客户姓名（AI）')
+        ->and($customerField->description)->toBe('AI 生成的客户姓名字段说明。')
+        ->and($customerField->meta_source)->toBe(KnowledgeTemplateField::META_SOURCE_AI);
 
     expect($contractField)->not->toBeNull()
+        ->and($contractField->placeholder_name)->toBe('contract_code')
         ->and($contractField->label)->toBe('合同编号')
         ->and($contractField->description)->toBe('用于标识该模板中的合同编号。')
         ->and($contractField->meta_source)->toBe(KnowledgeTemplateField::META_SOURCE_AI);
@@ -169,7 +171,7 @@ test('parse knowledge template job ignores stale checksum tasks', function () {
         ->and($template->fields()->count())->toBe(0);
 });
 
-test('parse knowledge template job extracts unicode field names from xlsx templates', function () {
+test('parse knowledge template job extracts placeholders into generated value names', function () {
     Storage::fake('kb_templates');
     config()->set('knowledge-templates.storage_disk', 'kb_templates');
     config()->set('knowledge-templates.ai.enabled', false);
@@ -233,10 +235,13 @@ test('parse knowledge template job extracts unicode field names from xlsx templa
 
     expect($template->parse_status)->toBe(KnowledgeTemplate::PARSE_STATUS_READY)
         ->and($template->fields->pluck('name')->all())->toBe([
+            'value_1',
+            'value_2',
+            'value_3',
+        ])
+        ->and($template->fields->pluck('placeholder_name')->all())->toBe([
             '来文机关',
             '文号',
             '收文时间',
-        ])
-        ->and($template->fields->firstWhere('name', '来文机关')?->locations_json[0]['sheet'])->toBe('收文单')
-        ->and($template->fields->firstWhere('name', '收文时间')?->locations_json[0]['cell'])->toBe('A2');
+        ]);
 });

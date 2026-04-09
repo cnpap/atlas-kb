@@ -26,7 +26,6 @@ class InternalKnowledgeTemplateDetailResource extends JsonResource
                         'label' => $field->label,
                         'description' => $field->description ?? '',
                         'sortOrder' => $field->sort_order,
-                        'locations' => $field->locations_json,
                     ];
                 })
                 ->all(),

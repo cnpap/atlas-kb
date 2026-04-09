@@ -213,10 +213,10 @@ test('knowledge base tables are created with the expected contract', function ()
         'kb_template_fields' => [
             'columns' => [
                 'template_id' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+                'placeholder_name' => ['data_type' => 'text', 'is_nullable' => 'NO'],
                 'description' => ['data_type' => 'text', 'is_nullable' => 'YES'],
                 'meta_source' => ['data_type' => 'text', 'is_nullable' => 'NO', 'column_default' => 'default'],
                 'sort_order' => ['data_type' => 'integer', 'is_nullable' => 'NO'],
-                'locations_json' => ['data_type' => 'jsonb', 'is_nullable' => 'NO'],
             ],
             'indexes' => [
                 'kb_template_fields_template_id_name_unique' => 'UNIQUE',

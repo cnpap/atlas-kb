@@ -26,7 +26,11 @@ class TemplateExportService
         array $parameters,
     ): KnowledgeTemplateExport {
         $sourceContents = $this->fileManager->readStoredBytes($template);
-        $outputContents = $this->renderer->render($template, $sourceContents, $parameters);
+        $outputContents = $this->renderer->render(
+            $template,
+            $sourceContents,
+            $this->mapParametersToPlaceholders($template, $parameters),
+        );
         $disk = (string) config('knowledge-templates.exports.disk');
         $directory = trim((string) config('knowledge-templates.exports.directory'), '/');
         $outputPath = implode('/', array_filter([
@@ -80,5 +84,30 @@ class TemplateExportService
             now()->format('YmdHis'),
             $template->template_type,
         );
+    }
+
+    /**
+     * @param  array<string, string>  $parameters
+     * @return array<string, string>
+     */
+    protected function mapParametersToPlaceholders(
+        KnowledgeTemplate $template,
+        array $parameters,
+    ): array {
+        $template->loadMissing('fields');
+
+        return $template->fields
+            ->mapWithKeys(function ($field) use ($parameters): array {
+                $placeholderName = trim((string) $field->placeholder_name);
+
+                if ($placeholderName === '') {
+                    throw new \RuntimeException('模板字段缺少原始占位符，无法执行导出。');
+                }
+
+                return [
+                    $placeholderName => (string) ($parameters[$field->name] ?? ''),
+                ];
+            })
+            ->all();
     }
 }

@@ -39,11 +39,11 @@ return new class extends Migration
             $table->text('id');
             $table->text('template_id');
             $table->text('name');
+            $table->text('placeholder_name');
             $table->text('label');
             $table->text('description')->nullable();
             $table->text('meta_source')->default('default');
             $table->integer('sort_order');
-            $table->jsonb('locations_json');
             $table->timestampTz('created_at');
             $table->timestampTz('updated_at');
 

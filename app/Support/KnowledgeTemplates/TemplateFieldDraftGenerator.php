@@ -20,7 +20,7 @@ class TemplateFieldDraftGenerator
         $defaults = $fields
             ->mapWithKeys(fn (KnowledgeTemplateField $field): array => [
                 $field->name => [
-                    'label' => $this->humanizeFieldName($field->name),
+                    'label' => (string) $field->placeholder_name,
                     'description' => null,
                     'meta_source' => KnowledgeTemplateField::META_SOURCE_DEFAULT,
                 ],
@@ -60,7 +60,8 @@ class TemplateFieldDraftGenerator
                                 ],
                                 'fields' => $fields->map(fn (KnowledgeTemplateField $field): array => [
                                     'name' => $field->name,
-                                    'locations' => $field->locations_json,
+                                    'placeholder_name' => $field->placeholder_name,
+                                    'label' => $field->label,
                                 ])->values()->all(),
                             ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                         ],
@@ -100,14 +101,6 @@ class TemplateFieldDraftGenerator
 
             return $defaults;
         }
-    }
-
-    public function humanizeFieldName(string $fieldName): string
-    {
-        $normalized = preg_replace('/[._-]+/u', ' ', trim($fieldName)) ?? $fieldName;
-        $normalized = preg_replace('/\s+/u', ' ', $normalized) ?? $normalized;
-
-        return mb_convert_case(trim($normalized), MB_CASE_TITLE, 'UTF-8');
     }
 
     /**

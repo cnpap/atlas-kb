@@ -50,7 +50,6 @@ class AtlasKbAgentClient
                         'label' => $field->label,
                         'description' => $field->description ?? '',
                         'sortOrder' => $field->sort_order,
-                        'locations' => $field->locations_json,
                     ])->values()->all(),
                     'referenceLibraries' => $template->referenceLibraries->map(fn ($library): array => [
                         'id' => $library->id,

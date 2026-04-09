@@ -121,20 +121,20 @@ test('user scoped template detail returns fields system prompt and reference lib
 
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
-        'name' => 'contract_code',
+        'name' => 'value_2',
+        'placeholder_name' => 'contract_code',
         'label' => '合同编号',
         'description' => '合同主键编号',
         'sort_order' => 2,
-        'locations_json' => [['sheet' => '模板一', 'cell' => 'A1']],
     ]);
 
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
-        'name' => 'customer_name',
+        'name' => 'value_1',
+        'placeholder_name' => 'customer_name',
         'label' => '客户名称',
         'description' => '签约主体名称',
         'sort_order' => 1,
-        'locations_json' => [['part' => 'word/document.xml', 'block' => '段落 1']],
     ]);
 
     $library = KnowledgeTemplateLibrary::factory()->create([
@@ -152,11 +152,12 @@ test('user scoped template detail returns fields system prompt and reference lib
     $response->assertSuccessful()
         ->assertJsonPath('data.id', $template->getKey())
         ->assertJsonPath('data.system_prompt', '请提取字段后生成结构化内容。')
-        ->assertJsonPath('data.fields.0.name', 'customer_name')
-        ->assertJsonPath('data.fields.1.name', 'contract_code')
+        ->assertJsonPath('data.fields.0.name', 'value_1')
+        ->assertJsonPath('data.fields.1.name', 'value_2')
         ->assertJsonPath('data.reference_libraries.0.name', '规章制度库')
         ->assertJsonPath('data.reference_libraries.0.storage_prefix', 'ops/rules')
-        ->assertJsonPath('data.reference_libraries.0.file_count', 1);
+        ->assertJsonPath('data.reference_libraries.0.file_count', 1)
+        ->assertJsonMissingPath('data.fields.0.locations');
 });
 
 test('template detail returns not found for unassigned templates', function () {
@@ -206,24 +207,24 @@ test('user scoped export endpoint stores rendered files and returns owner user d
 
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
-        'name' => 'customer_name',
+        'name' => 'value_1',
+        'placeholder_name' => 'customer_name',
         'label' => '客户名称',
         'sort_order' => 1,
-        'locations_json' => [],
     ]);
 
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
-        'name' => 'contract_code',
+        'name' => 'value_2',
+        'placeholder_name' => 'contract_code',
         'label' => '合同编号',
         'sort_order' => 2,
-        'locations_json' => [],
     ]);
 
     $response = $this->postJson("/api/users/{$knowledgeUser->getKey()}/knowledge-templates/{$template->getKey()}/exports", [
         'parameters' => [
-            'customer_name' => '研发&测试中心',
-            'contract_code' => 'CN-42',
+            'value_1' => '研发&测试中心',
+            'value_2' => 'CN-42',
         ],
     ]);
 
@@ -283,21 +284,21 @@ test('user scoped export endpoint validates required template parameters', funct
 
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
-        'name' => 'customer_name',
+        'name' => 'value_1',
+        'placeholder_name' => 'customer_name',
         'sort_order' => 1,
-        'locations_json' => [],
     ]);
 
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
-        'name' => 'contract_code',
+        'name' => 'value_2',
+        'placeholder_name' => 'contract_code',
         'sort_order' => 2,
-        'locations_json' => [],
     ]);
 
     $this->postJson("/api/users/{$knowledgeUser->getKey()}/knowledge-templates/{$template->getKey()}/exports", [
         'parameters' => [
-            'customer_name' => '测试用户',
+            'value_1' => '测试用户',
         ],
     ])->assertUnprocessable()
         ->assertJsonValidationErrors(['parameters']);
@@ -332,14 +333,14 @@ test('user scoped export endpoint validates unexpected template parameters', fun
 
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
-        'name' => 'customer_name',
+        'name' => 'value_1',
+        'placeholder_name' => 'customer_name',
         'sort_order' => 1,
-        'locations_json' => [],
     ]);
 
     $this->postJson("/api/users/{$knowledgeUser->getKey()}/knowledge-templates/{$template->getKey()}/exports", [
         'parameters' => [
-            'customer_name' => '测试用户',
+            'value_1' => '测试用户',
             'unexpected_field' => 'ignored',
         ],
     ])->assertUnprocessable()

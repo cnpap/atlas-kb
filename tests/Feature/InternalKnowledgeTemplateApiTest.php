@@ -76,11 +76,11 @@ test('internal template detail returns atlas-kb contract with camel case fields'
 
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
-        'name' => 'customer_name',
+        'name' => 'value_1',
+        'placeholder_name' => 'customer_name',
         'label' => '客户名称',
         'description' => '签约主体名称',
         'sort_order' => 1,
-        'locations_json' => [['sheet' => '模板一', 'cell' => 'A1']],
     ]);
 
     $library = KnowledgeTemplateLibrary::factory()->create([
@@ -100,13 +100,14 @@ test('internal template detail returns atlas-kb contract with camel case fields'
     $response->assertSuccessful()
         ->assertJsonPath('data.id', $template->getKey())
         ->assertJsonPath('data.systemPrompt', '请提取字段后生成结构化内容。')
-        ->assertJsonPath('data.fields.0.name', 'customer_name')
+        ->assertJsonPath('data.fields.0.name', 'value_1')
         ->assertJsonPath('data.fields.0.sortOrder', 1)
         ->assertJsonPath('data.referenceLibraries.0.name', '规章制度库')
         ->assertJsonPath('data.referenceLibraries.0.storagePrefix', 'ops/rules')
         ->assertJsonPath('data.referenceLibraries.0.fileCount', 1)
         ->assertJsonMissingPath('data.system_prompt')
-        ->assertJsonMissingPath('data.reference_libraries');
+        ->assertJsonMissingPath('data.reference_libraries')
+        ->assertJsonMissingPath('data.fields.0.locations');
 });
 
 test('internal export task list returns atlas-kb contract with utc z timestamps', function () {
@@ -199,6 +200,7 @@ test('internal export task detail returns template fields and parameters', funct
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
         'name' => 'document_title',
+        'placeholder_name' => 'document_title',
         'label' => '文件标题',
         'sort_order' => 1,
     ]);
@@ -206,6 +208,7 @@ test('internal export task detail returns template fields and parameters', funct
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
         'name' => 'opinion',
+        'placeholder_name' => 'opinion',
         'label' => '拟办意见',
         'sort_order' => 2,
     ]);
@@ -287,6 +290,7 @@ test('internal export task update rewrites parameters and returns refreshed expo
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
         'name' => 'document_title',
+        'placeholder_name' => 'document_title',
         'label' => '文件标题',
         'sort_order' => 1,
     ]);
@@ -294,6 +298,7 @@ test('internal export task update rewrites parameters and returns refreshed expo
     KnowledgeTemplateField::factory()->create([
         'template_id' => $template->getKey(),
         'name' => 'opinion',
+        'placeholder_name' => 'opinion',
         'label' => '拟办意见',
         'sort_order' => 2,
     ]);

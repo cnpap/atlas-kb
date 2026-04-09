@@ -10,6 +10,7 @@ use Filament\Resources\RelationManagers\RelationManager;
 use Filament\Schemas\Schema;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use Illuminate\Validation\Rules\Unique;
 
 class FieldsRelationManager extends RelationManager
 {
@@ -27,6 +28,19 @@ class FieldsRelationManager extends RelationManager
             ->components([
                 TextInput::make('name')
                     ->label('字段名')
+                    ->required()
+                    ->maxLength(120)
+                    ->regex('/^[A-Za-z_][A-Za-z0-9_]*$/')
+                    ->unique(
+                        ignoreRecord: true,
+                        modifyRuleUsing: fn (Unique $rule): Unique => $rule->where(
+                            'template_id',
+                            $this->getOwnerRecord()->getKey(),
+                        ),
+                    )
+                    ->helperText('使用变量名格式，例如 value_1 或 document_title。'),
+                TextInput::make('placeholder_name')
+                    ->label('模板占位符')
                     ->disabled()
                     ->dehydrated(false),
                 TextInput::make('label')
@@ -51,6 +65,10 @@ class FieldsRelationManager extends RelationManager
                     ->label('字段名')
                     ->searchable()
                     ->copyable(),
+                TextColumn::make('placeholder_name')
+                    ->label('模板占位符')
+                    ->searchable()
+                    ->copyable(),
                 TextColumn::make('label')
                     ->label('字段标签')
                     ->searchable(),
@@ -66,9 +84,6 @@ class FieldsRelationManager extends RelationManager
                         KnowledgeTemplateField::META_SOURCE_MANUAL => '人工',
                         default => '未知',
                     }),
-                TextColumn::make('locations_json')
-                    ->label('出现位置')
-                    ->state(fn (KnowledgeTemplateField $record): int => count($record->locations_json ?? [])),
             ])
             ->headerActions([])
             ->recordActions([

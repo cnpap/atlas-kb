@@ -15,11 +15,11 @@ use Illuminate\Support\Str;
 #[Fillable([
     'template_id',
     'name',
+    'placeholder_name',
     'label',
     'description',
     'meta_source',
     'sort_order',
-    'locations_json',
 ])]
 class KnowledgeTemplateField extends Model
 {
@@ -51,7 +51,6 @@ class KnowledgeTemplateField extends Model
     protected function casts(): array
     {
         return [
-            'locations_json' => 'array',
             'sort_order' => 'integer',
         ];
     }

@@ -120,40 +120,22 @@ class TemplateSyncService
     }
 
     /**
-     * @param  list<array{name: string, sort_order: int, locations: list<array<string, string>>}>  $parsedFields
+     * @param  list<array{name: string, placeholder_name: string, sort_order: int}>  $parsedFields
      */
     protected function syncFields(KnowledgeTemplate $template, array $parsedFields): void
     {
-        $existingFields = $template->fields->keyBy('name');
-        $names = [];
+        $template->fields()->delete();
 
         foreach ($parsedFields as $parsedField) {
-            $names[] = $parsedField['name'];
-            $existingField = $existingFields->get($parsedField['name']);
-
-            if ($existingField instanceof KnowledgeTemplateField) {
-                $existingField->forceFill([
-                    'sort_order' => $parsedField['sort_order'],
-                    'locations_json' => $parsedField['locations'],
-                    'label' => $existingField->label ?: $this->draftGenerator->humanizeFieldName($parsedField['name']),
-                ])->save();
-
-                continue;
-            }
-
             $template->fields()->create([
                 'name' => $parsedField['name'],
-                'label' => $this->draftGenerator->humanizeFieldName($parsedField['name']),
+                'placeholder_name' => $parsedField['placeholder_name'],
+                'label' => $parsedField['placeholder_name'],
                 'description' => null,
                 'meta_source' => KnowledgeTemplateField::META_SOURCE_DEFAULT,
                 'sort_order' => $parsedField['sort_order'],
-                'locations_json' => $parsedField['locations'],
             ]);
         }
-
-        $template->fields()
-            ->whereNotIn('name', $names)
-            ->delete();
     }
 
     protected function markFailed(string $templateId, string $expectedChecksum, Throwable $throwable): void
