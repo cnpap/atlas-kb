@@ -38,6 +38,7 @@ return new class extends Migration
             $table->text('id');
             $table->foreignId('owner_user_id');
             $table->text('session_id');
+            $table->text('assistant_role_id');
             $table->text('role');
             $table->text('content');
             $table->jsonb('citations_json');
@@ -54,6 +55,9 @@ return new class extends Migration
                 ->references('id')
                 ->on('kb_chat_sessions')
                 ->cascadeOnDelete();
+            $table->foreign('assistant_role_id')
+                ->references('id')
+                ->on('kb_assistant_roles');
             $table->rawIndex('session_id, created_at ASC', 'idx_kb_chat_messages_session');
         });
 

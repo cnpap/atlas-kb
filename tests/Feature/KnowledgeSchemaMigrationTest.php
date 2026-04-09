@@ -61,6 +61,7 @@ function knowledgeTableForeignKeys(string $table): array
 test('development migrations are consolidated around feature boundaries', function () {
     $expectedMigrationFiles = [
         '2026_04_03_032229_create_kb_content_tables.php',
+        '2026_04_03_032230_create_kb_assistant_role_tables.php',
         '2026_04_03_032232_create_kb_conversation_tables.php',
         '2026_04_03_074812_create_kb_template_domain_tables.php',
     ];
@@ -79,6 +80,9 @@ test('development migrations are consolidated around feature boundaries', functi
         '2026_04_07_041041_create_knowledge_template_library_files_table.php',
         '2026_04_07_041042_create_kb_template_user_assignments_table.php',
         '2026_04_07_041043_create_kb_template_library_assignments_table.php',
+        '2026_04_09_145219_create_kb_assistant_roles_table.php',
+        '2026_04_09_145219_create_kb_user_settings_table.php',
+        '2026_04_09_145220_add_assistant_role_id_to_kb_chat_messages_table.php',
     ];
 
     $actualMigrationFiles = collect(glob(database_path('migrations/*.php')))
@@ -138,6 +142,33 @@ test('knowledge base tables are created with the expected contract', function ()
                 'FOREIGN KEY (source_id) REFERENCES kb_sources(id) ON DELETE CASCADE',
             ],
         ],
+        'kb_assistant_roles' => [
+            'columns' => [
+                'owner_user_id' => ['data_type' => 'bigint', 'is_nullable' => 'YES'],
+                'is_builtin' => ['data_type' => 'boolean', 'is_nullable' => 'NO', 'column_default' => 'false'],
+                'is_default' => ['data_type' => 'boolean', 'is_nullable' => 'NO', 'column_default' => 'false'],
+                'sort_order' => ['data_type' => 'integer', 'is_nullable' => 'NO'],
+                'deleted_at' => ['data_type' => 'timestamp with time zone', 'is_nullable' => 'YES'],
+            ],
+            'indexes' => [
+                'idx_kb_assistant_roles_builtin' => 'is_builtin, sort_order ASC, updated_at DESC',
+                'idx_kb_assistant_roles_owner' => 'owner_user_id, sort_order ASC, updated_at DESC',
+            ],
+            'foreign_keys' => [
+                'FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE',
+            ],
+        ],
+        'kb_user_settings' => [
+            'columns' => [
+                'user_id' => ['data_type' => 'bigint', 'is_nullable' => 'NO'],
+                'active_assistant_role_id' => ['data_type' => 'text', 'is_nullable' => 'YES'],
+            ],
+            'indexes' => [],
+            'foreign_keys' => [
+                'FOREIGN KEY (active_assistant_role_id) REFERENCES kb_assistant_roles(id) ON DELETE SET NULL',
+                'FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE',
+            ],
+        ],
         'kb_chat_sessions' => [
             'columns' => [
                 'owner_user_id' => ['data_type' => 'bigint', 'is_nullable' => 'NO'],
@@ -156,6 +187,7 @@ test('knowledge base tables are created with the expected contract', function ()
         'kb_chat_messages' => [
             'columns' => [
                 'owner_user_id' => ['data_type' => 'bigint', 'is_nullable' => 'NO'],
+                'assistant_role_id' => ['data_type' => 'text', 'is_nullable' => 'NO'],
                 'citations_json' => ['data_type' => 'jsonb', 'is_nullable' => 'NO'],
                 'retrieval_json' => ['data_type' => 'jsonb', 'is_nullable' => 'YES'],
                 'trace_json' => ['data_type' => 'jsonb', 'is_nullable' => 'YES'],
@@ -164,6 +196,7 @@ test('knowledge base tables are created with the expected contract', function ()
                 'idx_kb_chat_messages_session' => 'session_id, created_at',
             ],
             'foreign_keys' => [
+                'FOREIGN KEY (assistant_role_id) REFERENCES kb_assistant_roles(id)',
                 'FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE',
                 'FOREIGN KEY (session_id) REFERENCES kb_chat_sessions(id) ON DELETE CASCADE',
             ],
@@ -334,6 +367,10 @@ test('knowledge base tables are created with the expected contract', function ()
         expect(Schema::hasTable($table))->toBeTrue();
 
         $columns = knowledgeTableColumns($table);
+
+        if ($table === 'kb_assistant_roles') {
+            expect($columns)->not->toHaveKey('description');
+        }
 
         foreach ($expectations['columns'] as $column => $columnExpectations) {
             expect($columns)->toHaveKey($column);

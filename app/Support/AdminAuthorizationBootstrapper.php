@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Filament\Resources\KnowledgeAssistantRoles\KnowledgeAssistantRoleResource;
 use App\Filament\Resources\KnowledgeTemplateExports\KnowledgeTemplateExportResource;
 use App\Filament\Resources\KnowledgeTemplateLibraries\KnowledgeTemplateLibraryResource;
 use App\Filament\Resources\KnowledgeTemplates\KnowledgeTemplateResource;
@@ -55,6 +56,7 @@ class AdminAuthorizationBootstrapper
             Dashboard::class,
         ])
             ->merge($this->resourcePermissions([
+                KnowledgeAssistantRoleResource::class,
                 KnowledgeTemplateResource::class,
                 KnowledgeTemplateExportResource::class,
                 KnowledgeTemplateLibraryResource::class,
@@ -76,6 +78,7 @@ class AdminAuthorizationBootstrapper
         ])
             ->merge($this->resourcePermissions(
                 resources: [
+                    KnowledgeAssistantRoleResource::class,
                     KnowledgeTemplateResource::class,
                     KnowledgeTemplateExportResource::class,
                     KnowledgeTemplateLibraryResource::class,

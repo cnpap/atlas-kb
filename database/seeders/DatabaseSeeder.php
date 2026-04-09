@@ -13,6 +13,7 @@ class DatabaseSeeder extends Seeder
             AdminRoleSeeder::class,
             AdminUserSeeder::class,
             KnowledgeUserSeeder::class,
+            KnowledgeAssistantRoleSeeder::class,
         ]);
     }
 }

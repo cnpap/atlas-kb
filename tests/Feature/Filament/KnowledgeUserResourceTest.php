@@ -101,6 +101,7 @@ test('deleting a knowledge user cascades through dependent kb tables', function 
     $collectionId = (string) fake()->uuid();
     $sourceId = (string) fake()->uuid();
     $importJobId = (string) fake()->uuid();
+    $assistantRoleId = (string) fake()->uuid();
     $chatSessionId = (string) fake()->uuid();
     $chatMessageId = (string) fake()->uuid();
     $chatFeedbackId = (string) fake()->uuid();
@@ -153,6 +154,27 @@ test('deleting a knowledge user cascades through dependent kb tables', function 
         'finished_at' => $now,
     ]);
 
+    DB::table('kb_assistant_roles')->insert([
+        'id' => $assistantRoleId,
+        'owner_user_id' => $knowledgeUser->getKey(),
+        'name' => '自定义角色',
+        'system_prompt' => '回答时优先引用证据。',
+        'style_prompt' => '保持简洁。',
+        'is_builtin' => false,
+        'is_default' => false,
+        'sort_order' => 0,
+        'created_at' => $now,
+        'updated_at' => $now,
+        'deleted_at' => null,
+    ]);
+
+    DB::table('kb_user_settings')->insert([
+        'user_id' => $knowledgeUser->getKey(),
+        'active_assistant_role_id' => $assistantRoleId,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
     DB::table('kb_chat_sessions')->insert([
         'id' => $chatSessionId,
         'owner_user_id' => $knowledgeUser->getKey(),
@@ -168,6 +190,7 @@ test('deleting a knowledge user cascades through dependent kb tables', function 
         'id' => $chatMessageId,
         'owner_user_id' => $knowledgeUser->getKey(),
         'session_id' => $chatSessionId,
+        'assistant_role_id' => $assistantRoleId,
         'role' => 'user',
         'content' => 'Hello',
         'citations_json' => json_encode([], JSON_THROW_ON_ERROR),
@@ -202,6 +225,8 @@ test('deleting a knowledge user cascades through dependent kb tables', function 
     expect(DB::table('kb_collections')->where('id', $collectionId)->exists())->toBeFalse()
         ->and(DB::table('kb_sources')->where('id', $sourceId)->exists())->toBeFalse()
         ->and(DB::table('kb_import_jobs')->where('id', $importJobId)->exists())->toBeFalse()
+        ->and(DB::table('kb_assistant_roles')->where('id', $assistantRoleId)->exists())->toBeFalse()
+        ->and(DB::table('kb_user_settings')->where('user_id', $knowledgeUser->getKey())->exists())->toBeFalse()
         ->and(DB::table('kb_chat_sessions')->where('id', $chatSessionId)->exists())->toBeFalse()
         ->and(DB::table('kb_chat_messages')->where('id', $chatMessageId)->exists())->toBeFalse()
         ->and(DB::table('kb_chat_feedback')->where('id', $chatFeedbackId)->exists())->toBeFalse()
