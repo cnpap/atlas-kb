@@ -1,12 +1,13 @@
-import { QdrantVector } from "@mastra/qdrant";
+import { createHash } from "node:crypto";
+import { UpstreamServiceError } from "@atlas-kb/errors";
 import {
   LocalFilesystem,
-  type WorkspaceFilesystem,
   Workspace,
+  type WorkspaceFilesystem,
 } from "@mastra/core/workspace";
+import type { SearchEngine } from "@mastra/core/workspace/search";
+import { QdrantVector } from "@mastra/qdrant";
 import { S3Filesystem } from "@mastra/s3";
-import { UpstreamServiceError } from "@atlas-kb/errors";
-import { createHash } from "node:crypto";
 import {
   getEmbeddingApiKey,
   getEmbeddingDimensions,
@@ -26,7 +27,6 @@ import {
   validateKnowledgeStorageConfig,
 } from "./config";
 import { buildKnowledgeSourceObjectPrefix } from "./object-storage";
-import type { SearchEngine } from "@mastra/core/workspace/search";
 
 type WorkspaceEntry = {
   indexName: string;
@@ -36,6 +36,11 @@ type WorkspaceEntry = {
 
 type KnowledgeFilesystemFactory = (args: {
   collectionId: string;
+  userId: string;
+}) => WorkspaceFilesystem;
+
+type KnowledgeStoragePrefixFilesystemFactory = (args: {
+  storagePrefix: string;
   userId: string;
 }) => WorkspaceFilesystem;
 
@@ -58,6 +63,9 @@ function summarizeProviderError(payload: string): string | undefined {
 const workspaceCache = new Map<string, Promise<WorkspaceEntry>>();
 let embeddingDimensionPromise: Promise<number | undefined> | undefined;
 let filesystemFactoryOverride: KnowledgeFilesystemFactory | undefined;
+let storagePrefixFilesystemFactoryOverride:
+  | KnowledgeStoragePrefixFilesystemFactory
+  | undefined;
 
 function getCacheKey(userId: string, collectionId: string): string {
   return `${userId}:${collectionId}`;
@@ -125,6 +133,30 @@ class KnowledgeWorkspaceS3Filesystem extends S3Filesystem {
   override exists(path: string) {
     return super.exists(this.normalizeWorkspacePath(path));
   }
+}
+
+function createMountedS3Filesystem(args: {
+  description: string;
+  displayName: string;
+  filesystemId: string;
+  prefix: string;
+  readOnly?: boolean;
+}): WorkspaceFilesystem {
+  validateKnowledgeStorageConfig();
+
+  return new KnowledgeWorkspaceS3Filesystem({
+    id: args.filesystemId,
+    bucket: getKnowledgeS3Bucket()!,
+    region: getKnowledgeS3Region()!,
+    accessKeyId: getKnowledgeS3AccessKeyId()!,
+    secretAccessKey: getKnowledgeS3SecretAccessKey()!,
+    endpoint: getKnowledgeS3Endpoint()!,
+    forcePathStyle: getKnowledgeS3ForcePathStyle(),
+    prefix: args.prefix,
+    displayName: args.displayName,
+    description: args.description,
+    readOnly: args.readOnly,
+  });
 }
 
 async function fetchEmbeddingVector(text: string): Promise<number[]> {
@@ -238,20 +270,57 @@ async function ensureVectorIndex(
   return dimension;
 }
 
+export function createKnowledgeCollectionFilesystem(args: {
+  collectionId: string;
+  userId: string;
+  readOnly?: boolean;
+}): WorkspaceFilesystem {
+  return (
+    filesystemFactoryOverride?.({
+      userId: args.userId,
+      collectionId: args.collectionId,
+    }) ??
+    createMountedS3Filesystem({
+      filesystemId: `knowledge-s3:${args.userId}:${args.collectionId}`,
+      prefix: buildKnowledgeSourceObjectPrefix(args),
+      displayName: "Atlas KB S3",
+      description: "Atlas KB 知识库资料文件存储。",
+      readOnly: args.readOnly,
+    })
+  );
+}
+
+export function createKnowledgeStoragePrefixFilesystem(args: {
+  storagePrefix: string;
+  userId: string;
+  readOnly?: boolean;
+}): WorkspaceFilesystem {
+  return (
+    storagePrefixFilesystemFactoryOverride?.({
+      userId: args.userId,
+      storagePrefix: args.storagePrefix,
+    }) ??
+    createMountedS3Filesystem({
+      filesystemId: `knowledge-s3:${args.userId}:prefix:${sanitizeSegment(
+        args.storagePrefix,
+      )}`,
+      prefix: args.storagePrefix,
+      displayName: "Atlas KB Reference Library",
+      description: "Atlas KB 模板资料库文件存储。",
+      readOnly: args.readOnly,
+    })
+  );
+}
+
 async function createWorkspaceEntry(
   userId: string,
   collectionId: string,
 ): Promise<WorkspaceEntry> {
   const indexName = getWorkspaceIndexName(userId, collectionId);
-  const filesystem =
-    filesystemFactoryOverride?.({
-      userId,
-      collectionId,
-    }) ??
-    createKnowledgeWorkspaceFilesystem({
-      userId,
-      collectionId,
-    });
+  const filesystem = createKnowledgeCollectionFilesystem({
+    userId,
+    collectionId,
+  });
 
   const vectorStore = createVectorStore();
   const workspace = new Workspace({
@@ -279,30 +348,6 @@ async function createWorkspaceEntry(
     vectorStore,
     workspace,
   };
-}
-
-function createKnowledgeWorkspaceFilesystem(args: {
-  collectionId: string;
-  userId: string;
-}): WorkspaceFilesystem {
-  validateKnowledgeStorageConfig();
-
-  // Mastra 的 list_files 工具默认会以 "." 表示 workspace 根目录，但官方
-  // S3Filesystem 不会把 "." 归一化为空路径，最终会把它拼进 S3 key，
-  // 导致“列当前有哪些文件”在 S3 workspace 下返回空结果。
-  // 这里保留官方 S3Filesystem 作为主体，只补一个最小兼容层来对齐根路径语义。
-  return new KnowledgeWorkspaceS3Filesystem({
-    id: `knowledge-s3:${args.userId}:${args.collectionId}`,
-    bucket: getKnowledgeS3Bucket()!,
-    region: getKnowledgeS3Region()!,
-    accessKeyId: getKnowledgeS3AccessKeyId()!,
-    secretAccessKey: getKnowledgeS3SecretAccessKey()!,
-    endpoint: getKnowledgeS3Endpoint()!,
-    forcePathStyle: getKnowledgeS3ForcePathStyle(),
-    prefix: buildKnowledgeSourceObjectPrefix(args),
-    displayName: "Atlas KB S3",
-    description: "Atlas KB 知识库资料文件存储。",
-  });
 }
 
 export async function getKnowledgeWorkspace(params: {
@@ -394,6 +439,12 @@ export function setKnowledgeFilesystemFactoryForTests(
   factory?: KnowledgeFilesystemFactory,
 ): void {
   filesystemFactoryOverride = factory;
+}
+
+export function setKnowledgeStoragePrefixFilesystemFactoryForTests(
+  factory?: KnowledgeStoragePrefixFilesystemFactory,
+): void {
+  storagePrefixFilesystemFactoryOverride = factory;
 }
 
 export { LocalFilesystem };

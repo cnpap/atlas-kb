@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   createUser,
   ensureDefaultUser,
@@ -10,9 +13,6 @@ import {
   setKnowledgeFilesystemFactoryForTests,
   waitForPendingKnowledgeImports,
 } from "@atlas-kb/mastra/knowledge";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { createApp } from "./app";
 
 const originalFetch = globalThis.fetch;
@@ -163,7 +163,6 @@ function mockProviders() {
         label: "文件标题",
         description: "",
         sortOrder: 1,
-        locations: [],
       },
       {
         id: "field-2",
@@ -171,7 +170,6 @@ function mockProviders() {
         label: "拟办意见",
         description: "",
         sortOrder: 2,
-        locations: [],
       },
     ],
     referenceLibraries: [],

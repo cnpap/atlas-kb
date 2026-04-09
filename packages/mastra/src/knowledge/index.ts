@@ -1,4 +1,14 @@
 export {
+  createKnowledgeExportTaskInAdmin,
+  downloadKnowledgeExportTaskFromAdmin,
+  getKnowledgeExportTaskDetailFromAdmin,
+  getKnowledgeTemplateDetailFromAdmin,
+  listKnowledgeExportTasksFromAdmin,
+  listKnowledgeTemplatesFromAdmin,
+  updateKnowledgeExportTaskInAdmin,
+} from "./admin-client";
+export { answerKnowledgeQuestion, runKnowledgeAgentQuestion } from "./agent";
+export {
   createChatReply,
   createChatSession,
   deleteChatSession,
@@ -8,6 +18,10 @@ export {
   streamChatReply,
   updateChatSession,
 } from "./chat";
+export {
+  getInternalSecret,
+  validateKnowledgeStorageConfig,
+} from "./config";
 export { getKnowledgeSourceDownloadUrl } from "./download";
 export {
   importKnowledgeFile,
@@ -15,8 +29,6 @@ export {
   updateKnowledgeSource,
   waitForPendingKnowledgeImports,
 } from "./ingest";
-export { answerKnowledgeQuestion, runKnowledgeAgentQuestion } from "./agent";
-export { searchKnowledge } from "./search";
 export {
   createKnowledgeCollection,
   deleteKnowledgeCollection,
@@ -31,6 +43,16 @@ export {
   updateKnowledgeCollection,
 } from "./repository";
 export {
+  createKnowledgeCollectionFilesystem,
+  createKnowledgeStoragePrefixFilesystem,
+  LocalFilesystem,
+  resetKnowledgeRuntimeCache,
+  setKnowledgeFilesystemFactoryForTests,
+  setKnowledgeStoragePrefixFilesystemFactoryForTests,
+} from "./runtime";
+export { searchKnowledge } from "./search";
+export { generateKnowledgeTemplateExportPayload } from "./template-exports";
+export {
   authenticateUser,
   createUser,
   ensureDefaultUser,
@@ -39,22 +61,3 @@ export {
   getDefaultUsername,
   requireDefaultUser,
 } from "./users";
-export {
-  LocalFilesystem,
-  resetKnowledgeRuntimeCache,
-  setKnowledgeFilesystemFactoryForTests,
-} from "./runtime";
-export {
-  createKnowledgeExportTaskInAdmin,
-  downloadKnowledgeExportTaskFromAdmin,
-  getKnowledgeExportTaskDetailFromAdmin,
-  getKnowledgeTemplateDetailFromAdmin,
-  listKnowledgeExportTasksFromAdmin,
-  listKnowledgeTemplatesFromAdmin,
-  updateKnowledgeExportTaskInAdmin,
-} from "./admin-client";
-export { generateKnowledgeTemplateExportPayload } from "./template-exports";
-export {
-  getInternalSecret,
-  validateKnowledgeStorageConfig,
-} from "./config";

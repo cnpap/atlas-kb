@@ -669,9 +669,9 @@ export interface KbTemplateFields {
   description: string | null;
   id: string;
   label: string;
-  locations_json: Json;
   meta_source: Generated<string>;
   name: string;
+  placeholder_name: string;
   sort_order: number;
   template_id: string;
   updated_at: Timestamp;

@@ -28,7 +28,6 @@ export const KnowledgeTemplateFieldSchema = z.object({
   label: z.string().trim().min(1),
   description: z.string().trim().optional().default(""),
   sortOrder: z.number().int().nonnegative(),
-  locations: z.array(z.record(z.string(), z.unknown())),
 });
 
 export const KnowledgeTemplateLibrarySchema = z.object({
@@ -157,8 +156,30 @@ export const KnowledgeExportTaskGenerateResponseSchema =
     }),
   );
 
+export function buildKnowledgeTemplateExportStructuredOutputSchema(
+  fields: KnowledgeTemplateField[],
+) {
+  const shape: Record<string, z.ZodString> = {};
+
+  for (const field of fields) {
+    const description = [
+      `字段名：${field.name}。`,
+      `字段标签：${field.label}。`,
+      field.description ? `字段说明：${field.description}。` : "字段说明为空。",
+      "必须返回字符串；无法确认时返回空字符串。",
+    ].join("");
+
+    shape[field.name] = z.string().describe(description);
+  }
+
+  return z.object(shape);
+}
+
 export type KnowledgeTemplateSummary = z.infer<
   typeof KnowledgeTemplateSummarySchema
+>;
+export type KnowledgeTemplateField = z.infer<
+  typeof KnowledgeTemplateFieldSchema
 >;
 export type KnowledgeTemplateDetail = z.infer<
   typeof KnowledgeTemplateDetailSchema
@@ -181,4 +202,7 @@ export type KnowledgeExportTaskCreateRequest = z.infer<
 >;
 export type KnowledgeExportTaskUpdateRequest = z.infer<
   typeof KnowledgeExportTaskUpdateRequestSchema
+>;
+export type KnowledgeExportTaskGenerateResult = z.infer<
+  typeof KnowledgeExportTaskGenerateResultSchema
 >;
