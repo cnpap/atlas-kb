@@ -7,7 +7,9 @@ import {
   getRuntimeModelLogContext,
   mapRuntimeModelError,
 } from "../models/runtime-model";
+import { getActiveAssistantRolePromptConfig } from "./assistant-roles-repository";
 import { requireKnowledgeCollection } from "./collections-repository";
+import type { AssistantRolePromptConfig } from "./repository-shared";
 import { getKnowledgeWorkspace } from "./runtime";
 
 const AGENT_EXECUTION_TIMEOUT_MS = 60_000;
@@ -24,6 +26,7 @@ class KnowledgeAgentTimeoutError extends Error {
 }
 
 type KnowledgeExecutionParams = {
+  assistantRole?: AssistantRolePromptConfig;
   limit?: number;
   question: string;
   collectionId: string;
@@ -152,6 +155,7 @@ function logFallbackAnswer(params: {
 }
 
 async function buildKnowledgeExecutionContext(params: {
+  assistantRole?: AssistantRolePromptConfig;
   collectionId: string;
   resourceId?: string;
   threadId?: string;
@@ -159,13 +163,19 @@ async function buildKnowledgeExecutionContext(params: {
 }) {
   // 对话和 ask 接口共用同一套执行上下文：校验资料库、获取 workspace、
   // 绑定智能体，并附上 Mastra 记忆所需的标识。
-  await requireKnowledgeCollection(params.userId, params.collectionId);
-
-  const workspace = await getKnowledgeWorkspace({
-    userId: params.userId,
-    collectionId: params.collectionId,
-  });
+  const [workspace, assistantRole] = await Promise.all([
+    requireKnowledgeCollection(params.userId, params.collectionId).then(() =>
+      getKnowledgeWorkspace({
+        userId: params.userId,
+        collectionId: params.collectionId,
+      }),
+    ),
+    params.assistantRole
+      ? Promise.resolve(params.assistantRole)
+      : getActiveAssistantRolePromptConfig(params.userId),
+  ]);
   const agent = createKnowledgeAgent({
+    assistantRole,
     collectionId: params.collectionId,
     workspace,
   });

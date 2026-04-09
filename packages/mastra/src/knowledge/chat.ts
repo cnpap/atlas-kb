@@ -25,11 +25,13 @@ import {
   saveMessageFeedback,
   updateChatSession,
 } from "./chat-repository";
+import { getActiveAssistantRolePromptConfig } from "./assistant-roles-repository";
 import {
   runKnowledgeAgentQuestion,
   streamKnowledgeAgentQuestion,
 } from "./agent";
 import { getRuntimeModelLogContext } from "../models/runtime-model";
+import type { AssistantRolePromptConfig } from "./repository-shared";
 
 export {
   createChatSession,
@@ -123,16 +125,21 @@ async function prepareChatReplyExecution(params: {
   query: string;
   limit?: number;
 }) {
-  const session = await requireChatSession(params.userId, params.sessionId);
+  const [session, assistantRole] = await Promise.all([
+    requireChatSession(params.userId, params.sessionId),
+    getActiveAssistantRolePromptConfig(params.userId),
+  ]);
   const userMessage = await appendChatMessage({
     userId: params.userId,
     sessionId: session.id,
+    assistantRoleId: assistantRole.id,
     role: "user",
     content: params.query,
   });
 
   return {
     session,
+    assistantRole,
     userMessage,
     agentParams: {
       question: params.query,
@@ -140,11 +147,13 @@ async function prepareChatReplyExecution(params: {
       limit: params.limit,
       userId: params.userId,
       threadId: session.id,
+      assistantRole,
     },
   };
 }
 
 async function completeChatReply(params: {
+  assistantRole: AssistantRolePromptConfig;
   userId: string;
   sessionId: string;
   userMessage: ChatReplyFinal["userMessage"];
@@ -153,6 +162,7 @@ async function completeChatReply(params: {
   const assistantMessage = await appendChatMessage({
     userId: params.userId,
     sessionId: params.sessionId,
+    assistantRoleId: params.assistantRole.id,
     role: "assistant",
     content: params.answer,
   });
@@ -184,6 +194,7 @@ export async function createChatReply(params: {
   const answer = await runKnowledgeAgentQuestion(execution.agentParams);
 
   return completeChatReply({
+    assistantRole: execution.assistantRole,
     userId: params.userId,
     sessionId: execution.session.id,
     userMessage: execution.userMessage,
@@ -268,6 +279,7 @@ export async function streamChatReply(params: {
           finishText();
 
           const reply = await completeChatReply({
+            assistantRole: execution.assistantRole,
             userId: params.userId,
             sessionId: session.id,
             userMessage,

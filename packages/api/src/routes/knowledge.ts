@@ -1,24 +1,31 @@
 import {
   answerKnowledgeQuestion,
+  createAssistantRole,
   createKnowledgeCollection,
   createKnowledgeExportTaskInAdmin,
+  deleteAssistantRole,
   deleteKnowledgeCollection,
   deleteKnowledgeSource,
   downloadKnowledgeExportTaskFromAdmin,
   generateKnowledgeTemplateExportPayload,
+  getActiveAssistantRole,
   getKnowledgeCollectionSourcesData,
   getKnowledgeExportTaskDetailFromAdmin,
   getKnowledgeSourceDownloadUrl,
   getKnowledgeTemplateDetailFromAdmin,
   importKnowledgeFile,
   importKnowledgeText,
+  listAssistantRoles,
   listKnowledgeExportTasksFromAdmin,
   listKnowledgeCollections,
   listKnowledgeTemplatesFromAdmin,
   processNextKnowledgeImportJob,
+  reorderAssistantRoles,
   requireKnowledgeCollection,
   requireKnowledgeSource,
   searchKnowledge,
+  setActiveAssistantRole,
+  updateAssistantRole,
   updateKnowledgeExportTaskInAdmin,
   updateKnowledgeCollection,
   updateKnowledgeSource,
@@ -28,6 +35,16 @@ import { BadRequestError, UnauthorizedError } from "@atlas-kb/errors";
 import {
   AskKnowledgeRequestSchema,
   AskKnowledgeResponseSchema,
+  AssistantRoleCreateRequestSchema,
+  AssistantRoleDeleteResponseSchema,
+  AssistantRoleIdParamsSchema,
+  AssistantRoleOrderRequestSchema,
+  AssistantRoleOrderResponseSchema,
+  AssistantRoleResponseSchema,
+  AssistantRolesResponseSchema,
+  AssistantRoleSelectionRequestSchema,
+  AssistantRoleSelectionResponseSchema,
+  AssistantRoleUpdateRequestSchema,
   KnowledgeCollectionCreateRequestSchema,
   KnowledgeCollectionIdParamsSchema,
   KnowledgeCollectionResponseSchema,
@@ -98,6 +115,112 @@ function parseTagInput(value?: string): string[] | undefined {
 }
 
 export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
+  .get(
+    "/assistant-roles",
+    async ({ headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      const [roles, activeRole] = await Promise.all([
+        listAssistantRoles(session.user.id),
+        getActiveAssistantRole(session.user.id),
+      ]);
+
+      return success({
+        roles,
+        activeRoleId: activeRole.id,
+      });
+    },
+    {
+      response: AssistantRolesResponseSchema,
+    },
+  )
+  .post(
+    "/assistant-roles",
+    async ({ body, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success({
+        role: await createAssistantRole({
+          userId: session.user.id,
+          input: body,
+        }),
+      });
+    },
+    {
+      body: AssistantRoleCreateRequestSchema,
+      response: AssistantRoleResponseSchema,
+    },
+  )
+  .patch(
+    "/assistant-roles/active",
+    async ({ body, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      const role = await setActiveAssistantRole({
+        userId: session.user.id,
+        roleId: body.roleId,
+      });
+
+      return success({
+        activeRoleId: role.id,
+      });
+    },
+    {
+      body: AssistantRoleSelectionRequestSchema,
+      response: AssistantRoleSelectionResponseSchema,
+    },
+  )
+  .patch(
+    "/assistant-roles/order",
+    async ({ body, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      await reorderAssistantRoles({
+        userId: session.user.id,
+        roleIds: body.roleIds,
+      });
+
+      return success({
+        ok: true as const,
+      });
+    },
+    {
+      body: AssistantRoleOrderRequestSchema,
+      response: AssistantRoleOrderResponseSchema,
+    },
+  )
+  .patch(
+    "/assistant-roles/:roleId",
+    async ({ body, headers, params }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success({
+        role: await updateAssistantRole({
+          userId: session.user.id,
+          roleId: params.roleId,
+          input: body,
+        }),
+      });
+    },
+    {
+      body: AssistantRoleUpdateRequestSchema,
+      params: AssistantRoleIdParamsSchema,
+      response: AssistantRoleResponseSchema,
+    },
+  )
+  .delete(
+    "/assistant-roles/:roleId",
+    async ({ headers, params }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      await deleteAssistantRole({
+        userId: session.user.id,
+        roleId: params.roleId,
+      });
+
+      return success({
+        ok: true as const,
+      });
+    },
+    {
+      params: AssistantRoleIdParamsSchema,
+      response: AssistantRoleDeleteResponseSchema,
+    },
+  )
   .get(
     "/collections",
     async ({ headers }) => {

@@ -1,4 +1,5 @@
 import type {
+  AssistantRole,
   ChatMessage,
   ChatMessageFeedback,
   ChatSession,
@@ -53,6 +54,7 @@ export type ChatSessionRow = {
 };
 
 export type ChatMessageRow = {
+  assistant_role_id: string;
   citations_json: unknown;
   content: string;
   created_at: Date | string;
@@ -64,6 +66,20 @@ export type ChatMessageRow = {
   feedback_id: string | null;
   feedback_note: string | null;
   feedback_rating: string | null;
+};
+
+export type AssistantRoleRow = {
+  created_at: Date | string;
+  deleted_at: Date | string | null;
+  id: string;
+  is_builtin: boolean;
+  is_default: boolean;
+  name: string;
+  owner_user_id: string | null;
+  sort_order: number;
+  style_prompt: string;
+  system_prompt: string;
+  updated_at: Date | string;
 };
 
 export const SOURCE_COLUMNS = [
@@ -94,6 +110,20 @@ export const CHAT_SESSION_COLUMNS = [
   "created_at",
   "updated_at",
   "last_message_at",
+] as const;
+
+export const ASSISTANT_ROLE_COLUMNS = [
+  "id",
+  "owner_user_id",
+  "name",
+  "system_prompt",
+  "style_prompt",
+  "is_builtin",
+  "is_default",
+  "sort_order",
+  "created_at",
+  "updated_at",
+  "deleted_at",
 ] as const;
 
 export function nowIso(): string {
@@ -211,11 +241,44 @@ export function toChatMessage(row: ChatMessageRow): ChatMessage {
   return {
     id: row.id,
     sessionId: row.session_id,
+    assistantRoleId: row.assistant_role_id,
     role: row.role as ChatMessage["role"],
     content: row.content,
     citations:
       parseOptionalJson<ChatMessage["citations"]>(row.citations_json) ?? [],
     createdAt: toIsoTimestamp(row.created_at),
     feedback,
+  };
+}
+
+export function toAssistantRole(row: AssistantRoleRow): AssistantRole {
+  return {
+    id: row.id,
+    name: row.name,
+    stylePrompt: row.style_prompt,
+    isBuiltin: Boolean(row.is_builtin),
+    isDefault: Boolean(row.is_default),
+  };
+}
+
+export type AssistantRolePromptConfig = {
+  id: string;
+  isBuiltin: boolean;
+  isDefault: boolean;
+  name: string;
+  stylePrompt: string;
+  systemPrompt: string;
+};
+
+export function toAssistantRolePromptConfig(
+  row: AssistantRoleRow,
+): AssistantRolePromptConfig {
+  return {
+    id: row.id,
+    name: row.name,
+    systemPrompt: row.system_prompt,
+    stylePrompt: row.style_prompt,
+    isBuiltin: Boolean(row.is_builtin),
+    isDefault: Boolean(row.is_default),
   };
 }

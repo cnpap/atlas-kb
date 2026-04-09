@@ -1,17 +1,12 @@
 <script setup lang="ts">
   import type {
+    AssistantRole,
     KnowledgeCollection,
     KnowledgeExportTask,
     KnowledgeSource,
   } from "@atlas-kb/schema";
-  import {
-    FileCog,
-    FolderPlus,
-    Info,
-    Search,
-    Settings,
-    Upload,
-  } from "lucide-vue-next";
+  import { FileCog, FolderPlus, Info, Search, Upload } from "lucide-vue-next";
+  import WorkspaceSettingsPane from "@/features/app/components/WorkspaceSettingsPane.vue";
   import {
     formatRelativeTime,
     getExportTaskStatusLabel,
@@ -21,33 +16,53 @@
   } from "@/lib/knowledge-ui";
 
   defineProps<{
+    activeAssistantRoleId: string;
     activeCollection: KnowledgeCollection | null;
+    assistantRoles: AssistantRole[];
+    deletingCollection?: boolean;
+    deletingRoleId?: string;
     exportTasks: KnowledgeExportTask[];
     filteredSources: KnowledgeSource[];
+    loadingAssistantRoles?: boolean;
     loadingSources?: boolean;
     loadingExportTasks?: boolean;
-    panel: "library" | "exports";
+    panel: "library" | "exports" | "settings";
+    roleSwitchDisabled?: boolean;
+    savingCollection?: boolean;
+    savingRole?: boolean;
     sourceActionId: string;
     sourceFilter: string;
+    switchingAssistantRole?: boolean;
   }>();
 
   defineEmits<{
+    createRole: [payload: { name: string; stylePrompt: string }];
+    deleteCollection: [];
+    deleteRole: [roleId: string];
     deleteSource: [source: KnowledgeSource];
     downloadExportTask: [task: KnowledgeExportTask];
     downloadSource: [source: KnowledgeSource];
     editSource: [source: KnowledgeSource];
     openExportModal: [source: KnowledgeSource];
     openImport: [];
-    openPanel: [panel: "library" | "exports"];
-    openSettings: [];
+    openPanel: [panel: "library" | "exports" | "settings"];
     openTaskDetail: [taskId: string];
+    reorderRoles: [roleIds: string[]];
+    saveCollection: [payload: { description: string; name: string }];
+    selectActiveRole: [roleId: string];
+    updateRole: [
+      payload: {
+        body: { name: string; stylePrompt: string };
+        roleId: string;
+      },
+    ];
     "update:sourceFilter": [value: string];
   }>();
 </script>
 
 <template>
   <aside class="workbench-pane right-pane" data-testid="workspace-context-pane">
-    <div class="pane-header pane-header-stack">
+    <div class="pane-header">
       <div class="segmented-tabs !bg-transparent !border-none !p-0 gap-2">
         <button
           class="soft-button"
@@ -67,6 +82,15 @@
         >
           导出
         </button>
+        <button
+          class="soft-button"
+          data-testid="context-panel-settings-tab"
+          :class="panel === 'settings' ? 'primary' : ''"
+          type="button"
+          @click="$emit('openPanel', 'settings')"
+        >
+          设置
+        </button>
       </div>
     </div>
 
@@ -83,15 +107,6 @@
         >
           <Upload class="size-3.5" />
           <span class="text-xs">添加文件</span>
-        </button>
-        <button
-          class="soft-button !px-2.5 !py-1.5"
-          type="button"
-          :disabled="!activeCollection"
-          @click="$emit('openSettings')"
-        >
-          <Settings class="size-3.5" />
-          <span class="text-xs">设置</span>
         </button>
       </div>
 
@@ -215,7 +230,7 @@
       </template>
     </div>
 
-    <div v-else class="pane-scroll flex flex-col pt-4">
+    <div v-else-if="panel === 'exports'" class="pane-scroll flex flex-col pt-4">
       <div
         v-if="loadingExportTasks"
         class="empty-state items-center text-center text-sm text-[var(--text-muted)]"
@@ -295,5 +310,26 @@
         </article>
       </div>
     </div>
+
+    <WorkspaceSettingsPane
+      v-else
+      :active-assistant-role-id="activeAssistantRoleId"
+      :active-collection="activeCollection"
+      :assistant-roles="assistantRoles"
+      :deleting-collection="deletingCollection"
+      :deleting-role-id="deletingRoleId"
+      :loading-assistant-roles="loadingAssistantRoles"
+      :role-switch-disabled="roleSwitchDisabled"
+      :saving-collection="savingCollection"
+      :saving-role="savingRole"
+      :switching-assistant-role="switchingAssistantRole"
+      @create-role="$emit('createRole', $event)"
+      @delete-collection="$emit('deleteCollection')"
+      @delete-role="$emit('deleteRole', $event)"
+      @reorder-roles="$emit('reorderRoles', $event)"
+      @save-collection="$emit('saveCollection', $event)"
+      @select-active-role="$emit('selectActiveRole', $event)"
+      @update-role="$emit('updateRole', $event)"
+    />
   </aside>
 </template>

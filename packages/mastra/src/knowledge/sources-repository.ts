@@ -127,7 +127,7 @@ export async function createKnowledgeSourceRecord(params: {
       tags_json: params.tags,
       source_type: params.sourceType,
       status: params.status,
-      source_filename: params.sourceFilename ?? null,
+      source_filename: params.sourceFilename ?? params.documentId,
       mime_type: params.mimeType ?? null,
       byte_size: params.byteSize ?? null,
       failure_message: params.failureMessage ?? null,
@@ -168,7 +168,11 @@ export async function replaceSourceContent(params: {
       summary,
       content,
       tags_json: params.tags,
-      source_filename: params.sourceFilename ?? current.sourceFilename ?? null,
+      source_filename:
+        params.sourceFilename ??
+        current.sourceFilename ??
+        current.documentId ??
+        params.documentId,
       mime_type: params.mimeType ?? current.mimeType ?? null,
       byte_size: params.byteSize ?? current.byteSize ?? null,
       status: params.status,

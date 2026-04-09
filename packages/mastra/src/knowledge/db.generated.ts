@@ -5,16 +5,11 @@
 
 import type { ColumnType } from "kysely";
 
-export type Generated<T> =
-  T extends ColumnType<infer S, infer I, infer U>
-    ? ColumnType<S, I | undefined, U>
-    : ColumnType<T, T | undefined, T>;
+export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
+  ? ColumnType<S, I | undefined, U>
+  : ColumnType<T, T | undefined, T>;
 
-export type Int8 = ColumnType<
-  string,
-  bigint | number | string,
-  bigint | number | string
->;
+export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>;
 
 export type Json = JsonValue;
 
@@ -29,486 +24,6 @@ export type JsonPrimitive = boolean | number | string | null;
 export type JsonValue = JsonArray | JsonObject | JsonPrimitive;
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
-
-export interface AtlasKbMastraMastraAgents {
-  activeVersionId: string | null;
-  authorId: string | null;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  id: string;
-  metadata: Json | null;
-  status: string;
-  updatedAt: Timestamp;
-  updatedAtZ: Generated<Timestamp | null>;
-}
-
-export interface AtlasKbMastraMastraAgentVersions {
-  agentId: string;
-  agents: Json | null;
-  changedFields: Json | null;
-  changeMessage: string | null;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  defaultOptions: Json | null;
-  description: string | null;
-  id: string;
-  inputProcessors: Json | null;
-  instructions: string;
-  integrationTools: Json | null;
-  mcpClients: Json | null;
-  memory: Json | null;
-  model: Json;
-  name: string;
-  outputProcessors: Json | null;
-  requestContextSchema: Json | null;
-  scorers: Json | null;
-  skills: Json | null;
-  skillsFormat: string | null;
-  tools: Json | null;
-  versionNumber: number;
-  workflows: Json | null;
-  workspace: Json | null;
-}
-
-export interface AtlasKbMastraMastraAiSpans {
-  attributes: Json | null;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  endedAt: Timestamp | null;
-  endedAtZ: Generated<Timestamp | null>;
-  entityId: string | null;
-  entityName: string | null;
-  entityType: string | null;
-  environment: string | null;
-  error: Json | null;
-  experimentId: string | null;
-  input: Json | null;
-  isEvent: boolean;
-  links: Json | null;
-  metadata: Json | null;
-  name: string;
-  organizationId: string | null;
-  output: Json | null;
-  parentEntityId: string | null;
-  parentEntityName: string | null;
-  parentEntityType: string | null;
-  parentSpanId: string | null;
-  requestContext: Json | null;
-  requestId: string | null;
-  resourceId: string | null;
-  rootEntityId: string | null;
-  rootEntityName: string | null;
-  rootEntityType: string | null;
-  runId: string | null;
-  scope: Json | null;
-  serviceName: string | null;
-  sessionId: string | null;
-  source: string | null;
-  spanId: string;
-  spanType: string;
-  startedAt: Timestamp;
-  startedAtZ: Generated<Timestamp | null>;
-  tags: Json | null;
-  threadId: string | null;
-  traceId: string;
-  updatedAt: Timestamp | null;
-  updatedAtZ: Generated<Timestamp | null>;
-  userId: string | null;
-}
-
-export interface AtlasKbMastraMastraDatasetItems {
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  datasetId: string;
-  datasetVersion: number;
-  groundTruth: Json | null;
-  id: string;
-  input: Json;
-  isDeleted: boolean;
-  metadata: Json | null;
-  requestContext: Json | null;
-  source: Json | null;
-  updatedAt: Timestamp;
-  updatedAtZ: Generated<Timestamp | null>;
-  validTo: number | null;
-}
-
-export interface AtlasKbMastraMastraDatasets {
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  description: string | null;
-  groundTruthSchema: Json | null;
-  id: string;
-  inputSchema: Json | null;
-  metadata: Json | null;
-  name: string;
-  requestContextSchema: Json | null;
-  tags: Json | null;
-  targetIds: Json | null;
-  targetType: string | null;
-  updatedAt: Timestamp;
-  updatedAtZ: Generated<Timestamp | null>;
-  version: number;
-}
-
-export interface AtlasKbMastraMastraDatasetVersions {
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  datasetId: string;
-  id: string;
-  version: number;
-}
-
-export interface AtlasKbMastraMastraExperimentResults {
-  completedAt: Timestamp;
-  completedAtZ: Generated<Timestamp | null>;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  error: Json | null;
-  experimentId: string;
-  groundTruth: Json | null;
-  id: string;
-  input: Json;
-  itemDatasetVersion: number | null;
-  itemId: string;
-  output: Json | null;
-  retryCount: number;
-  startedAt: Timestamp;
-  startedAtZ: Generated<Timestamp | null>;
-  traceId: string | null;
-}
-
-export interface AtlasKbMastraMastraExperiments {
-  completedAt: Timestamp | null;
-  completedAtZ: Generated<Timestamp | null>;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  datasetId: string | null;
-  datasetVersion: number | null;
-  description: string | null;
-  failedCount: number;
-  id: string;
-  metadata: Json | null;
-  name: string | null;
-  skippedCount: number;
-  startedAt: Timestamp | null;
-  startedAtZ: Generated<Timestamp | null>;
-  status: string;
-  succeededCount: number;
-  targetId: string;
-  targetType: string;
-  totalItems: number;
-  updatedAt: Timestamp;
-  updatedAtZ: Generated<Timestamp | null>;
-}
-
-export interface AtlasKbMastraMastraMcpClients {
-  activeVersionId: string | null;
-  authorId: string | null;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  id: string;
-  metadata: Json | null;
-  status: string;
-  updatedAt: Timestamp;
-  updatedAtZ: Generated<Timestamp | null>;
-}
-
-export interface AtlasKbMastraMastraMcpClientVersions {
-  changedFields: Json | null;
-  changeMessage: string | null;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  description: string | null;
-  id: string;
-  mcpClientId: string;
-  name: string;
-  servers: Json;
-  versionNumber: number;
-}
-
-export interface AtlasKbMastraMastraMcpServers {
-  activeVersionId: string | null;
-  authorId: string | null;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  id: string;
-  metadata: Json | null;
-  status: string;
-  updatedAt: Timestamp;
-  updatedAtZ: Generated<Timestamp | null>;
-}
-
-export interface AtlasKbMastraMastraMcpServerVersions {
-  agents: Json | null;
-  changedFields: Json | null;
-  changeMessage: string | null;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  description: string | null;
-  id: string;
-  instructions: string | null;
-  isLatest: boolean | null;
-  mcpServerId: string;
-  name: string;
-  packageCanonical: string | null;
-  releaseDate: string | null;
-  repository: Json | null;
-  tools: Json | null;
-  version: string;
-  versionNumber: number;
-  workflows: Json | null;
-}
-
-export interface AtlasKbMastraMastraMessages {
-  content: string;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  id: string;
-  resourceId: string | null;
-  role: string;
-  thread_id: string;
-  type: string;
-}
-
-export interface AtlasKbMastraMastraObservationalMemory {
-  activeObservations: string;
-  activeObservationsPendingUpdate: string | null;
-  bufferedMessageIds: Json | null;
-  bufferedObservationChunks: Json | null;
-  bufferedObservations: string | null;
-  bufferedObservationTokens: number | null;
-  bufferedReflection: string | null;
-  bufferedReflectionInputTokens: number | null;
-  bufferedReflectionTokens: number | null;
-  config: string;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  generationCount: number;
-  id: string;
-  isBufferingObservation: boolean;
-  isBufferingReflection: boolean;
-  isObserving: boolean;
-  isReflecting: boolean;
-  lastBufferedAtTime: Timestamp | null;
-  lastBufferedAtTimeZ: Generated<Timestamp | null>;
-  lastBufferedAtTokens: number;
-  lastObservedAt: Timestamp | null;
-  lastObservedAtZ: Generated<Timestamp | null>;
-  lastReflectionAt: Timestamp | null;
-  lastReflectionAtZ: Generated<Timestamp | null>;
-  lookupKey: string;
-  metadata: Json | null;
-  observationTokenCount: number;
-  observedMessageIds: Json | null;
-  observedTimezone: string | null;
-  originType: string;
-  pendingMessageTokens: number;
-  reflectedObservationLineCount: number | null;
-  resourceId: string | null;
-  scope: string;
-  threadId: string | null;
-  totalTokensObserved: number;
-  updatedAt: Timestamp;
-  updatedAtZ: Generated<Timestamp | null>;
-}
-
-export interface AtlasKbMastraMastraPromptBlocks {
-  activeVersionId: string | null;
-  authorId: string | null;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  id: string;
-  metadata: Json | null;
-  status: string;
-  updatedAt: Timestamp;
-  updatedAtZ: Generated<Timestamp | null>;
-}
-
-export interface AtlasKbMastraMastraPromptBlockVersions {
-  blockId: string;
-  changedFields: Json | null;
-  changeMessage: string | null;
-  content: string;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  description: string | null;
-  id: string;
-  name: string;
-  requestContextSchema: Json | null;
-  rules: Json | null;
-  versionNumber: number;
-}
-
-export interface AtlasKbMastraMastraResources {
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  id: string;
-  metadata: Json | null;
-  updatedAt: Timestamp;
-  updatedAtZ: Generated<Timestamp | null>;
-  workingMemory: string | null;
-}
-
-export interface AtlasKbMastraMastraScorerDefinitions {
-  activeVersionId: string | null;
-  authorId: string | null;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  id: string;
-  metadata: Json | null;
-  status: string;
-  updatedAt: Timestamp;
-  updatedAtZ: Generated<Timestamp | null>;
-}
-
-export interface AtlasKbMastraMastraScorerDefinitionVersions {
-  changedFields: Json | null;
-  changeMessage: string | null;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  defaultSampling: Json | null;
-  description: string | null;
-  id: string;
-  instructions: string | null;
-  model: Json | null;
-  name: string;
-  presetConfig: Json | null;
-  scoreRange: Json | null;
-  scorerDefinitionId: string;
-  type: string;
-  versionNumber: number;
-}
-
-export interface AtlasKbMastraMastraScorers {
-  additionalContext: Json | null;
-  analyzePrompt: string | null;
-  analyzeStepResult: Json | null;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  entity: Json | null;
-  entityId: string | null;
-  entityType: string | null;
-  extractPrompt: string | null;
-  extractStepResult: Json | null;
-  generateReasonPrompt: string | null;
-  generateScorePrompt: string | null;
-  id: string;
-  input: Json;
-  metadata: Json | null;
-  output: Json;
-  preprocessPrompt: string | null;
-  preprocessStepResult: Json | null;
-  reason: string | null;
-  reasonPrompt: string | null;
-  requestContext: Json | null;
-  resourceId: string | null;
-  runId: string;
-  score: number;
-  scorer: Json;
-  scorerId: string;
-  source: string;
-  spanId: string | null;
-  threadId: string | null;
-  traceId: string | null;
-  updatedAt: Timestamp;
-  updatedAtZ: Generated<Timestamp | null>;
-}
-
-export interface AtlasKbMastraMastraSkillBlobs {
-  content: string;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  hash: string;
-  mimeType: string | null;
-  size: number;
-}
-
-export interface AtlasKbMastraMastraSkills {
-  activeVersionId: string | null;
-  authorId: string | null;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  id: string;
-  status: string;
-  updatedAt: Timestamp;
-  updatedAtZ: Generated<Timestamp | null>;
-}
-
-export interface AtlasKbMastraMastraSkillVersions {
-  assets: Json | null;
-  changedFields: Json | null;
-  changeMessage: string | null;
-  compatibility: Json | null;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  description: string;
-  id: string;
-  instructions: string;
-  license: string | null;
-  metadata: Json | null;
-  name: string;
-  references: Json | null;
-  scripts: Json | null;
-  skillId: string;
-  source: Json | null;
-  tree: Json | null;
-  versionNumber: number;
-}
-
-export interface AtlasKbMastraMastraThreads {
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  id: string;
-  metadata: Json | null;
-  resourceId: string;
-  title: string;
-  updatedAt: Timestamp;
-  updatedAtZ: Generated<Timestamp | null>;
-}
-
-export interface AtlasKbMastraMastraWorkflowSnapshot {
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  resourceId: string | null;
-  run_id: string;
-  snapshot: Json;
-  updatedAt: Timestamp;
-  updatedAtZ: Generated<Timestamp | null>;
-  workflow_name: string;
-}
-
-export interface AtlasKbMastraMastraWorkspaces {
-  activeVersionId: string | null;
-  authorId: string | null;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  id: string;
-  metadata: Json | null;
-  status: string;
-  updatedAt: Timestamp;
-  updatedAtZ: Generated<Timestamp | null>;
-}
-
-export interface AtlasKbMastraMastraWorkspaceVersions {
-  autoSync: boolean | null;
-  changedFields: Json | null;
-  changeMessage: string | null;
-  createdAt: Timestamp;
-  createdAtZ: Generated<Timestamp | null>;
-  description: string | null;
-  filesystem: Json | null;
-  id: string;
-  mounts: Json | null;
-  name: string;
-  operationTimeout: number | null;
-  sandbox: Json | null;
-  search: Json | null;
-  skills: Json | null;
-  tools: Json | null;
-  versionNumber: number;
-  workspaceId: string;
-}
 
 export interface Cache {
   expiration: number;
@@ -555,6 +70,32 @@ export interface Jobs {
   reserved_at: number | null;
 }
 
+export interface KbAssistantRoles {
+  created_at: Timestamp;
+  deleted_at: Timestamp | null;
+  id: string;
+  is_builtin: Generated<boolean>;
+  is_default: Generated<boolean>;
+  name: string;
+  owner_user_id: Int8 | null;
+  sort_order: Generated<number>;
+  style_prompt: Generated<string>;
+  system_prompt: Generated<string>;
+  updated_at: Timestamp;
+}
+
+export interface KbBriefingExports {
+  citations_json: Json;
+  created_at: Timestamp;
+  document_id: string;
+  form_json: Json;
+  id: string;
+  owner_user_id: Int8;
+  source_id: string;
+  summary: string;
+  title: string;
+}
+
 export interface KbChatFeedback {
   created_at: Timestamp;
   id: string;
@@ -565,6 +106,7 @@ export interface KbChatFeedback {
 }
 
 export interface KbChatMessages {
+  assistant_role_id: string;
   citations_json: Json;
   content: string;
   created_at: Timestamp;
@@ -624,7 +166,7 @@ export interface KbSources {
   id: string;
   mime_type: string | null;
   owner_user_id: Int8;
-  source_filename: string | null;
+  source_filename: string;
   source_type: string;
   status: string;
   summary: string;
@@ -654,6 +196,7 @@ export interface KbTemplateExportTasks {
   failure_message: string | null;
   id: string;
   owner_user_id: Int8;
+  parameters_json: Json | null;
   source_id: string;
   source_title: string;
   started_at: Timestamp | null;
@@ -730,6 +273,493 @@ export interface KbTemplateUserAssignments {
   user_id: Int8;
 }
 
+export interface KbUserSettings {
+  active_assistant_role_id: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  user_id: Int8;
+}
+
+export interface MastraAgents {
+  activeVersionId: string | null;
+  authorId: string | null;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  id: string;
+  metadata: Json | null;
+  status: string;
+  updatedAt: Timestamp;
+  updatedAtZ: Generated<Timestamp | null>;
+}
+
+export interface MastraAgentVersions {
+  agentId: string;
+  agents: Json | null;
+  changedFields: Json | null;
+  changeMessage: string | null;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  defaultOptions: Json | null;
+  description: string | null;
+  id: string;
+  inputProcessors: Json | null;
+  instructions: string;
+  integrationTools: Json | null;
+  mcpClients: Json | null;
+  memory: Json | null;
+  model: Json;
+  name: string;
+  outputProcessors: Json | null;
+  requestContextSchema: Json | null;
+  scorers: Json | null;
+  skills: Json | null;
+  skillsFormat: string | null;
+  tools: Json | null;
+  versionNumber: number;
+  workflows: Json | null;
+  workspace: Json | null;
+}
+
+export interface MastraAiSpans {
+  attributes: Json | null;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  endedAt: Timestamp | null;
+  endedAtZ: Generated<Timestamp | null>;
+  entityId: string | null;
+  entityName: string | null;
+  entityType: string | null;
+  environment: string | null;
+  error: Json | null;
+  experimentId: string | null;
+  input: Json | null;
+  isEvent: boolean;
+  links: Json | null;
+  metadata: Json | null;
+  name: string;
+  organizationId: string | null;
+  output: Json | null;
+  parentEntityId: string | null;
+  parentEntityName: string | null;
+  parentEntityType: string | null;
+  parentSpanId: string | null;
+  requestContext: Json | null;
+  requestId: string | null;
+  resourceId: string | null;
+  rootEntityId: string | null;
+  rootEntityName: string | null;
+  rootEntityType: string | null;
+  runId: string | null;
+  scope: Json | null;
+  serviceName: string | null;
+  sessionId: string | null;
+  source: string | null;
+  spanId: string;
+  spanType: string;
+  startedAt: Timestamp;
+  startedAtZ: Generated<Timestamp | null>;
+  tags: Json | null;
+  threadId: string | null;
+  traceId: string;
+  updatedAt: Timestamp | null;
+  updatedAtZ: Generated<Timestamp | null>;
+  userId: string | null;
+}
+
+export interface MastraDatasetItems {
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  datasetId: string;
+  datasetVersion: number;
+  groundTruth: Json | null;
+  id: string;
+  input: Json;
+  isDeleted: boolean;
+  metadata: Json | null;
+  requestContext: Json | null;
+  source: Json | null;
+  updatedAt: Timestamp;
+  updatedAtZ: Generated<Timestamp | null>;
+  validTo: number | null;
+}
+
+export interface MastraDatasets {
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  description: string | null;
+  groundTruthSchema: Json | null;
+  id: string;
+  inputSchema: Json | null;
+  metadata: Json | null;
+  name: string;
+  requestContextSchema: Json | null;
+  tags: Json | null;
+  targetIds: Json | null;
+  targetType: string | null;
+  updatedAt: Timestamp;
+  updatedAtZ: Generated<Timestamp | null>;
+  version: number;
+}
+
+export interface MastraDatasetVersions {
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  datasetId: string;
+  id: string;
+  version: number;
+}
+
+export interface MastraExperimentResults {
+  completedAt: Timestamp;
+  completedAtZ: Generated<Timestamp | null>;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  error: Json | null;
+  experimentId: string;
+  groundTruth: Json | null;
+  id: string;
+  input: Json;
+  itemDatasetVersion: number | null;
+  itemId: string;
+  output: Json | null;
+  retryCount: number;
+  startedAt: Timestamp;
+  startedAtZ: Generated<Timestamp | null>;
+  traceId: string | null;
+}
+
+export interface MastraExperiments {
+  completedAt: Timestamp | null;
+  completedAtZ: Generated<Timestamp | null>;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  datasetId: string | null;
+  datasetVersion: number | null;
+  description: string | null;
+  failedCount: number;
+  id: string;
+  metadata: Json | null;
+  name: string | null;
+  skippedCount: number;
+  startedAt: Timestamp | null;
+  startedAtZ: Generated<Timestamp | null>;
+  status: string;
+  succeededCount: number;
+  targetId: string;
+  targetType: string;
+  totalItems: number;
+  updatedAt: Timestamp;
+  updatedAtZ: Generated<Timestamp | null>;
+}
+
+export interface MastraMcpClients {
+  activeVersionId: string | null;
+  authorId: string | null;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  id: string;
+  metadata: Json | null;
+  status: string;
+  updatedAt: Timestamp;
+  updatedAtZ: Generated<Timestamp | null>;
+}
+
+export interface MastraMcpClientVersions {
+  changedFields: Json | null;
+  changeMessage: string | null;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  description: string | null;
+  id: string;
+  mcpClientId: string;
+  name: string;
+  servers: Json;
+  versionNumber: number;
+}
+
+export interface MastraMcpServers {
+  activeVersionId: string | null;
+  authorId: string | null;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  id: string;
+  metadata: Json | null;
+  status: string;
+  updatedAt: Timestamp;
+  updatedAtZ: Generated<Timestamp | null>;
+}
+
+export interface MastraMcpServerVersions {
+  agents: Json | null;
+  changedFields: Json | null;
+  changeMessage: string | null;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  description: string | null;
+  id: string;
+  instructions: string | null;
+  isLatest: boolean | null;
+  mcpServerId: string;
+  name: string;
+  packageCanonical: string | null;
+  releaseDate: string | null;
+  repository: Json | null;
+  tools: Json | null;
+  version: string;
+  versionNumber: number;
+  workflows: Json | null;
+}
+
+export interface MastraMessages {
+  content: string;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  id: string;
+  resourceId: string | null;
+  role: string;
+  thread_id: string;
+  type: string;
+}
+
+export interface MastraObservationalMemory {
+  activeObservations: string;
+  activeObservationsPendingUpdate: string | null;
+  bufferedMessageIds: Json | null;
+  bufferedObservationChunks: Json | null;
+  bufferedObservations: string | null;
+  bufferedObservationTokens: number | null;
+  bufferedReflection: string | null;
+  bufferedReflectionInputTokens: number | null;
+  bufferedReflectionTokens: number | null;
+  config: string;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  generationCount: number;
+  id: string;
+  isBufferingObservation: boolean;
+  isBufferingReflection: boolean;
+  isObserving: boolean;
+  isReflecting: boolean;
+  lastBufferedAtTime: Timestamp | null;
+  lastBufferedAtTimeZ: Generated<Timestamp | null>;
+  lastBufferedAtTokens: number;
+  lastObservedAt: Timestamp | null;
+  lastObservedAtZ: Generated<Timestamp | null>;
+  lastReflectionAt: Timestamp | null;
+  lastReflectionAtZ: Generated<Timestamp | null>;
+  lookupKey: string;
+  metadata: Json | null;
+  observationTokenCount: number;
+  observedMessageIds: Json | null;
+  observedTimezone: string | null;
+  originType: string;
+  pendingMessageTokens: number;
+  reflectedObservationLineCount: number | null;
+  resourceId: string | null;
+  scope: string;
+  threadId: string | null;
+  totalTokensObserved: number;
+  updatedAt: Timestamp;
+  updatedAtZ: Generated<Timestamp | null>;
+}
+
+export interface MastraPromptBlocks {
+  activeVersionId: string | null;
+  authorId: string | null;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  id: string;
+  metadata: Json | null;
+  status: string;
+  updatedAt: Timestamp;
+  updatedAtZ: Generated<Timestamp | null>;
+}
+
+export interface MastraPromptBlockVersions {
+  blockId: string;
+  changedFields: Json | null;
+  changeMessage: string | null;
+  content: string;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  description: string | null;
+  id: string;
+  name: string;
+  requestContextSchema: Json | null;
+  rules: Json | null;
+  versionNumber: number;
+}
+
+export interface MastraResources {
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  id: string;
+  metadata: Json | null;
+  updatedAt: Timestamp;
+  updatedAtZ: Generated<Timestamp | null>;
+  workingMemory: string | null;
+}
+
+export interface MastraScorerDefinitions {
+  activeVersionId: string | null;
+  authorId: string | null;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  id: string;
+  metadata: Json | null;
+  status: string;
+  updatedAt: Timestamp;
+  updatedAtZ: Generated<Timestamp | null>;
+}
+
+export interface MastraScorerDefinitionVersions {
+  changedFields: Json | null;
+  changeMessage: string | null;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  defaultSampling: Json | null;
+  description: string | null;
+  id: string;
+  instructions: string | null;
+  model: Json | null;
+  name: string;
+  presetConfig: Json | null;
+  scoreRange: Json | null;
+  scorerDefinitionId: string;
+  type: string;
+  versionNumber: number;
+}
+
+export interface MastraScorers {
+  additionalContext: Json | null;
+  analyzePrompt: string | null;
+  analyzeStepResult: Json | null;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  entity: Json | null;
+  entityId: string | null;
+  entityType: string | null;
+  extractPrompt: string | null;
+  extractStepResult: Json | null;
+  generateReasonPrompt: string | null;
+  generateScorePrompt: string | null;
+  id: string;
+  input: Json;
+  metadata: Json | null;
+  output: Json;
+  preprocessPrompt: string | null;
+  preprocessStepResult: Json | null;
+  reason: string | null;
+  reasonPrompt: string | null;
+  requestContext: Json | null;
+  resourceId: string | null;
+  runId: string;
+  score: number;
+  scorer: Json;
+  scorerId: string;
+  source: string;
+  spanId: string | null;
+  threadId: string | null;
+  traceId: string | null;
+  updatedAt: Timestamp;
+  updatedAtZ: Generated<Timestamp | null>;
+}
+
+export interface MastraSkillBlobs {
+  content: string;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  hash: string;
+  mimeType: string | null;
+  size: number;
+}
+
+export interface MastraSkills {
+  activeVersionId: string | null;
+  authorId: string | null;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  id: string;
+  status: string;
+  updatedAt: Timestamp;
+  updatedAtZ: Generated<Timestamp | null>;
+}
+
+export interface MastraSkillVersions {
+  assets: Json | null;
+  changedFields: Json | null;
+  changeMessage: string | null;
+  compatibility: Json | null;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  description: string;
+  id: string;
+  instructions: string;
+  license: string | null;
+  metadata: Json | null;
+  name: string;
+  references: Json | null;
+  scripts: Json | null;
+  skillId: string;
+  source: Json | null;
+  tree: Json | null;
+  versionNumber: number;
+}
+
+export interface MastraThreads {
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  id: string;
+  metadata: Json | null;
+  resourceId: string;
+  title: string;
+  updatedAt: Timestamp;
+  updatedAtZ: Generated<Timestamp | null>;
+}
+
+export interface MastraWorkflowSnapshot {
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  resourceId: string | null;
+  run_id: string;
+  snapshot: Json;
+  updatedAt: Timestamp;
+  updatedAtZ: Generated<Timestamp | null>;
+  workflow_name: string;
+}
+
+export interface MastraWorkspaces {
+  activeVersionId: string | null;
+  authorId: string | null;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  id: string;
+  metadata: Json | null;
+  status: string;
+  updatedAt: Timestamp;
+  updatedAtZ: Generated<Timestamp | null>;
+}
+
+export interface MastraWorkspaceVersions {
+  autoSync: boolean | null;
+  changedFields: Json | null;
+  changeMessage: string | null;
+  createdAt: Timestamp;
+  createdAtZ: Generated<Timestamp | null>;
+  description: string | null;
+  filesystem: Json | null;
+  id: string;
+  mounts: Json | null;
+  name: string;
+  operationTimeout: number | null;
+  sandbox: Json | null;
+  search: Json | null;
+  skills: Json | null;
+  tools: Json | null;
+  versionNumber: number;
+  workspaceId: string;
+}
+
 export interface Migrations {
   batch: number;
   id: Generated<number>;
@@ -800,38 +830,13 @@ export interface Users {
 }
 
 export interface DB {
-  "atlas_kb_mastra.mastra_agent_versions": AtlasKbMastraMastraAgentVersions;
-  "atlas_kb_mastra.mastra_agents": AtlasKbMastraMastraAgents;
-  "atlas_kb_mastra.mastra_ai_spans": AtlasKbMastraMastraAiSpans;
-  "atlas_kb_mastra.mastra_dataset_items": AtlasKbMastraMastraDatasetItems;
-  "atlas_kb_mastra.mastra_dataset_versions": AtlasKbMastraMastraDatasetVersions;
-  "atlas_kb_mastra.mastra_datasets": AtlasKbMastraMastraDatasets;
-  "atlas_kb_mastra.mastra_experiment_results": AtlasKbMastraMastraExperimentResults;
-  "atlas_kb_mastra.mastra_experiments": AtlasKbMastraMastraExperiments;
-  "atlas_kb_mastra.mastra_mcp_client_versions": AtlasKbMastraMastraMcpClientVersions;
-  "atlas_kb_mastra.mastra_mcp_clients": AtlasKbMastraMastraMcpClients;
-  "atlas_kb_mastra.mastra_mcp_server_versions": AtlasKbMastraMastraMcpServerVersions;
-  "atlas_kb_mastra.mastra_mcp_servers": AtlasKbMastraMastraMcpServers;
-  "atlas_kb_mastra.mastra_messages": AtlasKbMastraMastraMessages;
-  "atlas_kb_mastra.mastra_observational_memory": AtlasKbMastraMastraObservationalMemory;
-  "atlas_kb_mastra.mastra_prompt_block_versions": AtlasKbMastraMastraPromptBlockVersions;
-  "atlas_kb_mastra.mastra_prompt_blocks": AtlasKbMastraMastraPromptBlocks;
-  "atlas_kb_mastra.mastra_resources": AtlasKbMastraMastraResources;
-  "atlas_kb_mastra.mastra_scorer_definition_versions": AtlasKbMastraMastraScorerDefinitionVersions;
-  "atlas_kb_mastra.mastra_scorer_definitions": AtlasKbMastraMastraScorerDefinitions;
-  "atlas_kb_mastra.mastra_scorers": AtlasKbMastraMastraScorers;
-  "atlas_kb_mastra.mastra_skill_blobs": AtlasKbMastraMastraSkillBlobs;
-  "atlas_kb_mastra.mastra_skill_versions": AtlasKbMastraMastraSkillVersions;
-  "atlas_kb_mastra.mastra_skills": AtlasKbMastraMastraSkills;
-  "atlas_kb_mastra.mastra_threads": AtlasKbMastraMastraThreads;
-  "atlas_kb_mastra.mastra_workflow_snapshot": AtlasKbMastraMastraWorkflowSnapshot;
-  "atlas_kb_mastra.mastra_workspace_versions": AtlasKbMastraMastraWorkspaceVersions;
-  "atlas_kb_mastra.mastra_workspaces": AtlasKbMastraMastraWorkspaces;
   cache: Cache;
   cache_locks: CacheLocks;
   failed_jobs: FailedJobs;
   job_batches: JobBatches;
   jobs: Jobs;
+  kb_assistant_roles: KbAssistantRoles;
+  kb_briefing_exports: KbBriefingExports;
   kb_chat_feedback: KbChatFeedback;
   kb_chat_messages: KbChatMessages;
   kb_chat_sessions: KbChatSessions;
@@ -846,6 +851,34 @@ export interface DB {
   kb_template_library_files: KbTemplateLibraryFiles;
   kb_template_user_assignments: KbTemplateUserAssignments;
   kb_templates: KbTemplates;
+  kb_user_settings: KbUserSettings;
+  mastra_agent_versions: MastraAgentVersions;
+  mastra_agents: MastraAgents;
+  mastra_ai_spans: MastraAiSpans;
+  mastra_dataset_items: MastraDatasetItems;
+  mastra_dataset_versions: MastraDatasetVersions;
+  mastra_datasets: MastraDatasets;
+  mastra_experiment_results: MastraExperimentResults;
+  mastra_experiments: MastraExperiments;
+  mastra_mcp_client_versions: MastraMcpClientVersions;
+  mastra_mcp_clients: MastraMcpClients;
+  mastra_mcp_server_versions: MastraMcpServerVersions;
+  mastra_mcp_servers: MastraMcpServers;
+  mastra_messages: MastraMessages;
+  mastra_observational_memory: MastraObservationalMemory;
+  mastra_prompt_block_versions: MastraPromptBlockVersions;
+  mastra_prompt_blocks: MastraPromptBlocks;
+  mastra_resources: MastraResources;
+  mastra_scorer_definition_versions: MastraScorerDefinitionVersions;
+  mastra_scorer_definitions: MastraScorerDefinitions;
+  mastra_scorers: MastraScorers;
+  mastra_skill_blobs: MastraSkillBlobs;
+  mastra_skill_versions: MastraSkillVersions;
+  mastra_skills: MastraSkills;
+  mastra_threads: MastraThreads;
+  mastra_workflow_snapshot: MastraWorkflowSnapshot;
+  mastra_workspace_versions: MastraWorkspaceVersions;
+  mastra_workspaces: MastraWorkspaces;
   migrations: Migrations;
   model_has_permissions: ModelHasPermissions;
   model_has_roles: ModelHasRoles;

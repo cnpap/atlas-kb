@@ -46,6 +46,7 @@ export async function resetKnowledgeDatabase(): Promise<void> {
   await db.transaction().execute(async (trx) => {
     await sql`
       TRUNCATE TABLE
+        ${sql.table(KNOWLEDGE_TABLES.userSettings)},
         ${sql.table(KNOWLEDGE_TABLES.chatFeedback)},
         ${sql.table(KNOWLEDGE_TABLES.chatMessages)},
         ${sql.table(KNOWLEDGE_TABLES.chatSessions)},
@@ -54,5 +55,10 @@ export async function resetKnowledgeDatabase(): Promise<void> {
         ${sql.table(KNOWLEDGE_TABLES.collections)}
       CASCADE
     `.execute(trx);
+
+    await trx
+      .deleteFrom(KNOWLEDGE_TABLES.assistantRoles)
+      .where("is_builtin", "=", false)
+      .execute();
   });
 }

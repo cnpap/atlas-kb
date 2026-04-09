@@ -48,6 +48,7 @@ async function getChatMessageRow(
         "m.id as id",
         "m.owner_user_id as owner_user_id",
         "m.session_id as session_id",
+        "m.assistant_role_id as assistant_role_id",
         "m.role as role",
         "m.content as content",
         "m.citations_json as citations_json",
@@ -182,6 +183,7 @@ export async function listChatMessages(
       "m.id as id",
       "m.owner_user_id as owner_user_id",
       "m.session_id as session_id",
+      "m.assistant_role_id as assistant_role_id",
       "m.role as role",
       "m.content as content",
       "m.citations_json as citations_json",
@@ -206,6 +208,7 @@ export async function listChatMessages(
 export async function appendChatMessage(params: {
   userId: string;
   sessionId: string;
+  assistantRoleId: string;
   role: ChatMessage["role"];
   content: string;
   citations?: ChatMessage["citations"];
@@ -222,6 +225,7 @@ export async function appendChatMessage(params: {
       id,
       owner_user_id: toDbUserId(params.userId),
       session_id: params.sessionId,
+      assistant_role_id: params.assistantRoleId,
       role: params.role,
       content: params.content.trim(),
       citations_json: params.citations ?? [],

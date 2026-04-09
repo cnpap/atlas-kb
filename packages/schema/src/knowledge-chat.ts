@@ -52,6 +52,7 @@ export const ChatMessageFeedbackSchema = z.object({
 export const ChatMessageSchema = z.object({
   id: z.string().trim().min(1),
   sessionId: z.string().trim().min(1),
+  assistantRoleId: z.string().trim().min(1).optional(),
   role: ChatMessageRoleSchema,
   content: z.string().trim().min(1),
   citations: z.array(ChatCitationSchema).optional().default([]),

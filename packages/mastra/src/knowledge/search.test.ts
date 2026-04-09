@@ -859,6 +859,14 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
     "guides the knowledge agent to investigate with tools before concluding",
     async () => {
       const agent = createKnowledgeAgent({
+        assistantRole: {
+          id: "builtin-default-knowledge-assistant",
+          name: "政策研判助手",
+          systemPrompt: "回答前先抽出关键事实。",
+          stylePrompt: "先给结论，再列依据。",
+          isBuiltin: true,
+          isDefault: true,
+        },
         collectionId: "research-space",
         workspace: {} as never,
       });
@@ -884,6 +892,10 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
       );
       expect(String(text)).toContain("角色定位：");
       expect(String(text)).toContain("工作流程：");
+      expect(String(text)).toContain("当前角色：政策研判助手");
+      expect(String(text)).toContain("角色补充要求：");
+      expect(String(text)).toContain("表达风格要求：");
+      expect(String(text)).toContain("底层约束：");
       expect(String(text)).toContain(
         "如果你还没有查看工具结果，不要直接下结论",
       );
@@ -892,6 +904,44 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
       expect(String(text)).not.toContain(
         '当前绑定的资料文件夹是 "research-space"',
       );
+    },
+  );
+
+  it.serial(
+    "keeps private roles style-only when no role supplement prompt is configured",
+    async () => {
+      const agent = createKnowledgeAgent({
+        assistantRole: {
+          id: "private-role-1",
+          name: "我的审校风格",
+          systemPrompt: "",
+          stylePrompt: "使用正式短句，先给结论。",
+          isBuiltin: false,
+          isDefault: false,
+        },
+        collectionId: "research-space",
+        workspace: {} as never,
+      });
+      const instructions = await agent.getInstructions();
+      const text = Array.isArray(instructions)
+        ? instructions
+            .map((item) => {
+              if (typeof item === "string") {
+                return item;
+              }
+
+              return "content" in item ? JSON.stringify(item.content) : "";
+            })
+            .join("\n")
+        : typeof instructions === "string"
+          ? instructions
+          : "content" in instructions
+            ? JSON.stringify(instructions.content)
+            : "";
+
+      expect(String(text)).toContain("当前角色：我的审校风格");
+      expect(String(text)).toContain("表达风格要求：");
+      expect(String(text)).not.toContain("角色补充要求：");
     },
   );
 

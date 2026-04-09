@@ -1042,6 +1042,318 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
   );
 
   it.serial(
+    "manages global assistant roles and falls back after deleting the active private role",
+    async () => {
+      const app = createApp();
+      const session = await login(app);
+
+      const initialRolesResponse = await app.handle(
+        new Request("http://localhost/api/kb/assistant-roles", {
+          headers: authHeaders(session.token),
+        }),
+      );
+      const initialRoles = await readJson<{
+        activeRoleId: string;
+        roles: Array<{
+          id: string;
+          isBuiltin: boolean;
+          isDefault: boolean;
+        }>;
+      }>(initialRolesResponse);
+
+      const defaultRole = initialRoles.roles.find((role) => role.isDefault);
+
+      expect(initialRoles.roles.length).toBeGreaterThanOrEqual(3);
+      expect(initialRoles.roles.every((role) => role.isBuiltin)).toBe(true);
+      expect(defaultRole).toBeDefined();
+      expect(defaultRole?.isBuiltin).toBe(true);
+
+      if (!defaultRole) {
+        throw new Error("Expected a builtin default assistant role");
+      }
+
+      expect(initialRoles.activeRoleId).toBe(defaultRole.id);
+
+      const createRoleResponse = await app.handle(
+        new Request("http://localhost/api/kb/assistant-roles", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: "纪要助手",
+            stylePrompt: "使用短句和编号。",
+          }),
+        }),
+      );
+      const createdRole = await readJson<{
+        role: {
+          id: string;
+          isBuiltin: boolean;
+          name: string;
+          stylePrompt: string;
+        };
+      }>(createRoleResponse);
+
+      expect(createdRole.role.isBuiltin).toBe(false);
+      expect(createdRole.role.name).toBe("纪要助手");
+      expect(createdRole.role.stylePrompt).toBe("使用短句和编号。");
+      expect("systemPrompt" in createdRole.role).toBe(false);
+      expect("sortOrder" in createdRole.role).toBe(false);
+
+      const createSecondRoleResponse = await app.handle(
+        new Request("http://localhost/api/kb/assistant-roles", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: "审校助手",
+            stylePrompt: "语气正式，结构更紧凑。",
+          }),
+        }),
+      );
+      const secondRole = await readJson<{
+        role: {
+          id: string;
+        };
+      }>(createSecondRoleResponse);
+
+      const reorderRolesResponse = await app.handle(
+        new Request("http://localhost/api/kb/assistant-roles/order", {
+          method: "PATCH",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            roleIds: [secondRole.role.id, createdRole.role.id],
+          }),
+        }),
+      );
+      const reordered = await readJson<{
+        ok: true;
+      }>(reorderRolesResponse);
+
+      expect(reordered.ok).toBe(true);
+
+      const selectRoleResponse = await app.handle(
+        new Request("http://localhost/api/kb/assistant-roles/active", {
+          method: "PATCH",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            roleId: createdRole.role.id,
+          }),
+        }),
+      );
+      const selectedRoleData = await readJson<{
+        activeRoleId: string;
+      }>(selectRoleResponse);
+
+      expect(selectedRoleData.activeRoleId).toBe(createdRole.role.id);
+
+      await app.handle(
+        new Request(
+          `http://localhost/api/kb/assistant-roles/${createdRole.role.id}`,
+          {
+            method: "DELETE",
+            headers: authHeaders(session.token),
+          },
+        ),
+      );
+
+      const afterDeleteResponse = await app.handle(
+        new Request("http://localhost/api/kb/assistant-roles", {
+          headers: authHeaders(session.token),
+        }),
+      );
+      const afterDelete = await readJson<{
+        activeRoleId: string;
+        roles: Array<{
+          id: string;
+        }>;
+      }>(afterDeleteResponse);
+
+      expect(
+        afterDelete.roles.some((role) => role.id === createdRole.role.id),
+      ).toBe(false);
+      expect(afterDelete.roles.at(-1)?.id).toBe(secondRole.role.id);
+      expect(afterDelete.activeRoleId).toBe(defaultRole.id);
+      expect(afterDelete.roles).toHaveLength(initialRoles.roles.length + 1);
+    },
+  );
+
+  it.serial(
+    "persists the selected assistant role on every chat message",
+    async () => {
+      const app = createApp();
+      const session = await login(app);
+
+      const createCollectionResponse = await app.handle(
+        new Request("http://localhost/api/kb/collections", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            id: "assistant-role-chat",
+            name: "Assistant Role Chat",
+            description: "chat assistant role tests",
+          }),
+        }),
+      );
+      const collectionData = await readJson<{
+        collection: {
+          id: string;
+        };
+      }>(createCollectionResponse);
+
+      const createSessionResponse = await app.handle(
+        new Request("http://localhost/api/chat/sessions", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            collectionId: collectionData.collection.id,
+            title: "角色对话",
+          }),
+        }),
+      );
+      const chatSessionData = await readJson<{
+        session: {
+          id: string;
+        };
+      }>(createSessionResponse);
+
+      const firstReplyResponse = await app.handle(
+        new Request(
+          `http://localhost/api/chat/sessions/${chatSessionData.session.id}/reply`,
+          {
+            method: "POST",
+            headers: {
+              ...authHeaders(session.token),
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              query: "先给我一个当前资料结论",
+            }),
+          },
+        ),
+      );
+      const firstReply = await readJson<{
+        assistantMessage: {
+          assistantRoleId?: string;
+        };
+        userMessage: {
+          assistantRoleId?: string;
+        };
+      }>(firstReplyResponse);
+
+      expect(firstReply.userMessage.assistantRoleId).toBeTruthy();
+      expect(firstReply.assistantMessage.assistantRoleId).toBe(
+        firstReply.userMessage.assistantRoleId,
+      );
+
+      const createRoleResponse = await app.handle(
+        new Request("http://localhost/api/kb/assistant-roles", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: "审校助手",
+            stylePrompt: "用正式短句输出。",
+          }),
+        }),
+      );
+      const createdRole = await readJson<{
+        role: {
+          id: string;
+        };
+      }>(createRoleResponse);
+
+      await app.handle(
+        new Request("http://localhost/api/kb/assistant-roles/active", {
+          method: "PATCH",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            roleId: createdRole.role.id,
+          }),
+        }),
+      );
+
+      const secondReplyResponse = await app.handle(
+        new Request(
+          `http://localhost/api/chat/sessions/${chatSessionData.session.id}/reply`,
+          {
+            method: "POST",
+            headers: {
+              ...authHeaders(session.token),
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              query: "再给我一个更正式的版本",
+            }),
+          },
+        ),
+      );
+      const secondReply = await readJson<{
+        assistantMessage: {
+          assistantRoleId?: string;
+        };
+        userMessage: {
+          assistantRoleId?: string;
+        };
+      }>(secondReplyResponse);
+
+      expect(secondReply.userMessage.assistantRoleId).toBe(createdRole.role.id);
+      expect(secondReply.assistantMessage.assistantRoleId).toBe(
+        createdRole.role.id,
+      );
+
+      const messagesResponse = await app.handle(
+        new Request(
+          `http://localhost/api/chat/sessions/${chatSessionData.session.id}/messages`,
+          {
+            headers: authHeaders(session.token),
+          },
+        ),
+      );
+      const messagesData = await readJson<{
+        messages: Array<{
+          assistantRoleId?: string;
+          role: "assistant" | "user";
+        }>;
+      }>(messagesResponse);
+
+      expect(messagesData.messages).toHaveLength(4);
+      expect(
+        messagesData.messages.filter(
+          (message) =>
+            message.assistantRoleId === firstReply.userMessage.assistantRoleId,
+        ),
+      ).toHaveLength(2);
+      expect(
+        messagesData.messages.filter(
+          (message) => message.assistantRoleId === createdRole.role.id,
+        ),
+      ).toHaveLength(2);
+    },
+  );
+
+  it.serial(
     "keeps manual text sources in the workspace filesystem across import, update, and delete",
     async () => {
       const app = createApp();

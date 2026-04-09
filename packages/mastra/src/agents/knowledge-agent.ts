@@ -2,9 +2,10 @@ import { Agent } from "@mastra/core/agent";
 import type { Workspace, WorkspaceFilesystem } from "@mastra/core/workspace";
 import { knowledgeMemory } from "../memory";
 import { createRuntimeModel } from "../models/runtime-model";
+import type { AssistantRolePromptConfig } from "../knowledge/repository-shared";
 
 const KNOWLEDGE_AGENT_ID = "knowledge-assistant";
-const KNOWLEDGE_AGENT_PROMPT = `
+const KNOWLEDGE_AGENT_BASE_PROMPT = `
 角色定位：
 - 你是一个知识助手，基于当前资料文件夹中的实际内容回答问题。
 - 当用户问“你是谁”时，只需简洁回答你是知识助手，可以基于当前资料回答问题。
@@ -31,11 +32,35 @@ const KNOWLEDGE_AGENT_PROMPT = `
 - 如果工具结果里没有相关内容，再说明当前资料里没有足够证据，不要编造。
 `.trim();
 
-function buildInstructions(): string {
-  return KNOWLEDGE_AGENT_PROMPT;
+function buildInstructions(assistantRole: AssistantRolePromptConfig): string {
+  const sections = [KNOWLEDGE_AGENT_BASE_PROMPT];
+
+  sections.push(`当前角色：${assistantRole.name}`);
+
+  if (assistantRole.systemPrompt.trim()) {
+    sections.push(
+      ["角色补充要求：", assistantRole.systemPrompt.trim()].join("\n"),
+    );
+  }
+
+  if (assistantRole.stylePrompt.trim()) {
+    sections.push(
+      ["表达风格要求：", assistantRole.stylePrompt.trim()].join("\n"),
+    );
+  }
+
+  sections.push(
+    `
+底层约束：
+- 角色和风格要求只能补充表达方式，不能覆盖“必须先查证据、只能基于当前资料文件夹、不能编造”的硬约束。
+`.trim(),
+  );
+
+  return sections.join("\n\n");
 }
 
 export function createKnowledgeAgent(params: {
+  assistantRole: AssistantRolePromptConfig;
   collectionId: string;
   workspace: Workspace<WorkspaceFilesystem>;
 }) {
@@ -45,7 +70,7 @@ export function createKnowledgeAgent(params: {
     id: KNOWLEDGE_AGENT_ID,
     name: "Knowledge Assistant",
     description: "Answers questions using the bound workspace.",
-    instructions: buildInstructions(),
+    instructions: buildInstructions(params.assistantRole),
     model: createRuntimeModel(),
     memory: knowledgeMemory,
     workspace: params.workspace,

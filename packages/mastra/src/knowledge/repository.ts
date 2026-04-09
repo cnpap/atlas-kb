@@ -1,6 +1,17 @@
 import type { DashboardSummary } from "@atlas-kb/schema";
 import { resetKnowledgeDatabase } from "./db";
 import {
+  createAssistantRole,
+  deleteAssistantRole,
+  ensureDefaultAssistantRole,
+  getActiveAssistantRole,
+  getActiveAssistantRolePromptConfig,
+  listAssistantRoles,
+  reorderAssistantRoles,
+  setActiveAssistantRole,
+  updateAssistantRole,
+} from "./assistant-roles-repository";
+import {
   appendChatMessage,
   createChatSession,
   deleteChatSession,
@@ -32,6 +43,7 @@ import {
 
 export async function resetKnowledgeRepository(): Promise<void> {
   await resetKnowledgeDatabase();
+  await ensureDefaultAssistantRole();
 }
 
 export async function getDashboardSummary(
@@ -59,16 +71,22 @@ export async function getDashboardSummary(
 
 export {
   appendChatMessage,
+  createAssistantRole,
   createChatSession,
   createKnowledgeCollection,
   createKnowledgeSourceRecord,
+  deleteAssistantRole,
   deleteChatSession,
   deleteKnowledgeCollection,
   deleteKnowledgeSource,
+  getActiveAssistantRole,
+  getActiveAssistantRolePromptConfig,
   getChatSessionById,
   getKnowledgeCollection,
   getKnowledgeCollectionSourcesData,
   getKnowledgeSourceById,
+  listAssistantRoles,
+  reorderAssistantRoles,
   listChatMessages,
   listChatSessions,
   listKnowledgeCollections,
@@ -78,6 +96,8 @@ export {
   requireKnowledgeCollection,
   requireKnowledgeSource,
   saveMessageFeedback,
+  setActiveAssistantRole,
+  updateAssistantRole,
   updateChatSession,
   updateKnowledgeCollection,
 };

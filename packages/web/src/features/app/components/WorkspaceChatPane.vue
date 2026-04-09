@@ -1,5 +1,9 @@
 <script setup lang="ts">
-  import type { ChatMessage, ChatSession } from "@atlas-kb/schema";
+  import type {
+    AssistantRole,
+    ChatMessage,
+    ChatSession,
+  } from "@atlas-kb/schema";
   import {
     ArrowUp,
     Check,
@@ -19,16 +23,20 @@
   import { renderMarkdown } from "@/lib/markdown";
 
   const props = defineProps<{
+    activeAssistantRoleId: string;
     activeSession: ChatSession | null;
     activeSessionCollectionLabel: string;
+    assistantRoles: AssistantRole[];
     composer: string;
     replying: boolean;
+    switchingAssistantRole?: boolean;
     turns: WorkspaceChatTurn[];
   }>();
 
   const emit = defineEmits<{
     feedback: [message: ChatMessage, rating: "up" | "down"];
     renameSession: [];
+    selectAssistantRole: [roleId: string];
     selectAssistantMessage: [messageId: string];
     submit: [];
     "update:composer": [value: string];
@@ -178,6 +186,16 @@
     emit("selectAssistantMessage", assistantMessageId);
   }
 
+  function handleAssistantRoleChange(event: Event) {
+    const roleId = (event.target as HTMLSelectElement).value;
+
+    if (!roleId || roleId === props.activeAssistantRoleId) {
+      return;
+    }
+
+    emit("selectAssistantRole", roleId);
+  }
+
   function handleComposerKeydown(event: KeyboardEvent) {
     if (event.key !== "Enter") {
       return;
@@ -246,15 +264,46 @@
           </span>
         </div>
       </div>
-      <button
-        class="soft-button !rounded-[6px] !p-2"
-        title="重命名"
-        type="button"
-        :disabled="!activeSession"
-        @click="emit('renameSession')"
-      >
-        <FileText class="size-4" />
-      </button>
+      <div class="flex items-center gap-2">
+        <label
+          class="field-shell flex min-w-[172px] items-center gap-2 !px-2.5 !py-2"
+        >
+          <select
+            class="input-reset bg-transparent text-sm"
+            :disabled="
+              replying ||
+              switchingAssistantRole ||
+              assistantRoles.length === 0
+            "
+            :value="activeAssistantRoleId"
+            @change="handleAssistantRoleChange"
+          >
+            <option v-if="assistantRoles.length === 0" value="">
+              暂无角色
+            </option>
+            <option
+              v-for="role in assistantRoles"
+              :key="role.id"
+              :value="role.id"
+            >
+              {{ role.name }}
+            </option>
+          </select>
+          <LoaderCircle
+            v-if="switchingAssistantRole"
+            class="size-4 shrink-0 animate-spin text-[var(--text-dim)]"
+          />
+        </label>
+        <button
+          class="soft-button !rounded-[6px] !p-2"
+          title="重命名"
+          type="button"
+          :disabled="!activeSession"
+          @click="emit('renameSession')"
+        >
+          <FileText class="size-4" />
+        </button>
+      </div>
     </div>
 
     <div

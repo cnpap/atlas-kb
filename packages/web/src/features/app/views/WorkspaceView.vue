@@ -1,5 +1,6 @@
 <script setup lang="ts">
   import type {
+    AssistantRole,
     ChatMessage,
     ChatSession,
     KnowledgeCollection,
@@ -10,8 +11,10 @@
   import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
   import { useRoute, useRouter } from "vue-router";
   import {
+    createAssistantRoleRequest,
     createChatSessionRequest,
     createKnowledgeCollectionRequest,
+    deleteAssistantRoleRequest,
     deleteChatSessionRequest,
     deleteKnowledgeCollectionRequest,
     deleteKnowledgeSourceRequest,
@@ -21,10 +24,14 @@
     fetchKnowledgeCollectionSources,
     getErrorMessage,
     importKnowledgeTextRequest,
+    listAssistantRolesRequest,
     listChatSessionsRequest,
     listKnowledgeCollections,
+    reorderAssistantRolesRequest,
+    selectActiveAssistantRoleRequest,
     sendChatFeedbackRequest,
     streamChatReplyRequest,
+    updateAssistantRoleRequest,
     uploadKnowledgeFileRequest,
     updateChatSessionRequest,
     updateKnowledgeCollectionRequest,
@@ -36,7 +43,6 @@
     useAuthSession,
   } from "@/lib/auth-session";
   import { generateClientId } from "@/lib/ids";
-  import CollectionSettingsModal from "@/features/app/components/CollectionSettingsModal.vue";
   import CreateCollectionModal from "@/features/app/components/CreateCollectionModal.vue";
   import ExportTaskDetailModal from "@/features/app/components/ExportTaskDetailModal.vue";
   import ExportTemplateModal from "@/features/app/components/ExportTemplateModal.vue";
@@ -48,7 +54,7 @@
   import { buildWorkspaceChatTurns } from "@/features/app/lib/workspace-chat-turns";
   import { useWorkspaceExports } from "@/features/app/composables/useWorkspaceExports";
 
-  type PanelMode = "library" | "exports";
+  type PanelMode = "library" | "exports" | "settings";
   const SOURCE_POLL_INTERVAL_MS = 4_000;
 
   const route = useRoute();
@@ -60,11 +66,16 @@
     pending: authPending,
   } = useAuthSession();
 
+  const assistantRoles = ref<AssistantRole[]>([]);
   const collections = ref<KnowledgeCollection[]>([]);
   const sessions = ref<ChatSession[]>([]);
   const sources = ref<KnowledgeSource[]>([]);
   const messages = ref<ChatMessage[]>([]);
+  const activeAssistantRoleId = ref("");
+  const deletingAssistantRoleId = ref("");
+  const deletingCollection = ref(false);
   const loadingCollections = ref(true);
+  const loadingAssistantRoles = ref(true);
   const loadingSessions = ref(true);
   const loadingMessages = ref(false);
   const loadingSources = ref(false);
@@ -72,9 +83,11 @@
   const replying = ref(false);
   const creatingCollection = ref(false);
   const savingCollection = ref(false);
+  const savingAssistantRole = ref(false);
   const savingSource = ref(false);
   const importPending = ref(false);
   const sourceActionId = ref("");
+  const switchingAssistantRole = ref(false);
   const error = ref("");
   const composer = ref("");
   const sourceFilter = ref("");
@@ -83,7 +96,6 @@
   const showCreateCollection = ref(false);
   const showImportModal = ref(false);
   const showSourceEditorModal = ref(false);
-  const showCollectionSettingsModal = ref(false);
 
   function readQueryValue(value: unknown): string {
     return typeof value === "string" ? value : "";
@@ -107,9 +119,17 @@
     showToast(message, "error");
   });
 
-  const panel = computed<PanelMode>(() =>
-    route.query.panel === "exports" ? "exports" : "library",
-  );
+  const panel = computed<PanelMode>(() => {
+    if (route.query.panel === "exports") {
+      return "exports";
+    }
+
+    if (route.query.panel === "settings") {
+      return "settings";
+    }
+
+    return "library";
+  });
   const activeCollectionId = computed(() => readQueryValue(route.query.group));
   const activeSessionId = computed(() => readQueryValue(route.query.session));
   const routeSourceId = computed(() => readQueryValue(route.query.source));
@@ -274,6 +294,26 @@
     sources.value = data.sources;
   }
 
+  async function loadAssistantRoles(options: { silent?: boolean } = {}) {
+    if (!options.silent) {
+      loadingAssistantRoles.value = true;
+    }
+
+    try {
+      const data = await listAssistantRolesRequest();
+      assistantRoles.value = data.roles;
+      activeAssistantRoleId.value = data.activeRoleId;
+    } catch (cause) {
+      assistantRoles.value = [];
+      activeAssistantRoleId.value = "";
+      error.value = cause instanceof Error ? cause.message : "角色加载失败";
+    } finally {
+      if (!options.silent) {
+        loadingAssistantRoles.value = false;
+      }
+    }
+  }
+
   async function loadCollections(options: { silent?: boolean } = {}) {
     if (!options.silent) {
       loadingCollections.value = true;
@@ -292,7 +332,7 @@
       if (!activeCollectionId.value && preferredCollectionId) {
         await replaceWorkspaceQuery({
           group: preferredCollectionId,
-          panel: route.query.panel === "exports" ? "exports" : "library",
+          panel: panel.value,
         });
       }
     } catch (cause) {
@@ -525,7 +565,7 @@
       });
       await loadCollections();
       await loadSources(activeCollection.value.id);
-      showCollectionSettingsModal.value = false;
+      showToast("文件夹设置已保存");
     } catch (cause) {
       error.value =
         cause instanceof Error ? cause.message : "资料文件夹保存失败";
@@ -539,15 +579,8 @@
       return;
     }
 
-    const accepted = window.confirm(
-      `确认删除资料文件夹“${activeCollection.value.name}”？`,
-    );
-
-    if (!accepted) {
-      return;
-    }
-
     error.value = "";
+    deletingCollection.value = true;
 
     try {
       await deleteKnowledgeCollectionRequest(activeCollection.value.id);
@@ -559,7 +592,7 @@
         group: nextCollectionId || undefined,
         session: undefined,
         source: undefined,
-        panel: nextCollectionId ? "library" : undefined,
+        panel: "settings",
       });
 
       if (nextCollectionId) {
@@ -572,10 +605,112 @@
         sessions.value = [];
         messages.value = [];
       }
-      showCollectionSettingsModal.value = false;
+      showToast("资料文件夹已删除");
     } catch (cause) {
       error.value =
         cause instanceof Error ? cause.message : "删除资料文件夹失败";
+    } finally {
+      deletingCollection.value = false;
+    }
+  }
+
+  async function createAssistantRole(payload: {
+    name: string;
+    stylePrompt: string;
+  }) {
+    savingAssistantRole.value = true;
+    error.value = "";
+
+    try {
+      const data = await createAssistantRoleRequest(payload);
+      await selectActiveAssistantRoleRequest(data.role.id);
+      await loadAssistantRoles();
+      showToast("角色已创建");
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : "角色创建失败";
+    } finally {
+      savingAssistantRole.value = false;
+    }
+  }
+
+  async function updateAssistantRole(payload: {
+    body: {
+      name: string;
+      stylePrompt: string;
+    };
+    roleId: string;
+  }) {
+    savingAssistantRole.value = true;
+    error.value = "";
+
+    try {
+      await updateAssistantRoleRequest(payload);
+      await loadAssistantRoles({
+        silent: true,
+      });
+      showToast("角色已保存");
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : "角色保存失败";
+    } finally {
+      savingAssistantRole.value = false;
+    }
+  }
+
+  async function reorderAssistantRoles(roleIds: string[]) {
+    if (roleIds.length === 0) {
+      return;
+    }
+
+    savingAssistantRole.value = true;
+    error.value = "";
+
+    try {
+      await reorderAssistantRolesRequest({
+        roleIds,
+      });
+      await loadAssistantRoles({
+        silent: true,
+      });
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : "角色排序失败";
+    } finally {
+      savingAssistantRole.value = false;
+    }
+  }
+
+  async function deleteAssistantRole(roleId: string) {
+    deletingAssistantRoleId.value = roleId;
+    error.value = "";
+
+    try {
+      await deleteAssistantRoleRequest(roleId);
+      await loadAssistantRoles();
+      showToast("角色已删除");
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : "角色删除失败";
+    } finally {
+      deletingAssistantRoleId.value = "";
+    }
+  }
+
+  async function selectAssistantRole(roleId: string) {
+    if (!roleId || roleId === activeAssistantRoleId.value) {
+      return;
+    }
+
+    switchingAssistantRole.value = true;
+    error.value = "";
+
+    try {
+      const data = await selectActiveAssistantRoleRequest(roleId);
+      activeAssistantRoleId.value = data.activeRoleId;
+      await loadAssistantRoles({
+        silent: true,
+      });
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : "角色切换失败";
+    } finally {
+      switchingAssistantRole.value = false;
     }
   }
 
@@ -684,6 +819,7 @@
       {
         id: tempUserId,
         sessionId: draftSessionId,
+        assistantRoleId: activeAssistantRoleId.value || undefined,
         role: "user",
         content: trimmed,
         citations: [],
@@ -692,6 +828,7 @@
       {
         id: tempAssistantId,
         sessionId: draftSessionId,
+        assistantRoleId: activeAssistantRoleId.value || undefined,
         role: "assistant",
         content: "",
         citations: [],
@@ -1005,7 +1142,11 @@
 
     try {
       await initializeAuthSession();
-      await Promise.all([loadCollections(), loadExportTemplates()]);
+      await Promise.all([
+        loadAssistantRoles(),
+        loadCollections(),
+        loadExportTemplates(),
+      ]);
 
       const resolvedCollectionId =
         activeCollectionId.value || collections.value[0]?.id || "";
@@ -1160,27 +1301,43 @@
     />
 
     <WorkspaceChatPane
+      :active-assistant-role-id="activeAssistantRoleId"
       :active-session="activeSession"
       :active-session-collection-label="activeSessionCollectionLabel"
+      :assistant-roles="assistantRoles"
       :composer="composer"
       :replying="replying"
+      :switching-assistant-role="switchingAssistantRole"
       :turns="chatTurns"
       @feedback="sendFeedback"
       @rename-session="renameSession"
+      @select-assistant-role="selectAssistantRole"
       @select-assistant-message="selectedAssistantMessageId = $event"
       @submit="submitReply"
       @update:composer="composer = $event"
     />
 
     <WorkspaceContextPane
+      :active-assistant-role-id="activeAssistantRoleId"
       :active-collection="activeCollection"
+      :assistant-roles="assistantRoles"
+      :deleting-collection="deletingCollection"
+      :deleting-role-id="deletingAssistantRoleId"
       :export-tasks="exportTasks"
       :filtered-sources="filteredSources"
+      :loading-assistant-roles="loadingAssistantRoles"
       :loading-export-tasks="loadingExportTasks"
       :loading-sources="loadingSources"
       :panel="panel"
+      :role-switch-disabled="replying"
+      :saving-collection="savingCollection"
+      :saving-role="savingAssistantRole"
       :source-action-id="sourceActionId"
       :source-filter="sourceFilter"
+      :switching-assistant-role="switchingAssistantRole"
+      @create-role="createAssistantRole"
+      @delete-collection="removeCollection"
+      @delete-role="deleteAssistantRole"
       @open-export-modal="handleOpenExportModal"
       @open-task-detail="handleOpenExportTaskDetail"
       @delete-source="deleteSource"
@@ -1189,7 +1346,10 @@
       @edit-source="openSource"
       @open-import="showImportModal = true"
       @open-panel="openPanel"
-      @open-settings="showCollectionSettingsModal = true"
+      @reorder-roles="reorderAssistantRoles"
+      @save-collection="saveCollection"
+      @select-active-role="selectAssistantRole"
+      @update-role="updateAssistantRole"
       @update:source-filter="sourceFilter = $event"
     />
   </section>
@@ -1231,13 +1391,5 @@
     @delete="deleteSource"
     @download="downloadSource"
     @submit="saveSource"
-  />
-
-  <CollectionSettingsModal
-    v-model:open="showCollectionSettingsModal"
-    :collection="activeCollection"
-    :saving="savingCollection"
-    @delete="removeCollection"
-    @submit="saveCollection"
   />
 </template>

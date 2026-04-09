@@ -10,6 +10,17 @@ export {
 } from "./admin-client";
 export { answerKnowledgeQuestion, runKnowledgeAgentQuestion } from "./agent";
 export {
+  createAssistantRole,
+  deleteAssistantRole,
+  ensureDefaultAssistantRole,
+  getActiveAssistantRole,
+  getActiveAssistantRolePromptConfig,
+  listAssistantRoles,
+  reorderAssistantRoles,
+  setActiveAssistantRole,
+  updateAssistantRole,
+} from "./assistant-roles-repository";
+export {
   createChatReply,
   createChatSession,
   deleteChatSession,

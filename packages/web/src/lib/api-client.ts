@@ -7,6 +7,10 @@ import {
 } from "ai";
 import { ChatReplyStreamDataEventSchema } from "@atlas-kb/schema";
 import type {
+  AssistantRole,
+  AssistantRoleCreateRequest,
+  AssistantRoleOrderRequest,
+  AssistantRoleUpdateRequest,
   ChatSession,
   ChatMessageFeedback,
   ChatMessageFeedbackRequest,
@@ -282,6 +286,72 @@ export async function listKnowledgeCollections(): Promise<{
   return requestJson<{ collections: KnowledgeCollection[] }>(
     "/api/kb/collections",
   );
+}
+
+export async function listAssistantRolesRequest(): Promise<{
+  roles: AssistantRole[];
+  activeRoleId: string;
+}> {
+  return requestJson<{
+    roles: AssistantRole[];
+    activeRoleId: string;
+  }>("/api/kb/assistant-roles");
+}
+
+export async function createAssistantRoleRequest(
+  body: AssistantRoleCreateRequest,
+): Promise<{ role: AssistantRole }> {
+  return requestJson<{ role: AssistantRole }>("/api/kb/assistant-roles", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateAssistantRoleRequest(params: {
+  roleId: string;
+  body: AssistantRoleUpdateRequest;
+}): Promise<{ role: AssistantRole }> {
+  return requestJson<{ role: AssistantRole }>(
+    `/api/kb/assistant-roles/${encodeURIComponent(params.roleId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(params.body),
+    },
+  );
+}
+
+export async function deleteAssistantRoleRequest(
+  roleId: string,
+): Promise<void> {
+  await requestJson<{ ok: true }>(
+    `/api/kb/assistant-roles/${encodeURIComponent(roleId)}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
+export async function selectActiveAssistantRoleRequest(
+  roleId: string,
+): Promise<{ activeRoleId: string }> {
+  return requestJson<{ activeRoleId: string }>(
+    "/api/kb/assistant-roles/active",
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        roleId,
+      }),
+    },
+  );
+}
+
+export async function reorderAssistantRolesRequest(
+  body: AssistantRoleOrderRequest,
+): Promise<void> {
+  await requestJson<{ ok: true }>("/api/kb/assistant-roles/order", {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
 }
 
 export async function createKnowledgeCollectionRequest(
