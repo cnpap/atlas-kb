@@ -10,7 +10,7 @@ import {
 import { requireKnowledgeCollection } from "./collections-repository";
 import { getKnowledgeWorkspace } from "./runtime";
 
-const AGENT_EXECUTION_TIMEOUT_MS = 20_000;
+const AGENT_EXECUTION_TIMEOUT_MS = 60_000;
 const MAX_AGENT_STEPS = 6;
 const KNOWLEDGE_AGENT_TIMEOUT_MESSAGE = "知识库回答超时，请稍后重试。";
 const KNOWLEDGE_EMPTY_EVIDENCE_ANSWER =

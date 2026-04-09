@@ -77,8 +77,8 @@ health: env-check
 	api_url="http://127.0.0.1:$${ATLAS_KB_API_HOST_PORT:-6112}/api/health"; \
 	web_url="http://127.0.0.1:$${ATLAS_KB_WEB_HOST_PORT:-6111}"; \
 	for attempt in $$(seq 1 30); do \
-		if curl -fsS "$$api_url" >/dev/null \
-			&& curl -fsS "$$web_url" >/dev/null \
+		if curl --noproxy '*' -fsS "$$api_url" >/dev/null \
+			&& curl --noproxy '*' -fsS "$$web_url" >/dev/null \
 			&& $(compose_cmd) exec -T api bun -e 'const base = "http://127.0.0.1:" + (process.env.API_PORT || "6112"); const username = process.env.ATLAS_KB_DEFAULT_USERNAME; const password = process.env.ATLAS_KB_DEFAULT_PASSWORD; if (!username || !password) { throw new Error("missing default credentials"); } const login = await fetch(base + "/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ username, password }) }); if (!login.ok) { throw new Error("login smoke failed: " + login.status + " " + (await login.text())); } const loginPayload = await login.json(); const token = loginPayload?.data?.token; if (!token) { throw new Error("login smoke missing token"); } const templates = await fetch(base + "/api/kb/templates", { headers: { Authorization: "Bearer " + token, Accept: "application/json" } }); if (!templates.ok) { throw new Error("template smoke failed: " + templates.status + " " + (await templates.text())); }' >/dev/null 2>&1; then \
 			exit 0; \
 		fi; \
