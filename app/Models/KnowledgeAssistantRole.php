@@ -67,6 +67,12 @@ class KnowledgeAssistantRole extends Model
         return (string) Str::uuid();
     }
 
+    protected function isValidUniqueId($value): bool
+    {
+        return Str::isUuid($value)
+            || (is_string($value) && str_starts_with($value, 'builtin-'));
+    }
+
     public function scopeVisibleToUser(Builder $query, int|string $userId): Builder
     {
         return $query

@@ -88,7 +88,7 @@ TEXT,
         ];
 
         foreach ($roles as $role) {
-            KnowledgeAssistantRole::query()->updateOrCreate(
+            KnowledgeAssistantRole::query()->firstOrCreate(
                 [
                     'id' => $role['id'],
                 ],
