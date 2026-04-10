@@ -25,6 +25,10 @@ import {
   resetKnowledgeConfigCache,
   validateKnowledgeStorageConfig,
 } from "./config";
+import {
+  acquireEmbeddingThrottleLease,
+  releaseEmbeddingThrottleLease,
+} from "./embedding-throttle";
 import { buildKnowledgeSourceObjectPrefix } from "./object-storage";
 import {
   createKnowledgeWorkspaceIndexer,
@@ -55,7 +59,6 @@ interface EmbeddingResponse {
   }>;
 }
 
-const DEFAULT_EMBEDDING_MAX_CONCURRENCY = 2;
 const DEFAULT_EMBEDDING_MAX_RETRIES = 4;
 const DEFAULT_EMBEDDING_RETRY_BASE_MS = 500;
 const RETRIABLE_EMBEDDING_STATUSES = new Set([408, 409, 425, 429]);
@@ -71,13 +74,14 @@ function summarizeProviderError(payload: string): string | undefined {
 }
 
 const workspaceCache = new Map<string, Promise<WorkspaceEntry>>();
-let embeddingDimensionPromise: Promise<number | undefined> | undefined;
+const embeddingDimensionPromises = new Map<
+  string,
+  Promise<number | undefined>
+>();
 let filesystemFactoryOverride: KnowledgeFilesystemFactory | undefined;
 let storagePrefixFilesystemFactoryOverride:
   | KnowledgeStoragePrefixFilesystemFactory
   | undefined;
-let activeEmbeddingRequests = 0;
-const pendingEmbeddingRequestResolvers: Array<() => void> = [];
 
 class EmbeddingRequestError extends UpstreamServiceError {
   readonly details?: string;
@@ -114,13 +118,6 @@ function parsePositiveIntegerEnv(
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function getEmbeddingMaxConcurrency(): number {
-  return parsePositiveIntegerEnv(
-    process.env.EMBEDDING_MAX_CONCURRENCY,
-    DEFAULT_EMBEDDING_MAX_CONCURRENCY,
-  );
-}
-
 function getEmbeddingMaxRetries(): number {
   return parsePositiveIntegerEnv(
     process.env.EMBEDDING_RETRY_MAX_ATTEMPTS,
@@ -142,25 +139,6 @@ function sleep(delayMs: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, delayMs);
   });
-}
-
-async function acquireEmbeddingRequestSlot(): Promise<void> {
-  const limit = getEmbeddingMaxConcurrency();
-
-  if (activeEmbeddingRequests < limit) {
-    activeEmbeddingRequests += 1;
-    return;
-  }
-
-  await new Promise<void>((resolve) => {
-    pendingEmbeddingRequestResolvers.push(resolve);
-  });
-  activeEmbeddingRequests += 1;
-}
-
-function releaseEmbeddingRequestSlot(): void {
-  activeEmbeddingRequests = Math.max(0, activeEmbeddingRequests - 1);
-  pendingEmbeddingRequestResolvers.shift()?.();
 }
 
 export function isRetriableEmbeddingFailure(args: {
@@ -317,13 +295,15 @@ async function requestEmbeddingVector(text: string): Promise<number[]> {
 
 export async function fetchKnowledgeEmbeddingVector(
   text: string,
+  options: {
+    userId?: string;
+  } = {},
 ): Promise<number[]> {
   let attempt = 0;
 
   while (true) {
     let retryDelayMs: number | undefined;
-
-    await acquireEmbeddingRequestSlot();
+    const throttleLease = await acquireEmbeddingThrottleLease(options.userId);
 
     try {
       return await requestEmbeddingVector(text);
@@ -346,7 +326,7 @@ export async function fetchKnowledgeEmbeddingVector(
         model: getEmbeddingModel(),
       });
     } finally {
-      releaseEmbeddingRequestSlot();
+      await releaseEmbeddingThrottleLease(throttleLease).catch(() => undefined);
     }
 
     if (retryDelayMs === undefined) {
@@ -360,7 +340,9 @@ export async function fetchKnowledgeEmbeddingVector(
   }
 }
 
-async function resolveEmbeddingDimension(): Promise<number | undefined> {
+async function resolveEmbeddingDimension(
+  userId: string,
+): Promise<number | undefined> {
   const configured = getEmbeddingDimensions();
 
   if (configured) {
@@ -371,18 +353,21 @@ async function resolveEmbeddingDimension(): Promise<number | undefined> {
     return undefined;
   }
 
-  if (!embeddingDimensionPromise) {
-    embeddingDimensionPromise = fetchKnowledgeEmbeddingVector(
-      "atlas kb workspace",
-    )
-      .then((vector) => vector.length)
-      .catch((error) => {
-        embeddingDimensionPromise = undefined;
-        throw error;
-      });
+  if (!embeddingDimensionPromises.has(userId)) {
+    embeddingDimensionPromises.set(
+      userId,
+      fetchKnowledgeEmbeddingVector("atlas kb workspace", {
+        userId,
+      })
+        .then((vector) => vector.length)
+        .catch((error) => {
+          embeddingDimensionPromises.delete(userId);
+          throw error;
+        }),
+    );
   }
 
-  return embeddingDimensionPromise;
+  return embeddingDimensionPromises.get(userId)!;
 }
 
 function createVectorStore(): QdrantVector | undefined {
@@ -401,8 +386,9 @@ function createVectorStore(): QdrantVector | undefined {
 async function ensureVectorIndex(
   vectorStore: QdrantVector,
   indexName: string,
+  userId: string,
 ): Promise<number> {
-  const dimension = await resolveEmbeddingDimension();
+  const dimension = await resolveEmbeddingDimension(userId);
 
   if (!dimension) {
     throw new Error("未能解析 embedding 维度");
@@ -436,8 +422,8 @@ export function createKnowledgeCollectionFilesystem(args: {
     createMountedS3Filesystem({
       filesystemId: `knowledge-s3:${args.userId}:${args.collectionId}`,
       prefix: buildKnowledgeSourceObjectPrefix(args),
-      displayName: "Atlas KB S3",
-      description: "Atlas KB 知识库资料文件存储。",
+      displayName: "知识库 S3",
+      description: "知识库 知识库资料文件存储。",
       readOnly: args.readOnly,
     });
 
@@ -459,8 +445,8 @@ export function createKnowledgeStoragePrefixFilesystem(args: {
         args.storagePrefix,
       )}`,
       prefix: args.storagePrefix,
-      displayName: "Atlas KB Reference Library",
-      description: "Atlas KB 模板资料库文件存储。",
+      displayName: "知识库 Reference Library",
+      description: "知识库 模板资料库文件存储。",
       readOnly: args.readOnly,
     });
 
@@ -485,14 +471,17 @@ async function createWorkspaceEntry(
     ...(vectorStore
       ? {
           vectorStore,
-          embedder: fetchKnowledgeEmbeddingVector,
+          embedder: (text: string) =>
+            fetchKnowledgeEmbeddingVector(text, {
+              userId,
+            }),
           searchIndexName: indexName,
         }
       : {}),
   });
 
   if (vectorStore) {
-    await ensureVectorIndex(vectorStore, indexName);
+    await ensureVectorIndex(vectorStore, indexName, userId);
   }
 
   await workspace.init();
@@ -501,6 +490,8 @@ async function createWorkspaceEntry(
     indexName,
     workspace,
     workspaceIndexer: createKnowledgeWorkspaceIndexer({
+      userId,
+      collectionId,
       workspace,
     }),
     vectorStore,
@@ -583,9 +574,7 @@ export function resetKnowledgeRuntimeCache(): void {
       .catch(() => undefined);
   }
 
-  embeddingDimensionPromise = undefined;
-  activeEmbeddingRequests = 0;
-  pendingEmbeddingRequestResolvers.length = 0;
+  embeddingDimensionPromises.clear();
   workspaceCache.clear();
   resetKnowledgeConfigCache();
   resetOpsAgentKitConfigCache();

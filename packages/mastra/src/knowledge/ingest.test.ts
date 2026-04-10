@@ -8,6 +8,7 @@ import {
   createKnowledgeCollection,
   createUser,
   importKnowledgeFile,
+  retryKnowledgeSourceImport,
   requireKnowledgeSource,
   resetKnowledgeRepository,
   resetKnowledgeRuntimeCache,
@@ -276,5 +277,99 @@ describe.serial("knowledge ingest", () => {
         ? fileContent
         : new TextDecoder().decode(fileContent),
     ).toBe("Atlas queued upload body");
+  });
+
+  it("requeues failed file imports and clears the previous failure state", async () => {
+    let failDoclingRequest = true;
+    globalThis.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url.includes("/v1/convert/file")) {
+        if (failDoclingRequest) {
+          return jsonResponse(
+            {
+              detail: "Gateway Timeout",
+            },
+            504,
+          );
+        }
+
+        return jsonResponse(await buildMockDoclingConvertPayload(init?.body));
+      }
+
+      return jsonResponse({
+        ok: true,
+      });
+    }) as typeof fetch;
+
+    const user = await createUser({
+      username: "retry-upload",
+      password: "test-pass",
+    });
+    const collection = await createKnowledgeCollection({
+      userId: user.id,
+      input: {
+        id: "retry-upload",
+        name: "Retry Upload",
+        description: "retry upload",
+      },
+    });
+
+    const importResult = await importKnowledgeFile({
+      userId: user.id,
+      collectionId: collection.id,
+      file: new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], "retry.pdf", {
+        type: "application/pdf",
+      }),
+      input: {},
+    });
+
+    await waitForPendingKnowledgeImports();
+
+    const failedSource = await requireKnowledgeSource(
+      user.id,
+      importResult.source.id,
+    );
+    expect(failedSource.status).toBe("failed");
+    expect(failedSource.failureMessage).toBeTruthy();
+    expect(failedSource.indexProgress).toBeUndefined();
+
+    const renamedFailedSource = await updateKnowledgeSource(
+      user.id,
+      importResult.source.id,
+      {
+        title: "Retry PDF",
+        summary: "retry summary",
+      },
+    );
+    expect(renamedFailedSource.status).toBe("failed");
+    expect(renamedFailedSource.failureMessage).toBeTruthy();
+
+    failDoclingRequest = false;
+
+    const retriedSource = await retryKnowledgeSourceImport(
+      user.id,
+      importResult.source.id,
+    );
+    expect(retriedSource.status).toBe("processing");
+    expect(retriedSource.failureMessage).toBeUndefined();
+    expect(retriedSource.indexProgress).toBeUndefined();
+
+    await waitForPendingKnowledgeImports();
+
+    const completedSource = await requireKnowledgeSource(
+      user.id,
+      importResult.source.id,
+    );
+    expect(completedSource.status).toBe("ready");
+    expect(completedSource.failureMessage).toBeUndefined();
   });
 });

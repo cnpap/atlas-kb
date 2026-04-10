@@ -38,6 +38,7 @@
     listChatSessionsRequest,
     listKnowledgeCollections,
     reorderAssistantRolesRequest,
+    retryKnowledgeSourceImportRequest,
     selectActiveAssistantRoleRequest,
     sendChatFeedbackRequest,
     streamChatReplyRequest,
@@ -1150,6 +1151,26 @@
     }
   }
 
+  async function retrySource(source: KnowledgeSource) {
+    sourceActionId.value = source.id;
+    error.value = "";
+
+    try {
+      await retryKnowledgeSourceImportRequest(source.id);
+      await Promise.all([
+        loadSources(source.collectionId),
+        loadCollections({
+          silent: true,
+        }),
+      ]);
+      showToast("资料已重新加入索引队列");
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : "资料重试失败";
+    } finally {
+      sourceActionId.value = "";
+    }
+  }
+
   async function selectCollection(collectionId: string) {
     if (!collectionId || collectionId === tokenCollectionId.value) {
       return;
@@ -1420,6 +1441,7 @@
       @open-import="showImportModal = true"
       @open-panel="openPanel"
       @reorder-roles="reorderAssistantRoles"
+      @retry-source="retrySource"
       @save-collection="saveCollection"
       @select-active-role="selectAssistantRole"
       @update-role="updateAssistantRole"
@@ -1463,6 +1485,7 @@
     :source-action-pending="sourceActionId === selectedSource?.id"
     @delete="deleteSource"
     @download="downloadSource"
+    @retry="retrySource"
     @submit="saveSource"
   />
 </template>

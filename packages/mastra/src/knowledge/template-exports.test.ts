@@ -23,6 +23,7 @@ const originalApiKey = process.env.OPENAI_API_KEY;
 const originalOpenAIModel = process.env.OPENAI_MODEL;
 const originalRuntimeProvider = process.env.RUNTIME_PROVIDER;
 const originalEmbeddingApiKey = process.env.EMBEDDING_API_KEY;
+const originalEmbeddingMinIntervalMs = process.env.EMBEDDING_MIN_INTERVAL_MS;
 const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
 const originalQdrantUrl = process.env.QDRANT_URL;
 const originalS3Endpoint = process.env.ATLAS_KB_S3_ENDPOINT;
@@ -474,6 +475,7 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
     process.env.OPENAI_MODEL = "gpt-5.4";
     process.env.RUNTIME_PROVIDER = "openai";
     process.env.EMBEDDING_API_KEY = "test-embedding-key";
+    process.env.EMBEDDING_MIN_INTERVAL_MS = "1";
     process.env.ATLAS_KB_S3_ENDPOINT = "http://127.0.0.1:9000";
     process.env.ATLAS_KB_S3_REGION = "us-east-1";
     process.env.ATLAS_KB_S3_BUCKET = "atlas-kb-test";
@@ -541,6 +543,12 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
       delete process.env.EMBEDDING_API_KEY;
     } else {
       process.env.EMBEDDING_API_KEY = originalEmbeddingApiKey;
+    }
+
+    if (originalEmbeddingMinIntervalMs === undefined) {
+      delete process.env.EMBEDDING_MIN_INTERVAL_MS;
+    } else {
+      process.env.EMBEDDING_MIN_INTERVAL_MS = originalEmbeddingMinIntervalMs;
     }
 
     if (originalS3Endpoint === undefined) {

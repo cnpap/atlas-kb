@@ -24,7 +24,7 @@
     "@atlas-kb/schema": "workspace:*",
     "@aws-sdk/client-s3": "^3.1025.0",
     "@aws-sdk/s3-request-presigner": "^3.1025.0",
-    "@cnpap/ops-agent-kit": "0.5.0",
+    "@cnpap/ops-agent-kit": "0.6.0",
     "@mastra/core": "1.13.2",
     "@mastra/memory": "1.13.1",
     "@mastra/pg": "^1.8.3",

@@ -69,6 +69,41 @@ export async function enqueueKnowledgeFileImport(args: {
   });
 }
 
+export async function findLatestKnowledgeImportJobForSource(args: {
+  sourceId: string;
+  userId: string;
+}): Promise<ImportJobRow | undefined> {
+  const db = await ensureKnowledgeDatabase();
+
+  return (await db
+    .selectFrom("kb_import_jobs")
+    .select(IMPORT_JOB_COLUMNS)
+    .where("owner_user_id", "=", toDbUserId(args.userId))
+    .where("source_id", "=", args.sourceId)
+    .orderBy("started_at", "desc")
+    .orderBy("id", "desc")
+    .limit(1)
+    .executeTakeFirst()) as ImportJobRow | undefined;
+}
+
+export async function requeueKnowledgeFileImport(args: {
+  collectionId: string;
+  sourceId: string;
+  userId: string;
+}): Promise<void> {
+  const latestJob = await findLatestKnowledgeImportJobForSource({
+    userId: args.userId,
+    sourceId: args.sourceId,
+  });
+
+  if (latestJob) {
+    await markKnowledgeImportJobPending(latestJob.id);
+    return;
+  }
+
+  await enqueueKnowledgeFileImport(args);
+}
+
 export async function claimNextKnowledgeImportJob(): Promise<
   ImportJobRow | undefined
 > {
@@ -147,6 +182,24 @@ export async function markKnowledgeImportJobFailed(
       finished_at: nowIso(),
       stage: "failed",
       status: "failed",
+    })
+    .where("id", "=", jobId)
+    .execute();
+}
+
+export async function markKnowledgeImportJobPending(
+  jobId: string,
+): Promise<void> {
+  const db = await ensureKnowledgeDatabase();
+
+  await db
+    .updateTable("kb_import_jobs")
+    .set({
+      error_message: null,
+      finished_at: null,
+      stage: "queued",
+      started_at: nowIso(),
+      status: "pending",
     })
     .where("id", "=", jobId)
     .execute();

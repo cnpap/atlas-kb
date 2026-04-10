@@ -7,8 +7,6 @@ import { KNOWLEDGE_TABLES } from "./tables";
 
 let dbCache: Kysely<DB> | undefined;
 let dbUrlCache = "";
-let schemaReadyCache: Promise<void> | undefined;
-let schemaUrlCache = "";
 
 function createDatabaseClient(): Kysely<DB> {
   const client = postgres(getDatabaseUrl(), {
@@ -38,27 +36,8 @@ function getKnowledgeDatabase(): Kysely<DB> {
   return dbCache;
 }
 
-async function ensureKnowledgeSchema(db: Kysely<DB>): Promise<void> {
-  const nextUrl = getDatabaseUrl();
-
-  if (!schemaReadyCache || schemaUrlCache !== nextUrl) {
-    schemaUrlCache = nextUrl;
-    schemaReadyCache = sql`
-      ALTER TABLE ${sql.table(KNOWLEDGE_TABLES.sources)}
-      ALTER COLUMN summary DROP NOT NULL,
-      ALTER COLUMN content DROP NOT NULL
-    `
-      .execute(db)
-      .then(() => undefined);
-  }
-
-  await schemaReadyCache;
-}
-
 export async function ensureKnowledgeDatabase(): Promise<Kysely<DB>> {
-  const db = getKnowledgeDatabase();
-  await ensureKnowledgeSchema(db);
-  return db;
+  return getKnowledgeDatabase();
 }
 
 export async function resetKnowledgeDatabase(): Promise<void> {
@@ -68,6 +47,9 @@ export async function resetKnowledgeDatabase(): Promise<void> {
     await sql`
       TRUNCATE TABLE
         ${sql.table(KNOWLEDGE_TABLES.userSettings)},
+        ${sql.table(KNOWLEDGE_TABLES.embeddingRateLimitLeases)},
+        ${sql.table(KNOWLEDGE_TABLES.embeddingRateLimitStates)},
+        ${sql.table(KNOWLEDGE_TABLES.workspaceIndexCheckpoints)},
         ${sql.table(KNOWLEDGE_TABLES.chatFeedback)},
         ${sql.table(KNOWLEDGE_TABLES.chatMessages)},
         ${sql.table(KNOWLEDGE_TABLES.chatSessions)},

@@ -1,3 +1,4 @@
+import { createDatabaseWorkspaceIndexCheckpointStore } from "./workspace-index-checkpoints";
 import {
   createContentProxy,
   createWorkspaceIndexer,
@@ -6,6 +7,7 @@ import {
 } from "@cnpap/ops-agent-kit";
 import type { AnyWorkspace, WorkspaceFilesystem } from "@mastra/core/workspace";
 import { S3Filesystem } from "@mastra/s3";
+import { getEmbeddingMaxConcurrency } from "./config";
 import { deriveKnowledgeSourceTitleFromFileName } from "./document-file-types";
 
 let cachedOpsAgentKitConfig:
@@ -42,14 +44,22 @@ export function wrapKnowledgeFilesystemForReading(
 }
 
 export function createKnowledgeWorkspaceIndexer(args: {
+  collectionId: string;
+  userId: string;
   workspace: AnyWorkspace;
 }): WorkspaceIndexer {
   const config = getOpsAgentKitConfig();
 
   return createWorkspaceIndexer({
     workspace: args.workspace,
+    checkpointStore: createDatabaseWorkspaceIndexCheckpointStore({
+      userId: args.userId,
+      collectionId: args.collectionId,
+    }),
     docling: config.docling,
     vision: config.vision,
+    defaultVisionMode: "off",
+    maxEmbeddingConcurrency: getEmbeddingMaxConcurrency(),
   });
 }
 

@@ -39,6 +39,7 @@ export { processNextKnowledgeImportJob } from "./import-jobs";
 export {
   importKnowledgeFile,
   importKnowledgeText,
+  retryKnowledgeSourceImport,
   updateKnowledgeSource,
   waitForPendingKnowledgeImports,
 } from "./ingest";

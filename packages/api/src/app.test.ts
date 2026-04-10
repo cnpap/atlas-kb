@@ -21,6 +21,7 @@ const originalApiKey = process.env.OPENAI_API_KEY;
 const originalOpenAIBaseUrl = process.env.OPENAI_BASE_URL;
 const originalEmbeddingApiKey = process.env.EMBEDDING_API_KEY;
 const originalEmbeddingDimensions = process.env.EMBEDDING_DIMENSIONS;
+const originalEmbeddingMinIntervalMs = process.env.EMBEDDING_MIN_INTERVAL_MS;
 const originalQdrantApiKey = process.env.QDRANT_API_KEY;
 const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
 const originalQdrantUrl = process.env.QDRANT_URL;
@@ -613,6 +614,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
     delete process.env.QDRANT_API_KEY;
     delete process.env.EMBEDDING_API_KEY;
     delete process.env.EMBEDDING_DIMENSIONS;
+    process.env.EMBEDDING_MIN_INTERVAL_MS = "1";
     process.env.ATLAS_KB_S3_ENDPOINT = "http://127.0.0.1:9000";
     process.env.ATLAS_KB_S3_REGION = "us-east-1";
     process.env.ATLAS_KB_S3_BUCKET = "atlas-kb-test";
@@ -673,6 +675,12 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
       delete process.env.EMBEDDING_DIMENSIONS;
     } else {
       process.env.EMBEDDING_DIMENSIONS = originalEmbeddingDimensions;
+    }
+
+    if (originalEmbeddingMinIntervalMs === undefined) {
+      delete process.env.EMBEDDING_MIN_INTERVAL_MS;
+    } else {
+      process.env.EMBEDDING_MIN_INTERVAL_MS = originalEmbeddingMinIntervalMs;
     }
 
     if (originalQdrantApiKey === undefined) {
@@ -884,6 +892,145 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
       }>(downloadResponse);
       expect(downloadData.url).toBeString();
       expect(downloadData.filename).toBe("downloadable.txt");
+    },
+  );
+
+  it.serial(
+    "retries failed file imports through the source retry route",
+    async () => {
+      let failDoclingRequest = true;
+      globalThis.fetch = (async (
+        input: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+
+        if (url.includes("/v1/convert/file")) {
+          if (failDoclingRequest) {
+            return jsonResponse(
+              {
+                detail: "Gateway Timeout",
+              },
+              504,
+            );
+          }
+
+          return jsonResponse(await buildMockDoclingConvertPayload(init?.body));
+        }
+
+        return jsonResponse({
+          ok: true,
+        });
+      }) as typeof fetch;
+
+      const app = createApp();
+      const session = await login(app);
+
+      const createCollectionResponse = await app.handle(
+        new Request("http://localhost/api/kb/collections", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            id: "api-retry-upload",
+            name: "API Retry Upload",
+            description: "retry upload tests",
+          }),
+        }),
+      );
+      const collectionData = await readJson<{
+        collection: {
+          id: string;
+        };
+      }>(createCollectionResponse);
+      const workspaceSession = await switchWorkspace({
+        app,
+        token: session.token,
+        collectionId: collectionData.collection.id,
+      });
+
+      const upload = await uploadFileThroughDirectObjectFlow({
+        app,
+        token: workspaceSession.token,
+        collectionId: collectionData.collection.id,
+        file: new File(
+          [new Uint8Array([0x25, 0x50, 0x44, 0x46])],
+          "retry.pdf",
+          {
+            type: "application/pdf",
+          },
+        ),
+      });
+      const importData = await readJson<{
+        source: {
+          id: string;
+          status: string;
+        };
+      }>(upload.confirmResponse);
+
+      expect(importData.source.status).toBe("processing");
+
+      await waitForPendingKnowledgeImports();
+
+      const failedSourceResponse = await app.handle(
+        new Request(`http://localhost/api/kb/sources/${importData.source.id}`, {
+          headers: authHeaders(workspaceSession.token),
+        }),
+      );
+      const failedSourceData = await readJson<{
+        source: {
+          failureMessage?: string;
+          status: string;
+        };
+      }>(failedSourceResponse);
+
+      expect(failedSourceData.source.status).toBe("failed");
+      expect(failedSourceData.source.failureMessage).toBeTruthy();
+
+      failDoclingRequest = false;
+
+      const retryResponse = await app.handle(
+        new Request(
+          `http://localhost/api/kb/sources/${importData.source.id}/retry`,
+          {
+            method: "POST",
+            headers: authHeaders(workspaceSession.token),
+          },
+        ),
+      );
+      const retryData = await readJson<{
+        source: {
+          failureMessage?: string;
+          status: string;
+        };
+      }>(retryResponse);
+
+      expect(retryData.source.status).toBe("processing");
+      expect(retryData.source.failureMessage).toBeUndefined();
+
+      await waitForPendingKnowledgeImports();
+
+      const completedSourceResponse = await app.handle(
+        new Request(`http://localhost/api/kb/sources/${importData.source.id}`, {
+          headers: authHeaders(workspaceSession.token),
+        }),
+      );
+      const completedSourceData = await readJson<{
+        source: {
+          failureMessage?: string;
+          status: string;
+        };
+      }>(completedSourceResponse);
+
+      expect(completedSourceData.source.status).toBe("ready");
+      expect(completedSourceData.source.failureMessage).toBeUndefined();
     },
   );
 

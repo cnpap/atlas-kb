@@ -11,6 +11,21 @@ import { buildSearchSnippet } from "./search-utils";
 
 const DEFAULT_SEARCH_LIMIT = 8;
 
+type WorkspaceSearchResult = {
+  content: string;
+  id: string;
+  lineRange?: {
+    end: number;
+    start: number;
+  };
+  metadata?: {
+    chunkId?: string;
+    pageNumbers?: number[];
+    path?: string;
+  };
+  score: number;
+};
+
 function requireCollectionId(input: SearchKnowledgeRequest): string {
   const collectionId = input.collectionId?.trim();
 
@@ -48,12 +63,29 @@ function filterSources(
   });
 }
 
+function normalizePageNumbers(pageNumbers?: number[]): number[] {
+  return [...new Set((pageNumbers ?? []).filter((value) => value > 0))].sort(
+    (left, right) => left - right,
+  );
+}
+
 function buildSectionPath(result: {
   lineRange?: {
     start: number;
     end: number;
   };
+  metadata?: {
+    pageNumbers?: number[];
+  };
 }) {
+  const pageNumbers = normalizePageNumbers(result.metadata?.pageNumbers);
+
+  if (pageNumbers.length > 0) {
+    return pageNumbers.length === 1
+      ? `第 ${pageNumbers[0]} 页`
+      : `第 ${pageNumbers.join("、")} 页`;
+  }
+
   if (!result.lineRange) {
     return undefined;
   }
@@ -64,11 +96,25 @@ function buildSectionPath(result: {
 
 function buildChunkId(result: {
   documentId: string;
+  id: string;
   lineRange?: {
     start: number;
     end: number;
   };
+  metadata?: {
+    chunkId?: string;
+  };
 }) {
+  const chunkId = result.metadata?.chunkId?.trim();
+
+  if (chunkId) {
+    return chunkId;
+  }
+
+  if (result.id.trim()) {
+    return result.id;
+  }
+
   if (!result.lineRange) {
     return `${result.documentId}#chunk:0`;
   }
@@ -93,14 +139,7 @@ function toSearchEngine(
 function toSearchHit(args: {
   engine: SearchKnowledgeResult["engine"];
   query: string;
-  result: {
-    content: string;
-    lineRange?: {
-      start: number;
-      end: number;
-    };
-    score: number;
-  };
+  result: WorkspaceSearchResult;
   source: Awaited<ReturnType<typeof listKnowledgeSources>>[number];
 }): SearchKnowledgeHit {
   const summary = args.source.summary || args.source.title;
@@ -111,12 +150,17 @@ function toSearchHit(args: {
     collectionId: args.source.collectionId,
     chunkId: buildChunkId({
       documentId: args.source.documentId || args.source.id,
+      id: args.result.id,
       lineRange: args.result.lineRange,
+      metadata: args.result.metadata,
     }),
     title: args.source.title,
     summary,
     snippet: buildSearchSnippet(args.result.content, args.query, summary),
-    sectionPath: buildSectionPath(args.result),
+    sectionPath: buildSectionPath({
+      lineRange: args.result.lineRange,
+      metadata: args.result.metadata,
+    }),
     sourceFilename: args.source.sourceFilename,
     sourceType: args.source.sourceType,
     tags: [...args.source.tags],
@@ -157,18 +201,29 @@ export async function searchKnowledge(
     listKnowledgeSources(options.userId, collectionId),
   ]);
   const filteredSources = filterSources(sources, parsedInput);
-  const sourceMap = new Map(
-    filteredSources.map((source) => [source.documentId || source.id, source]),
-  );
+  const sourceMap = new Map<string, (typeof filteredSources)[number]>();
+
+  for (const source of filteredSources) {
+    if (source.documentId) {
+      sourceMap.set(source.documentId, source);
+    }
+
+    if (source.sourceFilename) {
+      sourceMap.set(source.sourceFilename, source);
+    }
+
+    sourceMap.set(source.id, source);
+  }
   const engine = toSearchEngine(workspace);
-  const results = await workspace.search(parsedInput.query, {
+  const results = (await workspace.search(parsedInput.query, {
     topK: limit,
     mode:
       engine === "hybrid" ? "hybrid" : engine === "vector" ? "vector" : "bm25",
-  });
+  })) as WorkspaceSearchResult[];
   const hits = results
     .map((result) => {
-      const source = sourceMap.get(result.id);
+      const sourcePath = result.metadata?.path?.trim();
+      const source = sourceMap.get(sourcePath || result.id);
 
       if (!source) {
         return undefined;
@@ -177,11 +232,7 @@ export async function searchKnowledge(
       return toSearchHit({
         engine,
         query: parsedInput.query,
-        result: {
-          content: result.content,
-          lineRange: result.lineRange,
-          score: result.score,
-        },
+        result,
         source,
       });
     })

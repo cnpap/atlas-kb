@@ -23,6 +23,7 @@ import {
   reorderAssistantRoles,
   requireKnowledgeCollection,
   requireKnowledgeSource,
+  retryKnowledgeSourceImport,
   searchKnowledge,
   setActiveAssistantRole,
   updateAssistantRole,
@@ -535,6 +536,23 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
     },
     {
       body: KnowledgeSourceUpdateRequestSchema,
+      params: KnowledgeSourceIdParamsSchema,
+      response: KnowledgeSourceResponseSchema,
+    },
+  )
+  .post(
+    "/sources/:sourceId/retry",
+    async ({ params, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      await requireActiveSource(session, params.sourceId);
+      return success({
+        source: await retryKnowledgeSourceImport(
+          session.user.id,
+          params.sourceId,
+        ),
+      });
+    },
+    {
       params: KnowledgeSourceIdParamsSchema,
       response: KnowledgeSourceResponseSchema,
     },

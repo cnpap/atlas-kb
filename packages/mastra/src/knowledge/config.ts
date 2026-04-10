@@ -1,6 +1,8 @@
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_OPENAI_MODEL = "gpt-5.4";
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
+const DEFAULT_EMBEDDING_MAX_CONCURRENCY = 5;
+const DEFAULT_EMBEDDING_MIN_INTERVAL_MS = 1_000;
 const DEFAULT_QDRANT_URL = "http://127.0.0.1:6333";
 const DEFAULT_KNOWLEDGE_S3_PREFIX = "knowledge-sources";
 const DEFAULT_ADMIN_API_BASE_URL = "http://127.0.0.1:8000";
@@ -32,6 +34,14 @@ function parseBooleanEnv(
   }
 
   return !["0", "false", "no", "off"].includes(normalized);
+}
+
+function parsePositiveIntegerEnv(
+  value: string | undefined,
+  fallback: number,
+): number {
+  const parsed = Number.parseInt(value?.trim() ?? "", 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 export function getDatabaseUrl(): string {
@@ -87,6 +97,33 @@ export function getEmbeddingDimensions(): number | undefined {
   const rawValue =
     trimEnvValue(process.env.EMBEDDING_DIMENSIONS) ??
     trimEnvValue(process.env.OPENAI_EMBEDDING_DIMENSIONS);
+
+  if (!rawValue) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(rawValue, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+export function getEmbeddingMaxConcurrency(): number {
+  return parsePositiveIntegerEnv(
+    process.env.EMBEDDING_MAX_CONCURRENCY,
+    DEFAULT_EMBEDDING_MAX_CONCURRENCY,
+  );
+}
+
+export function getEmbeddingMinIntervalMs(): number {
+  return parsePositiveIntegerEnv(
+    process.env.EMBEDDING_MIN_INTERVAL_MS,
+    DEFAULT_EMBEDDING_MIN_INTERVAL_MS,
+  );
+}
+
+export function getWorkspaceIndexMaxPagesPerRun(): number | undefined {
+  const rawValue = trimEnvValue(
+    process.env.ATLAS_KB_WORKSPACE_INDEX_MAX_PAGES_PER_RUN,
+  );
 
   if (!rawValue) {
     return undefined;

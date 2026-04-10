@@ -13,7 +13,10 @@ import { hasEmbeddingConfig } from "./config";
 import { isKnowledgeSourceContentEditable } from "./document-file-types";
 import { deriveUploadTitle } from "./ops-agent-kit";
 import { waitForPendingKnowledgeImports } from "./import-jobs";
-import { enqueueKnowledgeFileImport } from "./import-jobs-repository";
+import {
+  enqueueKnowledgeFileImport,
+  requeueKnowledgeFileImport,
+} from "./import-jobs-repository";
 import {
   allocateManagedSourceFileName,
   buildManagedSourceFileName,
@@ -21,6 +24,11 @@ import {
 } from "./storage";
 import { buildSummary } from "./search-utils";
 import { getKnowledgeWorkspace, getKnowledgeWorkspaceIndexer } from "./runtime";
+import {
+  clearKnowledgeIndexState,
+  createKnowledgeIndexNow,
+  updateKnowledgeIndexNow,
+} from "./workspace-indexing";
 import {
   createKnowledgeSourceRecord,
   deleteKnowledgeSource,
@@ -130,9 +138,9 @@ async function createFileBackedSource(args: {
   });
 
   try {
-    await workspaceIndexer.createIndex({
+    await createKnowledgeIndexNow({
       path: documentId,
-      visionMode: "off",
+      workspaceIndexer,
     });
 
     const source = await createKnowledgeSourceRecord({
@@ -160,9 +168,12 @@ async function createFileBackedSource(args: {
       engine: getImportEngine(),
     };
   } catch (error) {
-    await workspaceIndexer
-      .deleteIndex({ path: documentId })
-      .catch(() => undefined);
+    await clearKnowledgeIndexState({
+      userId: args.userId,
+      collectionId: args.collectionId,
+      path: documentId,
+      workspaceIndexer,
+    });
     await filesystem
       .deleteFile(documentId, { force: true })
       .catch(() => undefined);
@@ -418,8 +429,8 @@ export async function updateKnowledgeSource(
       mimeType: source.mimeType,
       byteSize: source.byteSize ?? undefined,
       sourceFilename,
-      status: "ready",
-      failureMessage: undefined,
+      status: source.status,
+      failureMessage: source.failureMessage,
     });
   }
 
@@ -436,9 +447,9 @@ export async function updateKnowledgeSource(
     mimeType: source.mimeType,
     overwrite: true,
   });
-  await workspaceIndexer.updateIndex({
+  await updateKnowledgeIndexNow({
     path: documentId,
-    visionMode: "off",
+    workspaceIndexer,
   });
 
   return replaceSourceContent({
@@ -455,6 +466,71 @@ export async function updateKnowledgeSource(
     status: "ready",
     failureMessage: undefined,
   });
+}
+
+export async function retryKnowledgeSourceImport(
+  userId: string,
+  sourceId: string,
+): Promise<KnowledgeSource> {
+  const source = await requireKnowledgeSource(userId, sourceId);
+
+  if (source.sourceType !== "file") {
+    throw new BadRequestError("只有文件资料支持重试导入。");
+  }
+
+  if (source.status !== "failed") {
+    throw new BadRequestError("只有失败的文件资料才能重试导入。");
+  }
+
+  const documentId = source.documentId || source.sourceFilename;
+
+  if (!documentId) {
+    throw new BadRequestError(`资料 "${sourceId}" 缺少必要文件信息`);
+  }
+
+  const workspaceIndexer = await getKnowledgeWorkspaceIndexer({
+    userId,
+    collectionId: source.collectionId,
+  }).catch(() => undefined);
+
+  await clearKnowledgeIndexState({
+    userId,
+    collectionId: source.collectionId,
+    path: documentId,
+    workspaceIndexer,
+  });
+
+  await requeueKnowledgeFileImport({
+    userId,
+    collectionId: source.collectionId,
+    sourceId: source.id,
+  });
+
+  const retriedSource = await replaceSourceContent({
+    userId,
+    sourceId: source.id,
+    documentId,
+    title: source.title,
+    summary: source.summary,
+    content: undefined,
+    tags: source.tags,
+    mimeType: source.mimeType,
+    byteSize: source.byteSize,
+    sourceFilename: source.sourceFilename ?? documentId,
+    status: "processing",
+    failureMessage: undefined,
+  });
+
+  void dispatchKnowledgeImportDrainInAdmin().catch((error) => {
+    console.error("[knowledge-import] failed to dispatch retry drain job", {
+      collectionId: source.collectionId,
+      sourceId: source.id,
+      error:
+        error instanceof Error ? error.message : "Unknown admin dispatch error",
+    });
+  });
+
+  return retriedSource;
 }
 
 export { waitForPendingKnowledgeImports };

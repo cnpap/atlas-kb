@@ -421,6 +421,17 @@ export async function deleteKnowledgeSourceRequest(
   );
 }
 
+export async function retryKnowledgeSourceImportRequest(
+  sourceId: string,
+): Promise<{ source: KnowledgeSource }> {
+  return requestJson<{ source: KnowledgeSource }>(
+    `/api/kb/sources/${encodeURIComponent(sourceId)}/retry`,
+    {
+      method: "POST",
+    },
+  );
+}
+
 export async function importKnowledgeTextRequest(params: {
   collectionId: string;
   body: KnowledgeTextImportRequest;

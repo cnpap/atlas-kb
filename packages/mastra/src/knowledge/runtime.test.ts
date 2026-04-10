@@ -10,6 +10,7 @@ const originalEmbeddingApiKey = process.env.EMBEDDING_API_KEY;
 const originalEmbeddingBaseUrl = process.env.EMBEDDING_BASE_URL;
 const originalEmbeddingModel = process.env.EMBEDDING_MODEL;
 const originalEmbeddingMaxConcurrency = process.env.EMBEDDING_MAX_CONCURRENCY;
+const originalEmbeddingMinIntervalMs = process.env.EMBEDDING_MIN_INTERVAL_MS;
 const originalEmbeddingMaxRetries = process.env.EMBEDDING_MAX_RETRIES;
 const originalEmbeddingRetryBaseMs = process.env.EMBEDDING_RETRY_BASE_MS;
 
@@ -29,6 +30,7 @@ describe("knowledge runtime embeddings", () => {
       "https://dashscope.aliyuncs.com/compatible-mode/v1";
     process.env.EMBEDDING_MODEL = "text-embedding-v4";
     process.env.EMBEDDING_MAX_CONCURRENCY = "1";
+    process.env.EMBEDDING_MIN_INTERVAL_MS = "1";
     process.env.EMBEDDING_MAX_RETRIES = "1";
     process.env.EMBEDDING_RETRY_BASE_MS = "1";
     resetKnowledgeRuntimeCache();
@@ -59,6 +61,12 @@ describe("knowledge runtime embeddings", () => {
       delete process.env.EMBEDDING_MAX_CONCURRENCY;
     } else {
       process.env.EMBEDDING_MAX_CONCURRENCY = originalEmbeddingMaxConcurrency;
+    }
+
+    if (originalEmbeddingMinIntervalMs === undefined) {
+      delete process.env.EMBEDDING_MIN_INTERVAL_MS;
+    } else {
+      process.env.EMBEDDING_MIN_INTERVAL_MS = originalEmbeddingMinIntervalMs;
     }
 
     if (originalEmbeddingMaxRetries === undefined) {

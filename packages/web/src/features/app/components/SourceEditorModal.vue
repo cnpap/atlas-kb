@@ -1,10 +1,20 @@
 <script setup lang="ts">
   import type { KnowledgeSource } from "@atlas-kb/schema";
   import { ref, watch } from "vue";
-  import { Download, LoaderCircle, Save, Trash2 } from "lucide-vue-next";
   import {
+    Download,
+    LoaderCircle,
+    RotateCcw,
+    Save,
+    Trash2,
+  } from "lucide-vue-next";
+  import {
+    formatDateTime,
+    formatPageNumberList,
+    getSourceIndexProgressStatusLabel,
     getSourceStatusLabel,
     getSourceStatusTone,
+    shouldShowSourceIndexProgress,
   } from "@/lib/knowledge-ui";
 
   const props = defineProps<{
@@ -17,6 +27,7 @@
   const emit = defineEmits<{
     delete: [source: KnowledgeSource];
     download: [source: KnowledgeSource];
+    retry: [source: KnowledgeSource];
     "update:open": [value: boolean];
     submit: [
       payload: {
@@ -133,6 +144,103 @@
           >
         </div>
 
+        <div
+          v-if="shouldShowSourceIndexProgress(source)"
+          class="space-y-3 rounded-[8px] border border-[rgba(93,72,34,0.08)] bg-[rgba(255,250,240,0.6)] p-3"
+        >
+          <div class="flex items-center justify-between gap-3">
+            <p class="section-label">索引进度</p>
+            <span
+              v-if="source.indexProgress"
+              class="text-[11px] font-medium text-[var(--text-strong)]"
+            >
+              {{ getSourceIndexProgressStatusLabel(source.indexProgress) }}
+            </span>
+          </div>
+
+          <div v-if="source.indexProgress" class="grid gap-2 sm:grid-cols-2">
+            <div class="rounded-[6px] bg-white/70 px-3 py-2">
+              <p class="text-[11px] text-[var(--text-dim)]">分块进度</p>
+              <p class="mt-1 text-sm font-medium text-[var(--text-strong)]">
+                {{ source.indexProgress.completedChunks }}
+                /
+                {{ source.indexProgress.totalChunks }}
+                块
+              </p>
+            </div>
+            <div class="rounded-[6px] bg-white/70 px-3 py-2">
+              <p class="text-[11px] text-[var(--text-dim)]">失败分块</p>
+              <p class="mt-1 text-sm font-medium text-[var(--text-strong)]">
+                {{ source.indexProgress.failedChunks }}
+                块
+              </p>
+            </div>
+            <div class="rounded-[6px] bg-white/70 px-3 py-2">
+              <p class="text-[11px] text-[var(--text-dim)]">页进度</p>
+              <p class="mt-1 text-sm font-medium text-[var(--text-strong)]">
+                {{ source.indexProgress.completedPages }}
+                /
+                {{ source.indexProgress.totalPages }}
+                页
+              </p>
+            </div>
+            <div class="rounded-[6px] bg-white/70 px-3 py-2">
+              <p class="text-[11px] text-[var(--text-dim)]">最近处理页</p>
+              <p class="mt-1 text-sm font-medium text-[var(--text-strong)]">
+                {{ source.indexProgress.lastProcessedPage === null
+                    ? "未开始"
+                    : `第 ${source.indexProgress.lastProcessedPage} 页` }}
+              </p>
+            </div>
+          </div>
+
+          <div
+            v-if="source.indexProgress?.lastError || source.failureMessage"
+            class="rounded-[6px] border border-[rgba(185,28,28,0.12)] bg-[rgba(254,242,242,0.78)] px-3 py-2"
+          >
+            <p class="text-[11px] text-[var(--text-dim)]">最近错误</p>
+            <p class="mt-1 text-sm leading-6 text-[var(--text-strong)]">
+              {{ source.indexProgress?.lastError ||
+                source.failureMessage ||
+                "未记录" }}
+            </p>
+          </div>
+
+          <div
+            v-if="source.indexProgress"
+            class="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[var(--text-muted)]"
+          >
+            <span
+              >更新时间：{{ formatDateTime(source.indexProgress.updatedAt) }}</span
+            >
+            <span>
+              {{ source.indexProgress.resumeable ? "支持续跑" : "无需续跑" }}
+            </span>
+          </div>
+
+          <div
+            v-if="source.indexProgress?.failedChunkDetails.length"
+            class="space-y-2"
+          >
+            <p class="text-[11px] font-medium text-[var(--text-dim)]">
+              失败分块
+            </p>
+            <div
+              v-for="failure in source.indexProgress.failedChunkDetails"
+              :key="failure.chunkId"
+              class="rounded-[6px] border border-[rgba(93,72,34,0.08)] bg-white/70 px-3 py-2"
+            >
+              <p class="text-xs font-medium text-[var(--text-strong)]">
+                块 {{ failure.ordinal + 1 }} ·
+                {{ formatPageNumberList(failure.pageNumbers) }}
+              </p>
+              <p class="mt-1 text-xs leading-5 text-[var(--text-muted)]">
+                {{ failure.error }}
+              </p>
+            </div>
+          </div>
+        </div>
+
         <div v-if="!isDoclingManagedSource(source)" class="space-y-1.5">
           <p class="section-label">正文内容</p>
           <textarea
@@ -149,10 +257,21 @@
           <button
             class="soft-button"
             type="button"
+            :disabled="sourceActionPending"
             @click="emit('download', source)"
           >
             <Download class="size-4" />
             <span>下载</span>
+          </button>
+          <button
+            v-if="source.sourceType === 'file' && source.status === 'failed'"
+            class="soft-button"
+            type="button"
+            :disabled="sourceActionPending"
+            @click="emit('retry', source)"
+          >
+            <RotateCcw class="size-4" />
+            <span>重试索引</span>
           </button>
         </div>
 
@@ -160,6 +279,7 @@
           <button
             class="soft-button warn"
             type="button"
+            :disabled="sourceActionPending"
             @click="emit('delete', source)"
           >
             <Trash2 class="size-4" />
@@ -168,7 +288,7 @@
           <button
             class="soft-button primary"
             type="button"
-            :disabled="saving"
+            :disabled="saving || sourceActionPending"
             @click="submit"
           >
             <LoaderCircle v-if="saving" class="size-4 animate-spin" />

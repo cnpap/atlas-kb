@@ -2,16 +2,23 @@ import type {
   KnowledgeImportJobProcessResult,
   KnowledgeSource,
 } from "@atlas-kb/schema";
+import { dispatchKnowledgeImportDrainInAdmin } from "./admin-client";
 import {
   claimNextKnowledgeImportJob,
   markKnowledgeImportJobCompleted,
   markKnowledgeImportJobFailed,
+  markKnowledgeImportJobPending,
 } from "./import-jobs-repository";
 import {
   getKnowledgeSourceById,
   replaceSourceContent,
 } from "./sources-repository";
 import { getKnowledgeWorkspaceIndexer } from "./runtime";
+import {
+  type BackgroundIndexOutcome,
+  clearKnowledgeIndexState,
+  runBackgroundKnowledgeIndex,
+} from "./workspace-indexing";
 
 function summarizeImportFailureMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) {
@@ -21,25 +28,10 @@ function summarizeImportFailureMessage(error: unknown): string {
   return "文件解析或索引失败，请稍后重试。";
 }
 
-async function clearSourceIndex(args: {
-  documentId: string;
-  source: KnowledgeSource;
-  userId: string;
-}): Promise<void> {
-  const workspaceIndexer = await getKnowledgeWorkspaceIndexer({
-    userId: args.userId,
-    collectionId: args.source.collectionId,
-  }).catch(() => undefined);
-
-  await workspaceIndexer
-    ?.deleteIndex({ path: args.documentId })
-    .catch(() => undefined);
-}
-
 async function processQueuedFileSource(args: {
   source: KnowledgeSource;
   userId: string;
-}): Promise<void> {
+}): Promise<BackgroundIndexOutcome> {
   const documentId = args.source.documentId || args.source.sourceFilename;
 
   if (!documentId) {
@@ -50,31 +42,9 @@ async function processQueuedFileSource(args: {
     userId: args.userId,
     collectionId: args.source.collectionId,
   });
-
-  await clearSourceIndex({
-    userId: args.userId,
-    source: args.source,
-    documentId,
-  });
-
-  await workspaceIndexer.createIndex({
+  return runBackgroundKnowledgeIndex({
     path: documentId,
-    visionMode: "off",
-  });
-
-  await replaceSourceContent({
-    userId: args.userId,
-    sourceId: args.source.id,
-    documentId,
-    title: args.source.title,
-    summary: args.source.summary,
-    content: undefined,
-    tags: args.source.tags,
-    mimeType: args.source.mimeType,
-    byteSize: args.source.byteSize,
-    sourceFilename: args.source.sourceFilename ?? documentId,
-    status: "ready",
-    failureMessage: undefined,
+    workspaceIndexer,
   });
 }
 
@@ -112,9 +82,106 @@ export async function processNextKnowledgeImportJob(): Promise<KnowledgeImportJo
       };
     }
 
-    await processQueuedFileSource({
+    const documentId = source.documentId || source.sourceFilename;
+
+    if (!documentId) {
+      throw new Error(`资料 "${source.id}" 缺少 documentId`);
+    }
+
+    const outcome = await processQueuedFileSource({
       userId,
       source,
+    });
+
+    if (outcome.kind === "processing") {
+      await replaceSourceContent({
+        userId,
+        sourceId: source.id,
+        documentId,
+        title: source.title,
+        summary: source.summary,
+        content: undefined,
+        tags: source.tags,
+        mimeType: source.mimeType,
+        byteSize: source.byteSize,
+        sourceFilename: source.sourceFilename ?? documentId,
+        status: "processing",
+        failureMessage: undefined,
+      });
+      await markKnowledgeImportJobPending(job.id);
+      const sourceId = source.id;
+      const collectionId = source.collectionId;
+
+      void dispatchKnowledgeImportDrainInAdmin().catch((error) => {
+        console.error("[knowledge-import] failed to redispatch admin drain", {
+          collectionId,
+          sourceId,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unknown admin dispatch error",
+        });
+      });
+
+      return {
+        processed: true,
+        jobId: job.id,
+        sourceId: source.id,
+        sourceStatus: "processing",
+      };
+    }
+
+    if (outcome.kind === "failed") {
+      const workspaceIndexer = await getKnowledgeWorkspaceIndexer({
+        userId,
+        collectionId: source.collectionId,
+      }).catch(() => undefined);
+
+      await clearKnowledgeIndexState({
+        userId,
+        collectionId: source.collectionId,
+        path: documentId,
+        workspaceIndexer,
+      });
+
+      await replaceSourceContent({
+        userId,
+        sourceId: source.id,
+        documentId,
+        title: source.title,
+        summary: source.summary,
+        content: undefined,
+        tags: source.tags,
+        mimeType: source.mimeType,
+        byteSize: source.byteSize,
+        sourceFilename: source.sourceFilename ?? documentId,
+        status: "failed",
+        failureMessage: outcome.failureMessage,
+      }).catch(() => undefined);
+
+      await markKnowledgeImportJobFailed(job.id, outcome.failureMessage);
+
+      return {
+        processed: true,
+        jobId: job.id,
+        sourceId: source.id,
+        sourceStatus: "failed",
+      };
+    }
+
+    await replaceSourceContent({
+      userId,
+      sourceId: source.id,
+      documentId,
+      title: source.title,
+      summary: source.summary,
+      content: undefined,
+      tags: source.tags,
+      mimeType: source.mimeType,
+      byteSize: source.byteSize,
+      sourceFilename: source.sourceFilename ?? documentId,
+      status: "ready",
+      failureMessage: undefined,
     });
 
     await markKnowledgeImportJobCompleted(job.id);
@@ -135,10 +202,16 @@ export async function processNextKnowledgeImportJob(): Promise<KnowledgeImportJo
       const documentId = source.documentId || source.sourceFilename;
 
       if (documentId) {
-        await clearSourceIndex({
+        const workspaceIndexer = await getKnowledgeWorkspaceIndexer({
           userId,
-          source,
-          documentId,
+          collectionId: source.collectionId,
+        }).catch(() => undefined);
+
+        await clearKnowledgeIndexState({
+          userId,
+          collectionId: source.collectionId,
+          path: documentId,
+          workspaceIndexer,
         });
       }
 

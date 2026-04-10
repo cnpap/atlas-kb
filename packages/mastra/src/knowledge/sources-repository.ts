@@ -4,6 +4,7 @@ import { deleteKnowledgeImportJobsForSource } from "./import-jobs-repository";
 import { ensureKnowledgeDatabase } from "./db";
 import { getKnowledgeWorkspace, getKnowledgeWorkspaceIndexer } from "./runtime";
 import { buildSummary, normalizeWhitespace } from "./search-utils";
+import { clearKnowledgeIndexState } from "./workspace-indexing";
 import {
   nowIso,
   SOURCE_COLUMNS,
@@ -11,6 +12,7 @@ import {
   toSource,
   type SourceRow,
 } from "./repository-shared";
+import { attachKnowledgeSourceIndexProgress } from "./workspace-index-checkpoints";
 import {
   requireKnowledgeCollection,
   touchCollection,
@@ -47,7 +49,11 @@ export async function listKnowledgeSources(
   }
 
   const rows = await query.orderBy("updated_at", "desc").execute();
-  return rows.map((row) => toSource(row));
+  return attachKnowledgeSourceIndexProgress(
+    userId,
+    rows.map((row) => toSource(row)),
+    collectionId,
+  );
 }
 
 export async function getKnowledgeCollectionSourcesData(
@@ -70,7 +76,15 @@ export async function getKnowledgeSourceById(
   sourceId: string,
 ): Promise<KnowledgeSource | undefined> {
   const row = await getSourceRow(userId, sourceId);
-  return row ? toSource(row) : undefined;
+
+  if (!row) {
+    return undefined;
+  }
+
+  const [source] = await attachKnowledgeSourceIndexProgress(userId, [
+    toSource(row),
+  ]);
+  return source;
 }
 
 export async function requireKnowledgeSource(
@@ -211,9 +225,12 @@ export async function deleteKnowledgeSource(
   ]);
 
   if (documentId) {
-    await workspaceIndexer
-      ?.deleteIndex({ path: documentId })
-      .catch(() => undefined);
+    await clearKnowledgeIndexState({
+      userId,
+      collectionId: source.collectionId,
+      path: documentId,
+      workspaceIndexer,
+    });
   }
 
   await db

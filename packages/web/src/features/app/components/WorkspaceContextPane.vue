@@ -5,14 +5,24 @@
     KnowledgeExportTask,
     KnowledgeSource,
   } from "@atlas-kb/schema";
-  import { FileCog, FolderPlus, Info, Search, Upload } from "lucide-vue-next";
+  import {
+    FileCog,
+    FolderPlus,
+    Info,
+    RotateCcw,
+    Search,
+    Upload,
+  } from "lucide-vue-next";
   import WorkspaceSettingsPane from "@/features/app/components/WorkspaceSettingsPane.vue";
   import {
     formatRelativeTime,
+    getSourceIndexProgressStatusLabel,
+    getSourceIndexProgressSummaryLines,
     getExportTaskStatusLabel,
     getExportTaskStatusTone,
     getSourceStatusLabel,
     getSourceStatusTone,
+    shouldShowSourceIndexProgress,
   } from "@/lib/knowledge-ui";
 
   defineProps<{
@@ -49,6 +59,7 @@
     openPanel: [panel: "library" | "exports" | "settings"];
     openTaskDetail: [taskId: string];
     reorderRoles: [roleIds: string[]];
+    retrySource: [source: KnowledgeSource];
     saveCollection: [payload: { description: string; name: string }];
     selectActiveRole: [roleId: string];
     updateRole: [
@@ -186,9 +197,36 @@
               </div>
 
               <div
+                v-if="shouldShowSourceIndexProgress(source)"
+                class="rounded-[6px] border border-[rgba(93,72,34,0.08)] bg-[rgba(255,250,240,0.65)] px-3 py-2"
+              >
+                <p class="text-[11px] font-medium text-[var(--text-strong)]">
+                  {{ getSourceIndexProgressStatusLabel(source.indexProgress) }}
+                </p>
+                <p
+                  v-for="line in getSourceIndexProgressSummaryLines(source.indexProgress)"
+                  :key="line"
+                  class="mt-1 text-[11px] leading-5 text-[var(--text-muted)]"
+                >
+                  {{ line }}
+                </p>
+              </div>
+
+              <div
                 class="flex items-center justify-end gap-1 border-t border-[rgba(93,72,34,0.08)] pt-3"
                 data-testid="source-card-actions"
               >
+                <button
+                  v-if="source.sourceType === 'file' && source.status === 'failed'"
+                  class="soft-button !rounded-[6px] !px-2.5 !py-2 text-xs"
+                  data-testid="source-retry-button"
+                  type="button"
+                  :disabled="sourceActionId === source.id"
+                  @click="$emit('retrySource', source)"
+                >
+                  <RotateCcw class="size-3.5" />
+                  重试
+                </button>
                 <button
                   class="soft-button !rounded-[6px] !px-2.5 !py-2 text-xs"
                   data-testid="source-export-button"
