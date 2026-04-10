@@ -64,6 +64,7 @@ test('development migrations are consolidated around feature boundaries', functi
         '2026_04_03_032230_create_kb_assistant_role_tables.php',
         '2026_04_03_032232_create_kb_conversation_tables.php',
         '2026_04_03_074812_create_kb_template_domain_tables.php',
+        '2026_04_10_061150_create_kb_workspace_index_runtime_tables.php',
     ];
 
     $obsoleteMigrationFiles = [
@@ -141,6 +142,52 @@ test('knowledge base tables are created with the expected contract', function ()
                 'FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE',
                 'FOREIGN KEY (source_id) REFERENCES kb_sources(id) ON DELETE CASCADE',
             ],
+        ],
+        'kb_workspace_index_checkpoints' => [
+            'columns' => [
+                'scope_key' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+                'path' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+                'owner_user_id' => ['data_type' => 'bigint', 'is_nullable' => 'NO'],
+                'collection_id' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+                'status' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+                'checkpoint_json' => ['data_type' => 'jsonb', 'is_nullable' => 'NO'],
+                'updated_at' => ['data_type' => 'timestamp with time zone', 'is_nullable' => 'NO'],
+            ],
+            'indexes' => [
+                'idx_kb_workspace_index_checkpoints_collection' => 'collection_id, updated_at DESC',
+                'idx_kb_workspace_index_checkpoints_owner' => 'owner_user_id, updated_at DESC',
+                'idx_kb_workspace_index_checkpoints_status' => 'status, updated_at DESC',
+                'kb_workspace_index_checkpoints_pkey' => 'UNIQUE',
+            ],
+            'foreign_keys' => [
+                'FOREIGN KEY (collection_id) REFERENCES kb_collections(id) ON DELETE CASCADE',
+                'FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE',
+            ],
+        ],
+        'kb_embedding_rate_limit_states' => [
+            'columns' => [
+                'user_key' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+                'next_start_at' => ['data_type' => 'timestamp with time zone', 'is_nullable' => 'NO'],
+                'updated_at' => ['data_type' => 'timestamp with time zone', 'is_nullable' => 'NO'],
+            ],
+            'indexes' => [
+                'kb_embedding_rate_limit_states_pkey' => 'UNIQUE',
+            ],
+            'foreign_keys' => [],
+        ],
+        'kb_embedding_rate_limit_leases' => [
+            'columns' => [
+                'id' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+                'user_key' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+                'started_at' => ['data_type' => 'timestamp with time zone', 'is_nullable' => 'NO'],
+                'expires_at' => ['data_type' => 'timestamp with time zone', 'is_nullable' => 'NO'],
+            ],
+            'indexes' => [
+                'idx_kb_embedding_rate_limit_leases_expires' => 'expires_at',
+                'idx_kb_embedding_rate_limit_leases_user' => 'user_key, expires_at',
+                'kb_embedding_rate_limit_leases_pkey' => 'UNIQUE',
+            ],
+            'foreign_keys' => [],
         ],
         'kb_assistant_roles' => [
             'columns' => [

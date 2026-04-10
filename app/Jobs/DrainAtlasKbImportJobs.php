@@ -10,18 +10,20 @@ class DrainAtlasKbImportJobs implements ShouldQueue
 {
     use Queueable;
 
-    public function __construct(
-        public int $maxIterations = 8,
-    ) {}
-
     public function handle(AtlasKbAgentClient $agentClient): void
     {
-        for ($iteration = 0; $iteration < $this->maxIterations; $iteration++) {
-            $result = $agentClient->processNextImportJob();
+        $result = $agentClient->processNextImportJob();
 
-            if (! ($result['processed'] ?? false)) {
-                return;
-            }
+        if (! ($result['processed'] ?? false)) {
+            return;
         }
+
+        if (($result['sourceStatus'] ?? null) === 'processing') {
+            return;
+        }
+
+        static::dispatch()
+            ->onConnection($this->connection)
+            ->onQueue($this->queue);
     }
 }
