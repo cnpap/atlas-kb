@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "bun run --watch src/server.ts",
     "start": "bun run src/server.ts",
-    "build": "rm -rf dist && bun build src/server.ts --outdir=dist --target=bun",
+    "build": "rm -rf dist && bun build src/server.ts --outdir=dist --target=bun --packages=external",
     "typecheck": "bun x tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
