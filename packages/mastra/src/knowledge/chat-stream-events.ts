@@ -1,8 +1,20 @@
-import type { ChatReplyStreamDataEvent } from "@atlas-kb/schema";
+import type {
+  ChatReplyStreamDataEvent,
+  ChatReplyStreamFocusSource,
+} from "@atlas-kb/schema";
 import type { ChunkType } from "@mastra/core/stream";
+import { normalizeWorkspaceDisplayPath } from "./workspace-paths";
 
 const TOOL_LABELS: Record<string, string> = {
+  mastra_workspace_list_files: "查看目录",
+  mastra_workspace_read_file: "读取文件",
+  mastra_workspace_search: "检索内容",
   search_knowledge: "知识检索",
+};
+
+type ToolPresentation = {
+  toolDetail?: string;
+  toolPath?: string;
 };
 
 function toReadableToolLabel(toolName: string): string {
@@ -36,6 +48,70 @@ function readNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function readToolArgs(payload: Record<string, unknown>) {
+  const directArgs = readRecord(payload.args);
+
+  if (directArgs) {
+    return directArgs;
+  }
+
+  const serializedArgs = readNonEmptyString(payload.args);
+
+  if (!serializedArgs) {
+    return null;
+  }
+
+  try {
+    return readRecord(JSON.parse(serializedArgs));
+  } catch {
+    return null;
+  }
+}
+
+function readToolPresentation(params: {
+  payload: Record<string, unknown>;
+  toolName: string;
+}): ToolPresentation {
+  const args = readToolArgs(params.payload);
+
+  if (!args) {
+    return {};
+  }
+
+  const path = readNonEmptyString(args.path);
+
+  if (
+    path &&
+    (params.toolName === "mastra_workspace_read_file" ||
+      params.toolName === "mastra_workspace_list_files")
+  ) {
+    return {
+      toolDetail: normalizeWorkspaceDisplayPath(path),
+      toolPath: normalizeWorkspaceDisplayPath(path),
+    };
+  }
+
+  const query = readNonEmptyString(args.query);
+
+  if (
+    query &&
+    (params.toolName === "mastra_workspace_search" ||
+      params.toolName === "search_knowledge")
+  ) {
+    return {
+      toolDetail: query,
+    };
+  }
+
+  return {};
+}
+
 function readChunkPayload(chunk: ChunkType): Record<string, unknown> {
   const payload = (chunk as { payload?: unknown }).payload;
 
@@ -44,7 +120,9 @@ function readChunkPayload(chunk: ChunkType): Record<string, unknown> {
     : {};
 }
 
-export function createChatReplyStreamEventMapper() {
+export function createChatReplyStreamEventMapper(params?: {
+  focusSource?: ChatReplyStreamFocusSource;
+}) {
   let currentStepIndex = -1;
   let emittedFailure = false;
   let emittedFinish = false;
@@ -52,6 +130,7 @@ export function createChatReplyStreamEventMapper() {
   let hasThinkingInCurrentStep = false;
   let lastRunId = "";
   const toolStatuses = new Map<string, "running" | "completed" | "failed">();
+  const toolPresentations = new Map<string, ToolPresentation>();
 
   function getRunId(fallbackRunId?: string) {
     return lastRunId || fallbackRunId || "chat-reply";
@@ -66,28 +145,74 @@ export function createChatReplyStreamEventMapper() {
   }
 
   function buildToolBaseEvent(params: {
+    toolDetail?: string;
     runId: string;
     toolCallId: string;
     toolName: string;
+    toolPath?: string;
   }) {
     return {
       runId: params.runId,
       stepIndex: getActiveStepIndex(),
       toolCallId: params.toolCallId,
+      toolDetail: params.toolDetail,
       toolLabel: toReadableToolLabel(params.toolName),
       toolName: params.toolName,
+      toolPath: params.toolPath,
     };
   }
 
+  function rememberToolPresentation(
+    toolCallId: string,
+    presentation: ToolPresentation,
+  ): ToolPresentation {
+    const currentPresentation = toolPresentations.get(toolCallId) ?? {};
+    const nextPresentation = {
+      toolDetail: presentation.toolDetail ?? currentPresentation.toolDetail,
+      toolPath: presentation.toolPath ?? currentPresentation.toolPath,
+    };
+
+    toolPresentations.set(toolCallId, nextPresentation);
+    return nextPresentation;
+  }
+
   function mapToolStartedEvent(params: {
+    toolDetail?: string;
     runId: string;
     toolCallId: string;
     toolName: string;
+    toolPath?: string;
   }): ChatReplyStreamDataEvent[] {
     const currentStatus = toolStatuses.get(params.toolCallId);
+    const previousPresentation = toolPresentations.get(params.toolCallId);
+    const presentation = rememberToolPresentation(params.toolCallId, {
+      toolDetail: params.toolDetail,
+      toolPath: params.toolPath,
+    });
 
-    if (currentStatus) {
+    if (currentStatus === "completed" || currentStatus === "failed") {
       return [];
+    }
+
+    const baseEvent = buildToolBaseEvent({
+      ...params,
+      ...presentation,
+    });
+
+    if (currentStatus === "running") {
+      if (
+        previousPresentation?.toolDetail === presentation.toolDetail &&
+        previousPresentation?.toolPath === presentation.toolPath
+      ) {
+        return [];
+      }
+
+      return [
+        {
+          type: "reply-progress-tool-started",
+          ...baseEvent,
+        },
+      ];
     }
 
     toolStatuses.set(params.toolCallId, "running");
@@ -95,7 +220,7 @@ export function createChatReplyStreamEventMapper() {
     return [
       {
         type: "reply-progress-tool-started",
-        ...buildToolBaseEvent(params),
+        ...baseEvent,
       },
     ];
   }
@@ -103,9 +228,11 @@ export function createChatReplyStreamEventMapper() {
   function mapToolFinishedEvent(params: {
     fallbackMessage?: string;
     isError?: boolean;
+    toolDetail?: string;
     runId: string;
     toolCallId: string;
     toolName: string;
+    toolPath?: string;
   }): ChatReplyStreamDataEvent[] {
     const currentStatus = toolStatuses.get(params.toolCallId);
 
@@ -113,7 +240,14 @@ export function createChatReplyStreamEventMapper() {
       return [];
     }
 
-    const baseEvent = buildToolBaseEvent(params);
+    const presentation = rememberToolPresentation(params.toolCallId, {
+      toolDetail: params.toolDetail,
+      toolPath: params.toolPath,
+    });
+    const baseEvent = buildToolBaseEvent({
+      ...params,
+      ...presentation,
+    });
 
     if (params.isError) {
       toolStatuses.set(params.toolCallId, "failed");
@@ -181,6 +315,7 @@ export function createChatReplyStreamEventMapper() {
           return [
             {
               type: "reply-progress-started",
+              focusSource: params?.focusSource,
               runId: getRunId(runId),
             },
           ];
@@ -217,10 +352,17 @@ export function createChatReplyStreamEventMapper() {
             return [];
           }
 
+          const presentation = readToolPresentation({
+            payload,
+            toolName,
+          });
+
           return mapToolStartedEvent({
             runId: getRunId(runId),
             toolCallId,
+            toolDetail: presentation.toolDetail,
             toolName,
+            toolPath: presentation.toolPath,
           });
         }
         case "tool-call-input-streaming-start": {
@@ -232,10 +374,17 @@ export function createChatReplyStreamEventMapper() {
             return [];
           }
 
+          const presentation = readToolPresentation({
+            payload,
+            toolName,
+          });
+
           return mapToolStartedEvent({
             runId: getRunId(runId),
             toolCallId,
+            toolDetail: presentation.toolDetail,
             toolName,
+            toolPath: presentation.toolPath,
           });
         }
         case "tool-result": {
@@ -247,11 +396,18 @@ export function createChatReplyStreamEventMapper() {
             return [];
           }
 
+          const presentation = readToolPresentation({
+            payload,
+            toolName,
+          });
+
           return mapToolFinishedEvent({
             isError: payload.isError === true,
             runId: getRunId(runId),
             toolCallId,
+            toolDetail: presentation.toolDetail,
             toolName,
+            toolPath: presentation.toolPath,
           });
         }
         case "tool-error": {
@@ -263,12 +419,19 @@ export function createChatReplyStreamEventMapper() {
             return [];
           }
 
+          const presentation = readToolPresentation({
+            payload,
+            toolName,
+          });
+
           return mapToolFinishedEvent({
             fallbackMessage: readErrorMessage(payload.error, "工具执行失败"),
             isError: true,
             runId: getRunId(runId),
             toolCallId,
+            toolDetail: presentation.toolDetail,
             toolName,
+            toolPath: presentation.toolPath,
           });
         }
         case "step-finish":

@@ -30,6 +30,11 @@ type KnowledgeExecutionParams = {
   limit?: number;
   question: string;
   collectionId: string;
+  focusSource?: {
+    path: string;
+    sourceId: string;
+    title: string;
+  };
   userId: string;
   threadId?: string;
   resourceId?: string;
@@ -157,6 +162,11 @@ function logFallbackAnswer(params: {
 async function buildKnowledgeExecutionContext(params: {
   assistantRole?: AssistantRolePromptConfig;
   collectionId: string;
+  focusSource?: {
+    path: string;
+    sourceId: string;
+    title: string;
+  };
   resourceId?: string;
   threadId?: string;
   userId: string;
@@ -177,6 +187,7 @@ async function buildKnowledgeExecutionContext(params: {
   const agent = createKnowledgeAgent({
     assistantRole,
     collectionId: params.collectionId,
+    focusSource: params.focusSource,
     workspace,
   });
 

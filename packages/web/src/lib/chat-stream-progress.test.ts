@@ -10,6 +10,11 @@ describe("chat stream progress", () => {
     const events: ChatReplyStreamDataEvent[] = [
       {
         type: "reply-progress-started",
+        focusSource: {
+          path: "/约稿函.docx",
+          sourceId: "source-1",
+          title: "约稿函",
+        },
         runId: "run-1",
       },
       {
@@ -29,6 +34,7 @@ describe("chat stream progress", () => {
         runId: "run-1",
         stepIndex: 0,
         toolCallId: "tool-1",
+        toolDetail: "/约稿函.docx",
         toolLabel: "知识检索",
         toolName: "search_knowledge",
       },
@@ -37,6 +43,7 @@ describe("chat stream progress", () => {
         runId: "run-1",
         stepIndex: 0,
         toolCallId: "tool-1",
+        toolDetail: "/约稿函.docx",
         toolLabel: "知识检索",
         toolName: "search_knowledge",
       },
@@ -50,6 +57,7 @@ describe("chat stream progress", () => {
 
     expect(state).not.toBeNull();
     expect(state?.status).toBe("completed");
+    expect(state?.focusSource?.path).toBe("/约稿函.docx");
     expect(state?.items).toHaveLength(2);
     expect(state?.items[0]).toMatchObject({
       kind: "thinking",
@@ -57,7 +65,7 @@ describe("chat stream progress", () => {
     });
     expect(state?.items[1]).toMatchObject({
       kind: "tool",
-      label: "知识检索",
+      label: "知识检索 · /约稿函.docx",
       status: "completed",
     });
   });

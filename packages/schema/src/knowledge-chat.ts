@@ -72,6 +72,7 @@ export const ChatSessionUpdateRequestSchema = z.object({
 export const ChatReplyRequestSchema = z.object({
   query: z.string().trim().min(1),
   limit: z.number().int().min(1).max(8).optional(),
+  sourceId: z.string().trim().min(1).optional(),
 });
 
 export const ChatReplyFinalSchema = z.object({
@@ -84,6 +85,7 @@ export const ChatReplyStreamRequestSchema = z.object({
   sessionId: z.string().trim().min(1),
   query: z.string().trim().min(1),
   limit: z.number().int().min(1).max(8).optional(),
+  sourceId: z.string().trim().min(1).optional(),
 });
 
 export const ChatReplyStreamBodySchema = ChatReplyStreamRequestSchema.omit({
@@ -95,6 +97,12 @@ const ChatReplyStreamAcceptedEventSchema = z.object({
   userMessage: ChatMessageSchema,
 });
 
+export const ChatReplyStreamFocusSourceSchema = z.object({
+  sourceId: z.string().trim().min(1),
+  title: z.string().trim().min(1),
+  path: z.string().trim().min(1),
+});
+
 const ChatReplyStreamProgressBaseSchema = z.object({
   runId: z.string().trim().min(1),
   stepIndex: z.number().int().min(0).optional(),
@@ -103,6 +111,7 @@ const ChatReplyStreamProgressBaseSchema = z.object({
 const ChatReplyStreamProgressStartedEventSchema =
   ChatReplyStreamProgressBaseSchema.extend({
     type: z.literal("reply-progress-started"),
+    focusSource: ChatReplyStreamFocusSourceSchema.optional(),
   });
 
 const ChatReplyStreamProgressThinkingEventSchema =
@@ -116,6 +125,8 @@ const ChatReplyStreamProgressToolBaseSchema =
     toolCallId: z.string().trim().min(1),
     toolLabel: z.string().trim().min(1),
     toolName: z.string().trim().min(1),
+    toolDetail: z.string().trim().min(1).optional(),
+    toolPath: z.string().trim().min(1).optional(),
   });
 
 const ChatReplyStreamProgressToolStartedEventSchema =
@@ -224,6 +235,9 @@ export type ChatReplyStreamRequest = z.infer<
   typeof ChatReplyStreamRequestSchema
 >;
 export type ChatReplyStreamBody = z.infer<typeof ChatReplyStreamBodySchema>;
+export type ChatReplyStreamFocusSource = z.infer<
+  typeof ChatReplyStreamFocusSourceSchema
+>;
 export type ChatReplyStreamDataEvent = z.infer<
   typeof ChatReplyStreamDataEventSchema
 >;

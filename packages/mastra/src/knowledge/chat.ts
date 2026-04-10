@@ -1,8 +1,9 @@
-import { ApiHttpError } from "@atlas-kb/errors";
+import { ApiHttpError, BadRequestError } from "@atlas-kb/errors";
 import type {
   ChatReplyFinal,
   ChatReplyRequest,
   ChatReplyStreamDataEvent,
+  ChatReplyStreamFocusSource,
   ChatReplyStreamRequest,
 } from "@atlas-kb/schema";
 import {
@@ -33,6 +34,8 @@ import {
 } from "./chat-repository";
 import { createChatReplyStreamEventMapper } from "./chat-stream-events";
 import type { AssistantRolePromptConfig } from "./repository-shared";
+import { requireKnowledgeSource } from "./sources-repository";
+import { resolveKnowledgeSourceWorkspacePath } from "./workspace-paths";
 
 export {
   createChatSession,
@@ -91,11 +94,21 @@ async function prepareChatReplyExecution(params: {
   sessionId: string;
   query: string;
   limit?: number;
+  sourceId?: string;
 }) {
   const [session, assistantRole] = await Promise.all([
     requireChatSession(params.userId, params.sessionId),
     getActiveAssistantRolePromptConfig(params.userId),
   ]);
+  const source = params.sourceId
+    ? await requireKnowledgeSource(params.userId, params.sourceId)
+    : null;
+
+  if (source && source.collectionId !== session.collectionId) {
+    throw new BadRequestError("当前资料不属于本次会话所在的资料文件夹。");
+  }
+
+  const focusSource = source ? buildChatFocusSource(source) : undefined;
   const userMessage = await appendChatMessage({
     userId: params.userId,
     sessionId: session.id,
@@ -107,15 +120,36 @@ async function prepareChatReplyExecution(params: {
   return {
     session,
     assistantRole,
+    focusSource,
     userMessage,
     agentParams: {
       question: params.query,
       collectionId: session.collectionId,
+      focusSource,
       limit: params.limit,
       userId: params.userId,
       threadId: session.id,
       assistantRole,
     },
+  };
+}
+
+function buildChatFocusSource(params: {
+  id: string;
+  title: string;
+  documentId?: string;
+  sourceFilename?: string;
+}): ChatReplyStreamFocusSource {
+  const path = resolveKnowledgeSourceWorkspacePath(params);
+
+  if (!path) {
+    throw new BadRequestError("当前资料缺少可读取的工作区文件路径。");
+  }
+
+  return {
+    path,
+    sourceId: params.id,
+    title: params.title.trim() || path.replace(/^\//, ""),
   };
 }
 
@@ -157,6 +191,7 @@ export async function createChatReply(params: {
     sessionId: params.sessionId,
     query: parsedInput.query,
     limit: parsedInput.limit,
+    sourceId: parsedInput.sourceId,
   });
   const answer = await runKnowledgeAgentQuestion(execution.agentParams);
 
@@ -181,11 +216,14 @@ export async function streamChatReply(params: {
     sessionId: parsedInput.sessionId,
     query: parsedInput.query,
     limit: parsedInput.limit,
+    sourceId: parsedInput.sourceId,
   });
   const { session, userMessage } = execution;
   const responseMessageId = crypto.randomUUID();
   const textPartId = `text:${responseMessageId}`;
-  const progressEventMapper = createChatReplyStreamEventMapper();
+  const progressEventMapper = createChatReplyStreamEventMapper({
+    focusSource: execution.focusSource,
+  });
 
   return createUIMessageStreamResponse({
     stream: createUIMessageStream<ChatReplyStreamUIMessage>({

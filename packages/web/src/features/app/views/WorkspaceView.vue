@@ -916,6 +916,7 @@
         body: {
           query: trimmed,
           limit: 6,
+          sourceId: selectedSource.value?.id,
         },
         onUpdate: ({ content, events, progress }) => {
           updateAssistantDraftFromStream(tempAssistantId, content);

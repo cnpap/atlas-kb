@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { success } from "./api";
 import {
+  ChatReplyRequestSchema,
   ChatReplyResponseSchema,
   ChatReplyStreamDataEventSchema,
   KnowledgeCollectionsResponseSchema,
@@ -168,11 +169,34 @@ describe("@atlas-kb/schema knowledge contracts", () => {
       runId: "run-1",
       stepIndex: 0,
       toolCallId: "tool-call-1",
+      toolDetail: "/source/约稿函.docx",
       toolLabel: "知识检索",
       toolName: "search_knowledge",
+      toolPath: "/source/约稿函.docx",
     });
 
     expect(event.type).toBe("reply-progress-tool-started");
     expect(event.toolLabel).toBe("知识检索");
+    expect(event.toolPath).toBe("/source/约稿函.docx");
+  });
+
+  it("parses source-focused chat requests and start events", () => {
+    const request = ChatReplyRequestSchema.parse({
+      query: "请提炼这份材料的核心要点",
+      sourceId: "source-1",
+    });
+    const event = ChatReplyStreamDataEventSchema.parse({
+      type: "reply-progress-started",
+      runId: "run-1",
+      focusSource: {
+        sourceId: "source-1",
+        title: "约稿函",
+        path: "/约稿函.docx",
+      },
+    });
+
+    expect(request.sourceId).toBe("source-1");
+    expect(event.type).toBe("reply-progress-started");
+    expect(event.focusSource?.path).toBe("/约稿函.docx");
   });
 });

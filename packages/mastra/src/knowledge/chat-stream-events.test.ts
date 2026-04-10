@@ -12,7 +12,13 @@ function createChunk(chunk: Record<string, unknown>): ChunkType {
 
 describe("chat stream event mapper", () => {
   it("maps progress events from Mastra chunks", () => {
-    const mapper = createChatReplyStreamEventMapper();
+    const mapper = createChatReplyStreamEventMapper({
+      focusSource: {
+        sourceId: "source-1",
+        title: "约稿函",
+        path: "/约稿函.docx",
+      },
+    });
 
     const events = [
       ...mapper.mapChunk(
@@ -51,6 +57,9 @@ describe("chat stream event mapper", () => {
         createChunk({
           type: "tool-call",
           payload: {
+            args: {
+              query: "知识库内容",
+            },
             toolCallId: "tool-1",
             toolName: "search_knowledge",
           },
@@ -117,7 +126,16 @@ describe("chat stream event mapper", () => {
       "reply-progress-step-finished",
       "reply-progress-finished",
     ]);
+    expect(events[0]).toMatchObject({
+      focusSource: {
+        path: "/约稿函.docx",
+        sourceId: "source-1",
+        title: "约稿函",
+      },
+      type: "reply-progress-started",
+    });
     expect(events[2]).toMatchObject({
+      toolDetail: "知识库内容",
       toolLabel: "知识检索",
       type: "reply-progress-tool-started",
     });
@@ -130,9 +148,12 @@ describe("chat stream event mapper", () => {
       createChunk({
         type: "tool-error",
         payload: {
+          args: {
+            path: "nested/policy.txt",
+          },
           error: new Error("调用失败"),
           toolCallId: "tool-2",
-          toolName: "list_workspace_files",
+          toolName: "mastra_workspace_read_file",
         },
       }),
     );
@@ -140,8 +161,46 @@ describe("chat stream event mapper", () => {
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       message: "调用失败",
-      toolLabel: "list workspace files",
+      toolDetail: "/nested/policy.txt",
+      toolLabel: "读取文件",
+      toolPath: "/nested/policy.txt",
       type: "reply-progress-tool-failed",
+    });
+  });
+
+  it("updates running tool details when args arrive after streaming start", () => {
+    const mapper = createChatReplyStreamEventMapper();
+
+    const events = [
+      ...mapper.mapChunk(
+        createChunk({
+          type: "tool-call-input-streaming-start",
+          payload: {
+            toolCallId: "tool-3",
+            toolName: "mastra_workspace_read_file",
+          },
+        }),
+      ),
+      ...mapper.mapChunk(
+        createChunk({
+          type: "tool-call",
+          payload: {
+            args: {
+              path: "focus/report.md",
+            },
+            toolCallId: "tool-3",
+            toolName: "mastra_workspace_read_file",
+          },
+        }),
+      ),
+    ];
+
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({
+      toolDetail: "/focus/report.md",
+      toolLabel: "读取文件",
+      toolPath: "/focus/report.md",
+      type: "reply-progress-tool-started",
     });
   });
 

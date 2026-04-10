@@ -1,6 +1,14 @@
 import type { ChatReplyStreamDataEvent } from "@atlas-kb/schema";
 
 export type ChatReplyProgressItemStatus = "running" | "completed" | "failed";
+export type ChatReplyProgressFocusSource = NonNullable<
+  Extract<
+    ChatReplyStreamDataEvent,
+    {
+      type: "reply-progress-started";
+    }
+  >["focusSource"]
+>;
 
 export type ChatReplyProgressItem = {
   id: string;
@@ -10,6 +18,7 @@ export type ChatReplyProgressItem = {
 };
 
 export type ChatReplyProgressState = {
+  focusSource?: ChatReplyProgressFocusSource;
   items: ChatReplyProgressItem[];
   runId: string;
   status: "running" | "completed" | "failed";
@@ -28,6 +37,19 @@ function ensureState(
       summaryLabel: "正在准备回答",
     }
   );
+}
+
+function buildToolProgressLabel(
+  event: Extract<
+    ChatReplyStreamDataEvent,
+    | { type: "reply-progress-tool-started" }
+    | { type: "reply-progress-tool-succeeded" }
+    | { type: "reply-progress-tool-failed" }
+  >,
+) {
+  return event.toolDetail
+    ? `${event.toolLabel} · ${event.toolDetail}`
+    : event.toolLabel;
 }
 
 function upsertItem(
@@ -78,6 +100,7 @@ export function applyChatReplyProgressEvent(
   switch (event.type) {
     case "reply-progress-started":
       return {
+        focusSource: event.focusSource,
         items: [],
         runId: event.runId,
         status: "running",
@@ -103,15 +126,16 @@ export function applyChatReplyProgressEvent(
     }
     case "reply-progress-tool-started": {
       const nextState = ensureState(current, event.runId);
+      const toolLabel = buildToolProgressLabel(event);
 
       markThinkingCompleted(nextState.items);
-      nextState.summaryLabel = `正在执行：${event.toolLabel}`;
+      nextState.summaryLabel = `正在执行：${toolLabel}`;
       nextState.status = "running";
 
       upsertItem(nextState.items, {
         id: `tool:${event.toolCallId}`,
         kind: "tool",
-        label: event.toolLabel,
+        label: toolLabel,
         status: "running",
       });
 
@@ -122,11 +146,12 @@ export function applyChatReplyProgressEvent(
     }
     case "reply-progress-tool-succeeded": {
       const nextState = ensureState(current, event.runId);
+      const toolLabel = buildToolProgressLabel(event);
 
       upsertItem(nextState.items, {
         id: `tool:${event.toolCallId}`,
         kind: "tool",
-        label: event.toolLabel,
+        label: toolLabel,
         status: "completed",
       });
       nextState.summaryLabel = "正在整理回答";
@@ -139,11 +164,12 @@ export function applyChatReplyProgressEvent(
     }
     case "reply-progress-tool-failed": {
       const nextState = ensureState(current, event.runId);
+      const toolLabel = buildToolProgressLabel(event);
 
       upsertItem(nextState.items, {
         id: `tool:${event.toolCallId}`,
         kind: "tool",
-        label: `${event.toolLabel}失败`,
+        label: toolLabel,
         status: "failed",
       });
       nextState.summaryLabel = event.message;

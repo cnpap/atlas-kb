@@ -1,8 +1,8 @@
 import { Agent } from "@mastra/core/agent";
 import type { Workspace, WorkspaceFilesystem } from "@mastra/core/workspace";
+import type { AssistantRolePromptConfig } from "../knowledge/repository-shared";
 import { knowledgeMemory } from "../memory";
 import { createRuntimeModel } from "../models/runtime-model";
-import type { AssistantRolePromptConfig } from "../knowledge/repository-shared";
 
 const KNOWLEDGE_AGENT_ID = "knowledge-assistant";
 const KNOWLEDGE_AGENT_BASE_PROMPT = `
@@ -18,6 +18,7 @@ const KNOWLEDGE_AGENT_BASE_PROMPT = `
 - 当用户询问某份资料里的内容、某个主题的结论、或“当前资料里怎么说”时，应先检索或查看当前工作区中的证据，再基于证据回答。
 - 如果你还没有查看工具结果，不要直接下结论说“没有证据”或“不知道”。
 - 只有在你已经检查过工具结果且仍然没有足够证据时，才可以明确说明不知道或证据不足。
+- 不要为了保险无目的连续读取多份文件；拿到足够证据后就停止继续读取其他文件。
 - 回答文件列表时，优先给出当前工作区中真实存在的文件名。
 - 只能使用当前资料文件夹中的内容，不能引用其他文件夹或其他用户的数据。
 - 回答要简洁、直接，并且以你通过工具实际查到的结果为依据。
@@ -32,20 +33,45 @@ const KNOWLEDGE_AGENT_BASE_PROMPT = `
 - 如果工具结果里没有相关内容，再说明当前资料里没有足够证据，不要编造。
 `.trim();
 
-function buildInstructions(assistantRole: AssistantRolePromptConfig): string {
+function buildFocusSourceInstructions(params: { path: string; title: string }) {
+  return [
+    "当前优先文件：",
+    `- 标题：${params.title}`,
+    `- 路径：${params.path}`,
+    "",
+    "优先处理规则：",
+    "- 如果用户当前是在围绕这份文件提问、提炼、总结、改写或审校，先直接读取这份文件，再回答。",
+    "- 不要先查看文件列表，也不要为了保险连续读取多份文件。",
+    "- 只有在这份文件证据不足、需要交叉核对，或用户明确要求查看整个资料文件夹、其他文件、文件列表或跨文件比较时，才扩展到其他资料。",
+    "- 如果确实补充查阅了其他资料，在最终回答里用一句话简短说明。",
+  ].join("\n");
+}
+
+function buildInstructions(params: {
+  assistantRole: AssistantRolePromptConfig;
+  focusSource?: {
+    path: string;
+    sourceId: string;
+    title: string;
+  };
+}): string {
   const sections = [KNOWLEDGE_AGENT_BASE_PROMPT];
 
-  sections.push(`当前角色：${assistantRole.name}`);
+  if (params.focusSource) {
+    sections.push(buildFocusSourceInstructions(params.focusSource));
+  }
 
-  if (assistantRole.systemPrompt.trim()) {
+  sections.push(`当前角色：${params.assistantRole.name}`);
+
+  if (params.assistantRole.systemPrompt.trim()) {
     sections.push(
-      ["角色补充要求：", assistantRole.systemPrompt.trim()].join("\n"),
+      ["角色补充要求：", params.assistantRole.systemPrompt.trim()].join("\n"),
     );
   }
 
-  if (assistantRole.stylePrompt.trim()) {
+  if (params.assistantRole.stylePrompt.trim()) {
     sections.push(
-      ["表达风格要求：", assistantRole.stylePrompt.trim()].join("\n"),
+      ["表达风格要求：", params.assistantRole.stylePrompt.trim()].join("\n"),
     );
   }
 
@@ -62,6 +88,11 @@ function buildInstructions(assistantRole: AssistantRolePromptConfig): string {
 export function createKnowledgeAgent(params: {
   assistantRole: AssistantRolePromptConfig;
   collectionId: string;
+  focusSource?: {
+    path: string;
+    sourceId: string;
+    title: string;
+  };
   workspace: Workspace<WorkspaceFilesystem>;
 }) {
   // 这里只做最薄的一层智能体绑定：把当前资料库的 workspace、运行时模型
@@ -70,7 +101,10 @@ export function createKnowledgeAgent(params: {
     id: KNOWLEDGE_AGENT_ID,
     name: "Knowledge Assistant",
     description: "Answers questions using the bound workspace.",
-    instructions: buildInstructions(params.assistantRole),
+    instructions: buildInstructions({
+      assistantRole: params.assistantRole,
+      focusSource: params.focusSource,
+    }),
     model: createRuntimeModel(),
     memory: knowledgeMemory,
     workspace: params.workspace,
