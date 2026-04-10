@@ -1,4 +1,5 @@
 import type { ChatMessage } from "@atlas-kb/schema";
+import type { ChatReplyProgressState } from "@/lib/chat-stream-progress";
 
 export type WorkspaceChatTurnStatus =
   | "pending"
@@ -11,6 +12,7 @@ export type WorkspaceChatTurn = {
   createdAt: string;
   id: string;
   isSelected: boolean;
+  progress: ChatReplyProgressState | null;
   status: WorkspaceChatTurnStatus;
   userMessage: ChatMessage | null;
 };
@@ -32,13 +34,22 @@ function createTurn(
     assistantMessage: seed.assistantMessage ?? null,
     createdAt: seed.createdAt,
     id: `turn-${turnIndex}`,
+    progress: null,
     userMessage: seed.userMessage ?? null,
   };
 }
 
 export function getWorkspaceChatTurnStatus(
-  turn: Pick<WorkspaceChatTurn, "assistantMessage">,
+  turn: Pick<WorkspaceChatTurn, "assistantMessage" | "progress">,
 ): WorkspaceChatTurnStatus {
+  if (turn.progress?.status === "failed") {
+    return "failed";
+  }
+
+  if (turn.progress?.status === "running") {
+    return "streaming";
+  }
+
   const assistantMessage = turn.assistantMessage;
 
   if (!assistantMessage) {
@@ -55,6 +66,7 @@ export function getWorkspaceChatTurnStatus(
 export function buildWorkspaceChatTurns(
   messages: ChatMessage[],
   options: {
+    progressByMessageId?: Record<string, ChatReplyProgressState>;
     selectedAssistantMessageId?: string;
   } = {},
 ): WorkspaceChatTurn[] {
@@ -85,6 +97,7 @@ export function buildWorkspaceChatTurns(
     }
 
     targetTurn.assistantMessage = message;
+    targetTurn.progress = options.progressByMessageId?.[message.id] ?? null;
     pendingTurn = null;
   }
 
@@ -93,6 +106,11 @@ export function buildWorkspaceChatTurns(
     isSelected:
       Boolean(options.selectedAssistantMessageId) &&
       turn.assistantMessage?.id === options.selectedAssistantMessageId,
+    progress:
+      turn.assistantMessage &&
+      options.progressByMessageId?.[turn.assistantMessage.id]
+        ? options.progressByMessageId[turn.assistantMessage.id]!
+        : turn.progress,
     status: getWorkspaceChatTurnStatus(turn),
   }));
 }

@@ -95,6 +95,62 @@ const ChatReplyStreamAcceptedEventSchema = z.object({
   userMessage: ChatMessageSchema,
 });
 
+const ChatReplyStreamProgressBaseSchema = z.object({
+  runId: z.string().trim().min(1),
+  stepIndex: z.number().int().min(0).optional(),
+});
+
+const ChatReplyStreamProgressStartedEventSchema =
+  ChatReplyStreamProgressBaseSchema.extend({
+    type: z.literal("reply-progress-started"),
+  });
+
+const ChatReplyStreamProgressThinkingEventSchema =
+  ChatReplyStreamProgressBaseSchema.extend({
+    type: z.literal("reply-progress-thinking"),
+    label: z.string().trim().min(1),
+  });
+
+const ChatReplyStreamProgressToolBaseSchema =
+  ChatReplyStreamProgressBaseSchema.extend({
+    toolCallId: z.string().trim().min(1),
+    toolLabel: z.string().trim().min(1),
+    toolName: z.string().trim().min(1),
+  });
+
+const ChatReplyStreamProgressToolStartedEventSchema =
+  ChatReplyStreamProgressToolBaseSchema.extend({
+    type: z.literal("reply-progress-tool-started"),
+  });
+
+const ChatReplyStreamProgressToolSucceededEventSchema =
+  ChatReplyStreamProgressToolBaseSchema.extend({
+    type: z.literal("reply-progress-tool-succeeded"),
+  });
+
+const ChatReplyStreamProgressToolFailedEventSchema =
+  ChatReplyStreamProgressToolBaseSchema.extend({
+    type: z.literal("reply-progress-tool-failed"),
+    message: z.string().trim().min(1),
+  });
+
+const ChatReplyStreamProgressStepFinishedEventSchema =
+  ChatReplyStreamProgressBaseSchema.extend({
+    type: z.literal("reply-progress-step-finished"),
+    stepIndex: z.number().int().min(0),
+  });
+
+const ChatReplyStreamProgressFinishedEventSchema =
+  ChatReplyStreamProgressBaseSchema.extend({
+    type: z.literal("reply-progress-finished"),
+  });
+
+const ChatReplyStreamProgressFailedEventSchema =
+  ChatReplyStreamProgressBaseSchema.extend({
+    type: z.literal("reply-progress-failed"),
+    message: z.string().trim().min(1),
+  });
+
 const ChatReplyStreamCompletedEventSchema = z.object({
   type: z.literal("reply-completed"),
   session: ChatSessionSchema,
@@ -109,6 +165,14 @@ const ChatReplyStreamErrorEventSchema = z.object({
 
 export const ChatReplyStreamDataEventSchema = z.discriminatedUnion("type", [
   ChatReplyStreamAcceptedEventSchema,
+  ChatReplyStreamProgressStartedEventSchema,
+  ChatReplyStreamProgressThinkingEventSchema,
+  ChatReplyStreamProgressToolStartedEventSchema,
+  ChatReplyStreamProgressToolSucceededEventSchema,
+  ChatReplyStreamProgressToolFailedEventSchema,
+  ChatReplyStreamProgressStepFinishedEventSchema,
+  ChatReplyStreamProgressFinishedEventSchema,
+  ChatReplyStreamProgressFailedEventSchema,
   ChatReplyStreamCompletedEventSchema,
   ChatReplyStreamErrorEventSchema,
 ]);

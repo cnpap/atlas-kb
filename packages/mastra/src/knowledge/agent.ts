@@ -1,5 +1,5 @@
-import type { ChunkType, FullOutput } from "@mastra/core/stream";
 import { ModelProviderUnavailableError } from "@atlas-kb/errors";
+import type { ChunkType, FullOutput } from "@mastra/core/stream";
 import { createKnowledgeAgent } from "../agents";
 import { buildKnowledgeMemoryResourceId } from "../memory";
 import {
@@ -251,7 +251,8 @@ function mapKnowledgeExecutionError(error: unknown) {
 async function streamKnowledgeExecutionOutput(
   context: KnowledgeExecutionContext,
   params: {
-    onTextDelta: (delta: string) => Promise<void> | void;
+    onChunk?: (chunk: ChunkType<undefined>) => Promise<void> | void;
+    onTextDelta?: (delta: string) => Promise<void> | void;
     question: string;
   },
 ): Promise<KnowledgeAgentOutput> {
@@ -265,8 +266,10 @@ async function streamKnowledgeExecutionOutput(
       for await (const chunk of stream.fullStream as AsyncIterable<
         ChunkType<undefined>
       >) {
+        await params.onChunk?.(chunk);
+
         if (chunk.type === "text-delta") {
-          await params.onTextDelta(chunk.payload.text);
+          await params.onTextDelta?.(chunk.payload.text);
         }
       }
 
@@ -278,20 +281,23 @@ async function streamKnowledgeExecutionOutput(
 
 async function executeKnowledgeQuestion(
   params: KnowledgeExecutionParams & {
+    onChunk?: (chunk: ChunkType<undefined>) => Promise<void> | void;
     onTextDelta?: (delta: string) => Promise<void> | void;
   },
 ): Promise<KnowledgeAnswerResult> {
   try {
     const context = await buildKnowledgeExecutionContext(params);
-    const output = params.onTextDelta
-      ? await streamKnowledgeExecutionOutput(context, {
-          onTextDelta: params.onTextDelta,
-          question: params.question,
-        })
-      : await withTimeout(
-          context.agent.generate(params.question, context.options),
-          AGENT_EXECUTION_TIMEOUT_MS,
-        );
+    const output =
+      params.onTextDelta || params.onChunk
+        ? await streamKnowledgeExecutionOutput(context, {
+            onChunk: params.onChunk,
+            onTextDelta: params.onTextDelta,
+            question: params.question,
+          })
+        : await withTimeout(
+            context.agent.generate(params.question, context.options),
+            AGENT_EXECUTION_TIMEOUT_MS,
+          );
 
     return buildKnowledgeAnswerResult({
       collectionId: params.collectionId,
@@ -321,6 +327,7 @@ export async function runKnowledgeAgentQuestion(
 
 export async function streamKnowledgeAgentQuestion(
   params: KnowledgeExecutionParams & {
+    onChunk?: (chunk: ChunkType<undefined>) => Promise<void> | void;
     onTextDelta?: (delta: string) => Promise<void> | void;
   },
 ): Promise<{

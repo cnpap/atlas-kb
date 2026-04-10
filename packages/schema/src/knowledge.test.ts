@@ -161,4 +161,18 @@ describe("@atlas-kb/schema knowledge contracts", () => {
 
     expect(event.type).toBe("reply-completed");
   });
+
+  it("parses stream progress events", () => {
+    const event = ChatReplyStreamDataEventSchema.parse({
+      type: "reply-progress-tool-started",
+      runId: "run-1",
+      stepIndex: 0,
+      toolCallId: "tool-call-1",
+      toolLabel: "知识检索",
+      toolName: "search_knowledge",
+    });
+
+    expect(event.type).toBe("reply-progress-tool-started");
+    expect(event.toolLabel).toBe("知识检索");
+  });
 });

@@ -1,9 +1,3 @@
-import {
-  createUIMessageStream,
-  createUIMessageStreamResponse,
-  type UIMessage,
-  type UIMessageStreamWriter,
-} from "ai";
 import { ApiHttpError } from "@atlas-kb/errors";
 import type {
   ChatReplyFinal,
@@ -16,6 +10,18 @@ import {
   ChatReplyStreamRequestSchema,
 } from "@atlas-kb/schema";
 import {
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  type UIMessage,
+  type UIMessageStreamWriter,
+} from "ai";
+import { getRuntimeModelLogContext } from "../models/runtime-model";
+import {
+  runKnowledgeAgentQuestion,
+  streamKnowledgeAgentQuestion,
+} from "./agent";
+import { getActiveAssistantRolePromptConfig } from "./assistant-roles-repository";
+import {
   appendChatMessage,
   createChatSession,
   deleteChatSession,
@@ -25,12 +31,7 @@ import {
   saveMessageFeedback,
   updateChatSession,
 } from "./chat-repository";
-import { getActiveAssistantRolePromptConfig } from "./assistant-roles-repository";
-import {
-  runKnowledgeAgentQuestion,
-  streamKnowledgeAgentQuestion,
-} from "./agent";
-import { getRuntimeModelLogContext } from "../models/runtime-model";
+import { createChatReplyStreamEventMapper } from "./chat-stream-events";
 import type { AssistantRolePromptConfig } from "./repository-shared";
 
 export {
@@ -42,55 +43,21 @@ export {
   updateChatSession,
 };
 
-type ReplyAcceptedEvent = Extract<
-  ChatReplyStreamDataEvent,
-  { type: "reply-accepted" }
->;
-type ReplyCompletedEvent = Extract<
-  ChatReplyStreamDataEvent,
-  { type: "reply-completed" }
->;
-type ReplyErrorEvent = Extract<
-  ChatReplyStreamDataEvent,
-  { type: "reply-error" }
->;
-
 type ChatReplyStreamUIMessage = UIMessage<
   never,
-  {
-    replyAccepted: ReplyAcceptedEvent;
-    replyCompleted: ReplyCompletedEvent;
-    replyError: ReplyErrorEvent;
-  }
+  { event: ChatReplyStreamDataEvent }
 >;
 
 function writeStreamEvent(
   writer: UIMessageStreamWriter<ChatReplyStreamUIMessage>,
   event: ChatReplyStreamDataEvent,
+  id: string,
 ) {
-  switch (event.type) {
-    case "reply-accepted":
-      writer.write({
-        type: "data-replyAccepted",
-        id: "reply-accepted",
-        data: event,
-      });
-      return;
-    case "reply-completed":
-      writer.write({
-        type: "data-replyCompleted",
-        id: "reply-completed",
-        data: event,
-      });
-      return;
-    case "reply-error":
-      writer.write({
-        type: "data-replyError",
-        id: "reply-error",
-        data: event,
-      });
-      return;
-  }
+  writer.write({
+    type: "data-event",
+    id,
+    data: event,
+  });
 }
 
 function readErrorText(error: unknown): string {
@@ -218,11 +185,20 @@ export async function streamChatReply(params: {
   const { session, userMessage } = execution;
   const responseMessageId = crypto.randomUUID();
   const textPartId = `text:${responseMessageId}`;
+  const progressEventMapper = createChatReplyStreamEventMapper();
 
   return createUIMessageStreamResponse({
     stream: createUIMessageStream<ChatReplyStreamUIMessage>({
       execute: async ({ writer }) => {
+        let eventIndex = 0;
         let textStarted = false;
+
+        const nextEventId = () =>
+          `event:${responseMessageId}:${String(eventIndex++)}`;
+
+        const writeReplyEvent = (event: ChatReplyStreamDataEvent) => {
+          writeStreamEvent(writer, event, nextEventId());
+        };
 
         const writeTextDelta = (delta: string) => {
           if (!delta) {
@@ -259,7 +235,7 @@ export async function streamChatReply(params: {
           });
         };
 
-        writeStreamEvent(writer, {
+        writeReplyEvent({
           type: "reply-accepted",
           userMessage,
         });
@@ -267,8 +243,14 @@ export async function streamChatReply(params: {
         try {
           const answer = await streamKnowledgeAgentQuestion({
             ...execution.agentParams,
-            onTextDelta: async (delta) => {
-              writeTextDelta(delta);
+            onChunk: async (chunk) => {
+              if (chunk.type === "text-delta") {
+                writeTextDelta(chunk.payload.text);
+              }
+
+              for (const event of progressEventMapper.mapChunk(chunk)) {
+                writeReplyEvent(event);
+              }
             },
           });
 
@@ -278,6 +260,13 @@ export async function streamChatReply(params: {
 
           finishText();
 
+          const finishedEvent =
+            progressEventMapper.ensureFinished(responseMessageId);
+
+          if (finishedEvent) {
+            writeReplyEvent(finishedEvent);
+          }
+
           const reply = await completeChatReply({
             assistantRole: execution.assistantRole,
             userId: params.userId,
@@ -286,7 +275,7 @@ export async function streamChatReply(params: {
             answer: answer.answer,
           });
 
-          writeStreamEvent(writer, {
+          writeReplyEvent({
             type: "reply-completed",
             ...reply,
           });
@@ -304,9 +293,19 @@ export async function streamChatReply(params: {
             });
           }
 
-          writeStreamEvent(writer, {
+          const failureMessage = getErrorMessage(error);
+          const failureEvent = progressEventMapper.ensureFailed(
+            failureMessage,
+            responseMessageId,
+          );
+
+          if (failureEvent) {
+            writeReplyEvent(failureEvent);
+          }
+
+          writeReplyEvent({
             type: "reply-error",
-            message: getErrorMessage(error),
+            message: failureMessage,
           });
           writer.write({
             type: "finish",

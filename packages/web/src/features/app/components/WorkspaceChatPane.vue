@@ -61,6 +61,11 @@
       turn.status,
       turn.assistantMessage?.id ?? "",
       turn.assistantMessage?.content.length ?? 0,
+      turn.progress?.status ?? "",
+      turn.progress?.summaryLabel ?? "",
+      turn.progress?.items
+        .map((item) => `${item.id}:${item.status}:${item.label}`)
+        .join("|") ?? "",
     ].join(":");
   });
 
@@ -129,6 +134,14 @@
     }
 
     return "回答在生成过程中中断。";
+  }
+
+  function shouldShowProgress(turn: WorkspaceChatTurn): boolean {
+    return Boolean(
+      turn.progress &&
+        turn.progress.status !== "completed" &&
+        (turn.status === "streaming" || turn.status === "failed"),
+    );
   }
 
   function clearCopiedStateTimer() {
@@ -373,6 +386,28 @@
               </div>
             </div>
 
+            <div v-if="shouldShowProgress(turn)" class="execution-progress">
+              <p class="execution-progress-summary">
+                {{ turn.progress?.summaryLabel || "正在生成回答..." }}
+              </p>
+              <ul
+                v-if="turn.progress?.items.length"
+                class="execution-progress-list"
+              >
+                <li
+                  v-for="item in turn.progress.items"
+                  :key="item.id"
+                  class="execution-progress-item"
+                >
+                  <span
+                    class="execution-progress-dot"
+                    :class="`is-${item.status}`"
+                  />
+                  <span class="execution-progress-label">{{ item.label }}</span>
+                </li>
+              </ul>
+            </div>
+
             <div
               v-if="turn.assistantMessage?.content.trim()"
               class="answer-markdown text-[13px] leading-relaxed text-[var(--text-strong)]"
@@ -549,6 +584,60 @@
     margin: 0.55rem 0 0;
     line-height: 1.7;
     color: var(--text-muted);
+  }
+
+  .execution-progress {
+    margin-top: 0.55rem;
+    padding-top: 0.55rem;
+    border-top: 1px solid rgba(93, 72, 34, 0.08);
+  }
+
+  .execution-progress-summary {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-muted);
+  }
+
+  .execution-progress-list {
+    display: grid;
+    gap: 0.34rem;
+    list-style: none;
+    margin: 0.42rem 0 0;
+    padding: 0;
+  }
+
+  .execution-progress-item {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-muted);
+  }
+
+  .execution-progress-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.45);
+    flex-shrink: 0;
+  }
+
+  .execution-progress-dot.is-running {
+    background: rgba(14, 116, 144, 0.9);
+    box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.12);
+  }
+
+  .execution-progress-dot.is-completed {
+    background: rgba(13, 148, 136, 0.85);
+  }
+
+  .execution-progress-dot.is-failed {
+    background: rgba(185, 28, 28, 0.85);
+  }
+
+  .execution-progress-label {
+    min-width: 0;
   }
 
   .answer-error {

@@ -1,22 +1,14 @@
-import {
-  isDataUIPart,
-  parseJsonEventStream,
-  readUIMessageStream,
-  uiMessageChunkSchema,
-  type UIMessage,
-} from "ai";
-import { ChatReplyStreamDataEventSchema } from "@atlas-kb/schema";
 import type {
   AssistantRole,
   AssistantRoleCreateRequest,
   AssistantRoleOrderRequest,
   AssistantRoleUpdateRequest,
-  ChatSession,
+  ChatMessage,
   ChatMessageFeedback,
   ChatMessageFeedbackRequest,
-  ChatMessage,
   ChatReplyStreamBody,
   ChatReplyStreamDataEvent,
+  ChatSession,
   ChatSessionCreateRequest,
   ChatSessionUpdateRequest,
   KnowledgeCollection,
@@ -35,11 +27,23 @@ import type {
   LoginResult,
   Session,
 } from "@atlas-kb/schema";
+import { ChatReplyStreamDataEventSchema } from "@atlas-kb/schema";
+import {
+  isDataUIPart,
+  parseJsonEventStream,
+  readUIMessageStream,
+  type UIMessage,
+  uiMessageChunkSchema,
+} from "ai";
 import {
   clearAuthToken,
   getAuthToken,
   notifyAuthExpired,
 } from "./auth-storage";
+import {
+  type ChatReplyProgressState,
+  reduceChatReplyProgressEvents,
+} from "./chat-stream-progress";
 import { getApiBaseUrl } from "./env";
 
 interface SuccessEnvelope<T> {
@@ -57,25 +61,10 @@ interface FailureEnvelope {
 
 type JsonPayload<T> = SuccessEnvelope<T> | FailureEnvelope;
 
-type ReplyAcceptedEvent = Extract<
-  ChatReplyStreamDataEvent,
-  { type: "reply-accepted" }
->;
-type ReplyCompletedEvent = Extract<
-  ChatReplyStreamDataEvent,
-  { type: "reply-completed" }
->;
-type ReplyErrorEvent = Extract<
-  ChatReplyStreamDataEvent,
-  { type: "reply-error" }
->;
-
 type ChatReplyStreamUIMessage = UIMessage<
   never,
   {
-    replyAccepted: ReplyAcceptedEvent;
-    replyCompleted: ReplyCompletedEvent;
-    replyError: ReplyErrorEvent;
+    event: ChatReplyStreamDataEvent;
   }
 >;
 
@@ -500,6 +489,7 @@ export async function streamChatReplyRequest(params: {
   onUpdate: (options: {
     content: string;
     events: ChatReplyStreamDataEvent[];
+    progress: ChatReplyProgressState | null;
   }) => void;
 }): Promise<void> {
   const response = await fetch(
@@ -546,13 +536,20 @@ export async function streamChatReplyRequest(params: {
     }),
   );
 
+  let processedEventCount = 0;
+
   for await (const message of readUIMessageStream<ChatReplyStreamUIMessage>({
     stream: parsedStream,
     terminateOnError: true,
   })) {
+    const nextEvents = getStreamDataEvents(message);
+    const events = nextEvents.slice(processedEventCount);
+    processedEventCount = nextEvents.length;
+
     params.onUpdate({
       content: getStreamMessageContent(message),
-      events: getStreamDataEvents(message),
+      events,
+      progress: reduceChatReplyProgressEvents(nextEvents),
     });
   }
 }

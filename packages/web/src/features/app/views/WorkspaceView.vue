@@ -10,6 +10,16 @@
   import { useToast } from "@nuxt/ui/composables";
   import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
   import { useRoute, useRouter } from "vue-router";
+  import CreateCollectionModal from "@/features/app/components/CreateCollectionModal.vue";
+  import ExportTaskDetailModal from "@/features/app/components/ExportTaskDetailModal.vue";
+  import ExportTemplateModal from "@/features/app/components/ExportTemplateModal.vue";
+  import ImportSourcesModal from "@/features/app/components/ImportSourcesModal.vue";
+  import SourceEditorModal from "@/features/app/components/SourceEditorModal.vue";
+  import WorkspaceChatPane from "@/features/app/components/WorkspaceChatPane.vue";
+  import WorkspaceContextPane from "@/features/app/components/WorkspaceContextPane.vue";
+  import WorkspaceSidebar from "@/features/app/components/WorkspaceSidebar.vue";
+  import { useWorkspaceExports } from "@/features/app/composables/useWorkspaceExports";
+  import { buildWorkspaceChatTurns } from "@/features/app/lib/workspace-chat-turns";
   import {
     createAssistantRoleRequest,
     createChatSessionRequest,
@@ -32,10 +42,10 @@
     sendChatFeedbackRequest,
     streamChatReplyRequest,
     updateAssistantRoleRequest,
-    uploadKnowledgeFileRequest,
     updateChatSessionRequest,
     updateKnowledgeCollectionRequest,
     updateKnowledgeSourceRequest,
+    uploadKnowledgeFileRequest,
   } from "@/lib/api-client";
   import {
     initializeAuthSession,
@@ -43,17 +53,8 @@
     switchActiveWorkspace,
     useAuthSession,
   } from "@/lib/auth-session";
+  import type { ChatReplyProgressState } from "@/lib/chat-stream-progress";
   import { generateClientId } from "@/lib/ids";
-  import CreateCollectionModal from "@/features/app/components/CreateCollectionModal.vue";
-  import ExportTaskDetailModal from "@/features/app/components/ExportTaskDetailModal.vue";
-  import ExportTemplateModal from "@/features/app/components/ExportTemplateModal.vue";
-  import ImportSourcesModal from "@/features/app/components/ImportSourcesModal.vue";
-  import SourceEditorModal from "@/features/app/components/SourceEditorModal.vue";
-  import WorkspaceChatPane from "@/features/app/components/WorkspaceChatPane.vue";
-  import WorkspaceContextPane from "@/features/app/components/WorkspaceContextPane.vue";
-  import WorkspaceSidebar from "@/features/app/components/WorkspaceSidebar.vue";
-  import { buildWorkspaceChatTurns } from "@/features/app/lib/workspace-chat-turns";
-  import { useWorkspaceExports } from "@/features/app/composables/useWorkspaceExports";
 
   type PanelMode = "library" | "exports" | "settings";
   const SOURCE_POLL_INTERVAL_MS = 4_000;
@@ -94,6 +95,9 @@
   const composer = ref("");
   const sourceFilter = ref("");
   const selectedAssistantMessageId = ref("");
+  const streamProgressByMessageId = ref<Record<string, ChatReplyProgressState>>(
+    {},
+  );
   const suspendedMessageLoadSessionId = ref("");
   const showCreateCollection = ref(false);
   const showImportModal = ref(false);
@@ -152,6 +156,7 @@
   );
   const chatTurns = computed(() =>
     buildWorkspaceChatTurns(messages.value, {
+      progressByMessageId: streamProgressByMessageId.value,
       selectedAssistantMessageId: selectedAssistantMessageId.value,
     }),
   );
@@ -206,6 +211,39 @@
     if (selectedAssistantMessageId.value === currentMessageId) {
       selectedAssistantMessageId.value = nextMessage.id;
     }
+  }
+
+  function setAssistantProgress(
+    messageId: string,
+    progress: ChatReplyProgressState | null,
+  ) {
+    if (!progress) {
+      clearAssistantProgress(messageId);
+      return;
+    }
+
+    streamProgressByMessageId.value = {
+      ...streamProgressByMessageId.value,
+      [messageId]: progress,
+    };
+  }
+
+  function clearAssistantProgress(messageId: string) {
+    if (!(messageId in streamProgressByMessageId.value)) {
+      return;
+    }
+
+    const nextState = { ...streamProgressByMessageId.value };
+    delete nextState[messageId];
+    streamProgressByMessageId.value = nextState;
+  }
+
+  function clearAllAssistantProgress() {
+    if (Object.keys(streamProgressByMessageId.value).length === 0) {
+      return;
+    }
+
+    streamProgressByMessageId.value = {};
   }
 
   function updateAssistantDraftFromStream(messageId: string, content: string) {
@@ -356,6 +394,7 @@
     if (!collectionId) {
       sessions.value = [];
       messages.value = [];
+      clearAllAssistantProgress();
       selectedAssistantMessageId.value = "";
       return;
     }
@@ -380,6 +419,7 @@
         await loadMessages(preferredSessionId);
       } else {
         messages.value = [];
+        clearAllAssistantProgress();
         selectedAssistantMessageId.value = "";
       }
     } catch (cause) {
@@ -466,12 +506,14 @@
   async function loadMessages(sessionId: string) {
     if (!sessionId) {
       messages.value = [];
+      clearAllAssistantProgress();
       selectedAssistantMessageId.value = "";
       return;
     }
 
     if (!sessions.value.some((item) => item.id === sessionId)) {
       messages.value = [];
+      clearAllAssistantProgress();
       selectedAssistantMessageId.value = "";
       return;
     }
@@ -481,6 +523,7 @@
     try {
       const data = await fetchChatMessagesRequest(sessionId);
       messages.value = data.messages;
+      clearAllAssistantProgress();
       selectedAssistantMessageId.value =
         [...data.messages].reverse().find((item) => item.role === "assistant")
           ?.id || "";
@@ -616,6 +659,7 @@
         sources.value = [];
         sessions.value = [];
         messages.value = [];
+        clearAllAssistantProgress();
       }
       showToast("资料文件夹已删除");
     } catch (cause) {
@@ -741,6 +785,7 @@
       suspendedMessageLoadSessionId.value = created.session.id;
       await loadSessions(activeCollectionId.value);
       messages.value = [];
+      clearAllAssistantProgress();
       selectedAssistantMessageId.value = "";
       await replaceWorkspaceQuery({
         session: created.session.id,
@@ -791,6 +836,7 @@
       } else {
         sessions.value = [];
         messages.value = [];
+        clearAllAssistantProgress();
       }
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : "删除会话失败";
@@ -814,6 +860,9 @@
     composer.value = "";
 
     const previousMessages = [...messages.value];
+    const previousStreamProgressByMessageId = {
+      ...streamProgressByMessageId.value,
+    };
     const previousSelectedAssistantMessageId = selectedAssistantMessageId.value;
     const tempUserId = createTempMessageId("user");
     const tempAssistantId = createTempMessageId("assistant");
@@ -868,8 +917,9 @@
           query: trimmed,
           limit: 6,
         },
-        onUpdate: ({ content, events }) => {
+        onUpdate: ({ content, events, progress }) => {
           updateAssistantDraftFromStream(tempAssistantId, content);
+          setAssistantProgress(tempAssistantId, progress);
 
           for (const event of events) {
             switch (event.type) {
@@ -881,6 +931,7 @@
                 completedReplyState.assistantMessage = event.assistantMessage;
                 replaceMessage(tempUserId, event.userMessage);
                 replaceMessage(tempAssistantId, event.assistantMessage);
+                clearAssistantProgress(tempAssistantId);
                 selectedAssistantMessageId.value = event.assistantMessage.id;
                 break;
               case "reply-error":
@@ -908,6 +959,7 @@
     } catch (cause) {
       if (!acceptedReply) {
         messages.value = previousMessages;
+        streamProgressByMessageId.value = previousStreamProgressByMessageId;
         selectedAssistantMessageId.value = previousSelectedAssistantMessageId;
         composer.value = trimmed;
       }
@@ -1172,6 +1224,7 @@
         sources.value = [];
         sessions.value = [];
         messages.value = [];
+        clearAllAssistantProgress();
         return;
       }
 
@@ -1230,6 +1283,7 @@
       sources.value = [];
       sessions.value = [];
       messages.value = [];
+      clearAllAssistantProgress();
       selectedAssistantMessageId.value = "";
       return;
     }

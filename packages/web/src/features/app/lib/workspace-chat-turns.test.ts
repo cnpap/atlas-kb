@@ -81,4 +81,29 @@ describe("workspace chat turns", () => {
     expect(draftTurns[0]?.id).toBe("turn-0");
     expect(persistedTurns[0]?.id).toBe("turn-0");
   });
+
+  it("marks turns as failed when stream progress reports a failure", () => {
+    const turns = buildWorkspaceChatTurns(
+      [
+        createUserMessage(),
+        createAssistantMessage({
+          content: "",
+          id: "temp:assistant-1",
+        }),
+      ],
+      {
+        progressByMessageId: {
+          "temp:assistant-1": {
+            items: [],
+            runId: "run-1",
+            status: "failed",
+            summaryLabel: "知识库回答失败",
+          },
+        },
+      },
+    );
+
+    expect(turns[0]?.progress?.status).toBe("failed");
+    expect(getWorkspaceChatTurnStatus(turns[0]!)).toBe("failed");
+  });
 });
