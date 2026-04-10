@@ -12,7 +12,7 @@ import { requireKnowledgeCollection } from "./collections-repository";
 import type { AssistantRolePromptConfig } from "./repository-shared";
 import { getKnowledgeWorkspace } from "./runtime";
 
-const AGENT_EXECUTION_TIMEOUT_MS = 300_000;
+const AGENT_EXECUTION_TIMEOUT_MS = 600_000;
 const MAX_AGENT_STEPS = 25;
 const KNOWLEDGE_AGENT_TIMEOUT_MESSAGE = "知识库回答超时，请稍后重试。";
 const KNOWLEDGE_EMPTY_EVIDENCE_ANSWER =

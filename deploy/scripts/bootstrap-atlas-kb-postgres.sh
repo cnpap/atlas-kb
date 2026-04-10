@@ -61,4 +61,4 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO :"atlas_kb_db_u
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO :"atlas_kb_db_user";
 SQL
 
-printf 'Atlas KB database ready: %s\n' "${ATLAS_KB_DB_NAME}"
+printf '知识库 database ready: %s\n' "${ATLAS_KB_DB_NAME}"

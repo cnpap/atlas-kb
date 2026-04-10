@@ -84,7 +84,7 @@ health: env-check
 		fi; \
 		sleep 2; \
 	done; \
-	echo "Atlas KB health check failed: API/web readiness or authenticated template smoke did not pass" >&2; \
+	echo "知识库 health check failed: API/web readiness or authenticated template smoke did not pass" >&2; \
 	exit 1
 
 deploy: build ensure-network
