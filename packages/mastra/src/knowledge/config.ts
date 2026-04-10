@@ -1,5 +1,8 @@
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_OPENAI_MODEL = "gpt-5.4";
+const DEFAULT_RUNTIME_PROVIDER = "openai";
+const DEFAULT_DASHSCOPE_COMPATIBLE_BASE_URL =
+  "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_EMBEDDING_MAX_CONCURRENCY = 5;
 const DEFAULT_EMBEDDING_MIN_INTERVAL_MS = 1_000;
@@ -68,6 +71,49 @@ export function getOpenAIUrl(path: string, baseUrl?: string): string {
 
 export function getOpenAIModel(): string {
   return trimEnvValue(process.env.OPENAI_MODEL) ?? DEFAULT_OPENAI_MODEL;
+}
+
+export function getRuntimeProvider(): string {
+  return trimEnvValue(process.env.RUNTIME_PROVIDER) ?? DEFAULT_RUNTIME_PROVIDER;
+}
+
+export function getRuntimeModel(): string | undefined {
+  return getRuntimeProvider() === "openai"
+    ? getOpenAIModel()
+    : trimEnvValue(process.env.RUNTIME_MODEL);
+}
+
+export function getDashScopeCompatibleBaseUrl(): string {
+  return normalizeOpenAIBaseUrl(
+    trimEnvValue(process.env.DASHSCOPE_BASE_URL) ??
+      trimEnvValue(process.env.EMBEDDING_BASE_URL) ??
+      DEFAULT_DASHSCOPE_COMPATIBLE_BASE_URL,
+  );
+}
+
+export function getChatTitleModel(): string {
+  return (
+    trimEnvValue(process.env.ATLAS_KB_CHAT_TITLE_MODEL) ??
+    getRuntimeModel() ??
+    getOpenAIModel()
+  );
+}
+
+export function getChatTitleApiKey(): string | undefined {
+  return getRuntimeProvider() === "alibaba-cn"
+    ? (trimEnvValue(process.env.DASHSCOPE_API_KEY) ?? getOpenAIApiKey())
+    : getOpenAIApiKey();
+}
+
+export function getChatTitleBaseUrl(): string {
+  return getRuntimeProvider() === "alibaba-cn"
+    ? getDashScopeCompatibleBaseUrl()
+    : getOpenAIBaseUrl();
+}
+
+export function getChatTitleUrl(path: string): string {
+  const normalizedPath = path.replace(/^\/+/g, "");
+  return `${getChatTitleBaseUrl()}/${normalizedPath}`;
 }
 
 export function getEmbeddingApiKey(): string | undefined {

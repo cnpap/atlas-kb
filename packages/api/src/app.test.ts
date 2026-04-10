@@ -1272,6 +1272,82 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
   });
 
   it.serial(
+    "reuses the same placeholder chat session within one collection",
+    async () => {
+      const app = createApp();
+      const session = await login(app);
+
+      const createCollectionResponse = await app.handle(
+        new Request("http://localhost/api/kb/collections", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            id: "chat-placeholder-api",
+            name: "Chat Placeholder API",
+            description: "placeholder api tests",
+          }),
+        }),
+      );
+      const collectionData = await readJson<{
+        collection: {
+          id: string;
+        };
+      }>(createCollectionResponse);
+      const workspaceSession = await switchWorkspace({
+        app,
+        token: session.token,
+        collectionId: collectionData.collection.id,
+      });
+
+      const [firstResponse, secondResponse] = await Promise.all([
+        app.handle(
+          new Request("http://localhost/api/chat/sessions", {
+            method: "POST",
+            headers: {
+              ...authHeaders(workspaceSession.token),
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              collectionId: collectionData.collection.id,
+            }),
+          }),
+        ),
+        app.handle(
+          new Request("http://localhost/api/chat/sessions", {
+            method: "POST",
+            headers: {
+              ...authHeaders(workspaceSession.token),
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              collectionId: collectionData.collection.id,
+            }),
+          }),
+        ),
+      ]);
+      const firstSession = await readJson<{
+        session: {
+          id: string;
+          title: string;
+        };
+      }>(firstResponse);
+      const secondSession = await readJson<{
+        session: {
+          id: string;
+          title: string;
+        };
+      }>(secondResponse);
+
+      expect(firstSession.session.id).toBe(secondSession.session.id);
+      expect(firstSession.session.title).toBe("新建会话");
+      expect(secondSession.session.title).toBe("新建会话");
+    },
+  );
+
+  it.serial(
     "lists chat sessions only for the requested collection",
     async () => {
       const app = createApp();

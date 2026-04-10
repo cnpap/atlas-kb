@@ -5,8 +5,9 @@ import type {
   ChatMessageFeedbackRequest,
   ChatSession,
 } from "@atlas-kb/schema";
-import { sql } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
 import { ensureKnowledgeDatabase } from "./db";
+import type { DB } from "./db.generated";
 import {
   CHAT_SESSION_COLUMNS,
   nowIso,
@@ -17,6 +18,11 @@ import {
   type ChatSessionRow,
 } from "./repository-shared";
 import { requireKnowledgeCollection } from "./collections-repository";
+
+export const DEFAULT_CHAT_SESSION_TITLE = "新建会话";
+export const DEFAULT_EMPTY_CHAT_SESSION_PREVIEW = "开始提问吧";
+
+type ChatSessionExecutor = Kysely<DB> | Transaction<DB>;
 
 async function getChatSessionRow(
   userId: string,
@@ -64,36 +70,137 @@ async function getChatMessageRow(
   );
 }
 
-export async function createChatSession(params: {
-  userId: string;
-  title?: string;
+function getPlaceholderChatSessionLockKey(params: {
   collectionId: string;
-}): Promise<ChatSession> {
-  const db = await ensureKnowledgeDatabase();
+  userId: string;
+}): string {
+  return `atlas_kb_chat_placeholder:${params.userId}:${params.collectionId}`;
+}
+
+async function acquirePlaceholderChatSessionLock(
+  executor: ChatSessionExecutor,
+  params: {
+    collectionId: string;
+    userId: string;
+  },
+): Promise<void> {
+  await sql`
+    select pg_advisory_xact_lock(
+      hashtext('atlas_kb_chat_placeholder'),
+      hashtext(${getPlaceholderChatSessionLockKey(params)})
+    )
+  `.execute(executor);
+}
+
+async function getReusablePlaceholderChatSessionRow(
+  executor: ChatSessionExecutor,
+  params: {
+    collectionId: string;
+    userId: string;
+  },
+): Promise<ChatSessionRow | null> {
+  return (
+    (await executor
+      .selectFrom("kb_chat_sessions")
+      .select(CHAT_SESSION_COLUMNS)
+      .where("owner_user_id", "=", toDbUserId(params.userId))
+      .where("collection_id", "=", params.collectionId)
+      .where("title", "=", DEFAULT_CHAT_SESSION_TITLE)
+      .where("preview", "=", DEFAULT_EMPTY_CHAT_SESSION_PREVIEW)
+      .orderBy("created_at", "desc")
+      .executeTakeFirst()) ?? null
+  );
+}
+
+async function insertChatSession(
+  executor: ChatSessionExecutor,
+  params: {
+    collectionId: string;
+    preview: string;
+    title: string;
+    userId: string;
+  },
+): Promise<ChatSession> {
   const now = nowIso();
   const id = crypto.randomUUID();
-  const collection = await requireKnowledgeCollection(
-    params.userId,
-    params.collectionId,
-  );
-  const title = params.title?.trim() || `${collection.name} 对话`;
-  const preview = "开始提问吧";
 
-  await db
+  await executor
     .insertInto("kb_chat_sessions")
     .values({
       id,
       owner_user_id: toDbUserId(params.userId),
-      title,
+      title: params.title,
       collection_id: params.collectionId,
-      preview,
+      preview: params.preview,
       created_at: now,
       updated_at: now,
       last_message_at: now,
     })
     .execute();
 
-  return requireChatSession(params.userId, id);
+  const row = await executor
+    .selectFrom("kb_chat_sessions")
+    .select(CHAT_SESSION_COLUMNS)
+    .where("owner_user_id", "=", toDbUserId(params.userId))
+    .where("id", "=", id)
+    .executeTakeFirst();
+
+  return toChatSession(row!);
+}
+
+export function isPlaceholderChatSession(
+  session: Pick<ChatSession, "preview" | "title">,
+): boolean {
+  return (
+    session.title.trim() === DEFAULT_CHAT_SESSION_TITLE &&
+    session.preview.trim() === DEFAULT_EMPTY_CHAT_SESSION_PREVIEW
+  );
+}
+
+export async function createChatSession(params: {
+  userId: string;
+  title?: string;
+  collectionId: string;
+}): Promise<ChatSession> {
+  const db = await ensureKnowledgeDatabase();
+  const normalizedTitle = params.title?.trim();
+
+  await requireKnowledgeCollection(params.userId, params.collectionId);
+
+  if (normalizedTitle) {
+    return insertChatSession(db, {
+      userId: params.userId,
+      collectionId: params.collectionId,
+      title: normalizedTitle,
+      preview: DEFAULT_EMPTY_CHAT_SESSION_PREVIEW,
+    });
+  }
+
+  return db.transaction().execute(async (trx) => {
+    await acquirePlaceholderChatSessionLock(trx, {
+      userId: params.userId,
+      collectionId: params.collectionId,
+    });
+
+    const existingPlaceholder = await getReusablePlaceholderChatSessionRow(
+      trx,
+      {
+        userId: params.userId,
+        collectionId: params.collectionId,
+      },
+    );
+
+    if (existingPlaceholder) {
+      return toChatSession(existingPlaceholder);
+    }
+
+    return insertChatSession(trx, {
+      userId: params.userId,
+      collectionId: params.collectionId,
+      title: DEFAULT_CHAT_SESSION_TITLE,
+      preview: DEFAULT_EMPTY_CHAT_SESSION_PREVIEW,
+    });
+  });
 }
 
 export async function listChatSessions(
@@ -172,6 +279,33 @@ export async function updateChatSession(params: {
     })
     .where("owner_user_id", "=", toDbUserId(params.userId))
     .where("id", "=", params.sessionId)
+    .execute();
+
+  return requireChatSession(params.userId, params.sessionId);
+}
+
+export async function renamePlaceholderChatSession(params: {
+  userId: string;
+  sessionId: string;
+  title: string;
+}): Promise<ChatSession> {
+  const nextTitle = params.title.trim();
+
+  if (!nextTitle) {
+    return requireChatSession(params.userId, params.sessionId);
+  }
+
+  const db = await ensureKnowledgeDatabase();
+
+  await db
+    .updateTable("kb_chat_sessions")
+    .set({
+      title: nextTitle,
+      updated_at: nowIso(),
+    })
+    .where("owner_user_id", "=", toDbUserId(params.userId))
+    .where("id", "=", params.sessionId)
+    .where("title", "=", DEFAULT_CHAT_SESSION_TITLE)
     .execute();
 
   return requireChatSession(params.userId, params.sessionId);

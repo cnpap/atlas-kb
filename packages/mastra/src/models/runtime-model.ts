@@ -4,9 +4,9 @@ import {
   getOpenAIBaseUrl,
   getOpenAIApiKey,
   getOpenAIModel,
+  getRuntimeModel,
+  getRuntimeProvider,
 } from "../knowledge/config";
-
-const DEFAULT_RUNTIME_PROVIDER = "openai";
 const MODEL_TIMEOUT_MESSAGE = "知识库回答超时，请稍后重试。";
 
 type RuntimeModelLogContext = {
@@ -29,27 +29,17 @@ function readEnv(name: string): string | undefined {
   return value ? value : undefined;
 }
 
-function getRuntimeModelProvider(): string {
-  return readEnv("RUNTIME_PROVIDER") ?? DEFAULT_RUNTIME_PROVIDER;
-}
-
 function getConfiguredRuntimeModelId(): string | undefined {
-  const provider = getRuntimeModelProvider();
-
-  if (provider === "openai") {
-    return getOpenAIModel();
-  }
-
-  return readEnv("RUNTIME_MODEL");
+  return getRuntimeModel();
 }
 
 export function getRuntimeModelLabel(): string {
-  return `${getRuntimeModelProvider()}/${getConfiguredRuntimeModelId() ?? "unknown"}`;
+  return `${getRuntimeProvider()}/${getConfiguredRuntimeModelId() ?? "unknown"}`;
 }
 
 export function getRuntimeModelLogContext(): RuntimeModelLogContext {
   return {
-    runtimeProvider: getRuntimeModelProvider(),
+    runtimeProvider: getRuntimeProvider(),
     runtimeModel: getRuntimeModelLabel(),
   };
 }
@@ -72,7 +62,7 @@ function logRuntimeModelIssue(
 }
 
 export function createRuntimeModel(): MastraModelConfig {
-  const provider = getRuntimeModelProvider();
+  const provider = getRuntimeProvider();
 
   if (provider === "openai") {
     return {

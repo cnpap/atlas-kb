@@ -30,6 +30,7 @@ const originalApiKey = process.env.OPENAI_API_KEY;
 const originalOpenAIModel = process.env.OPENAI_MODEL;
 const originalRuntimeProvider = process.env.RUNTIME_PROVIDER;
 const originalRuntimeModel = process.env.RUNTIME_MODEL;
+const originalChatTitleModel = process.env.ATLAS_KB_CHAT_TITLE_MODEL;
 const originalEmbeddingApiKey = process.env.EMBEDDING_API_KEY;
 const originalEmbeddingMinIntervalMs = process.env.EMBEDDING_MIN_INTERVAL_MS;
 const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
@@ -568,6 +569,7 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
     process.env.QDRANT_URL = "http://127.0.0.1:6333";
     process.env.OPENAI_API_KEY = "test-openai-key";
     process.env.OPENAI_MODEL = "gpt-5.4";
+    process.env.ATLAS_KB_CHAT_TITLE_MODEL = "qwen-flash";
     process.env.RUNTIME_PROVIDER = "openai";
     delete process.env.RUNTIME_MODEL;
     process.env.EMBEDDING_API_KEY = "test-embedding-key";
@@ -617,6 +619,12 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
       delete process.env.OPENAI_MODEL;
     } else {
       process.env.OPENAI_MODEL = originalOpenAIModel;
+    }
+
+    if (originalChatTitleModel === undefined) {
+      delete process.env.ATLAS_KB_CHAT_TITLE_MODEL;
+    } else {
+      process.env.ATLAS_KB_CHAT_TITLE_MODEL = originalChatTitleModel;
     }
 
     if (originalRuntimeProvider === undefined) {
@@ -830,6 +838,84 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
       expect(messages[0]?.content).toBe("Who handles malware incidents?");
       expect(messages[1]?.role).toBe("assistant");
       expect(messages[1]?.content).toBe(reply.assistantMessage.content);
+    },
+  );
+
+  it.serial(
+    "reuses a single placeholder session for the same collection",
+    async () => {
+      const user = await ensureDefaultUser();
+      const collection = await createKnowledgeCollection({
+        userId: user.id,
+        input: {
+          id: "chat-placeholder-singleton",
+          name: "Chat Placeholder Singleton",
+          description: "placeholder chat tests",
+        },
+      });
+
+      const [firstSession, secondSession] = await Promise.all([
+        createChatSession({
+          userId: user.id,
+          collectionId: collection.id,
+        }),
+        createChatSession({
+          userId: user.id,
+          collectionId: collection.id,
+        }),
+      ]);
+      const sessions = await listChatSessions(user.id, collection.id);
+
+      expect(firstSession.id).toBe(secondSession.id);
+      expect(
+        sessions.filter((session) => session.title === "新建会话"),
+      ).toHaveLength(1);
+    },
+  );
+
+  it.serial(
+    "renames the placeholder session after the first reply and truncates the generated title",
+    async () => {
+      const user = await ensureDefaultUser();
+      const collection = await createKnowledgeCollection({
+        userId: user.id,
+        input: {
+          id: "chat-title-generation",
+          name: "Chat Title Generation",
+          description: "chat title tests",
+        },
+      });
+
+      await importKnowledgeText({
+        userId: user.id,
+        collectionId: collection.id,
+        input: {
+          title: "通知说明",
+          content: "Budget adjustments should be reviewed by the finance team.",
+        },
+      });
+
+      const session = await createChatSession({
+        userId: user.id,
+        collectionId: collection.id,
+      });
+      const longQuery =
+        "关于预算调整审批流程和跨部门协同安排的详细说明需要怎么整理归档并形成正式口径";
+
+      delete process.env.OPENAI_API_KEY;
+
+      const reply = await createChatReply({
+        userId: user.id,
+        sessionId: session.id,
+        input: {
+          query: longQuery,
+        },
+      });
+
+      expect(reply.session.title).toBe(longQuery.slice(0, 30));
+      expect(reply.session.title).not.toBe("新建会话");
+      expect(reply.session.title.includes("对话")).toBe(false);
+      expect(reply.session.title.length).toBeLessThanOrEqual(30);
     },
   );
 

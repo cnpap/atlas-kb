@@ -15,6 +15,7 @@
     activeCollectionId: string;
     activeSessionId: string;
     collections: KnowledgeCollection[];
+    creatingSession?: boolean;
     currentUsername?: string;
     loadingCollections?: boolean;
     loadingSessions?: boolean;
@@ -202,11 +203,13 @@
         <button
           class="soft-button primary flex-1"
           type="button"
-          :disabled="!activeCollectionId"
+          :disabled="!activeCollectionId || creatingSession"
           @click="emit('createSession')"
         >
           <MessageSquare class="size-4" />
-          <span class="text-xs">新对话</span>
+          <span class="text-xs"
+            >{{ creatingSession ? "创建中" : "新对话" }}</span
+          >
         </button>
       </div>
     </div>

@@ -85,6 +85,7 @@
   const loadingSources = ref(false);
   const bootstrappingWorkspace = ref(true);
   const replying = ref(false);
+  const creatingSession = ref(false);
   const creatingCollection = ref(false);
   const savingCollection = ref(false);
   const savingAssistantRole = ref(false);
@@ -777,6 +778,11 @@
       return;
     }
 
+    if (creatingSession.value) {
+      return;
+    }
+
+    creatingSession.value = true;
     error.value = "";
 
     try {
@@ -793,6 +799,8 @@
       });
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : "新建会话失败";
+    } finally {
+      creatingSession.value = false;
     }
   }
 
@@ -1380,6 +1388,7 @@
       :active-collection-id="activeCollectionId"
       :active-session-id="activeSessionId"
       :collections="collections"
+      :creating-session="creatingSession"
       :current-username="currentUser?.username"
       :loading-collections="loadingCollections"
       :loading-sessions="loadingSessions"

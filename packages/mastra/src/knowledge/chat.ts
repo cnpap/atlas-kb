@@ -26,13 +26,16 @@ import {
   appendChatMessage,
   createChatSession,
   deleteChatSession,
+  isPlaceholderChatSession,
   listChatMessages,
+  renamePlaceholderChatSession,
   listChatSessions,
   requireChatSession,
   saveMessageFeedback,
   updateChatSession,
 } from "./chat-repository";
 import { createChatReplyStreamEventMapper } from "./chat-stream-events";
+import { buildFallbackChatTitle, generateChatTitle } from "./chat-title";
 import type { AssistantRolePromptConfig } from "./repository-shared";
 import { requireKnowledgeSource } from "./sources-repository";
 import { resolveKnowledgeSourceWorkspacePath } from "./workspace-paths";
@@ -89,6 +92,49 @@ function getErrorMessage(error: unknown): string {
   return "AI 对话失败";
 }
 
+async function autoRenamePlaceholderChatSession(params: {
+  query: string;
+  sessionId: string;
+  userId: string;
+}): Promise<void> {
+  const fallbackTitle = buildFallbackChatTitle(params.query);
+
+  if (!fallbackTitle) {
+    return;
+  }
+
+  try {
+    const nextTitle = (await generateChatTitle(params.query)) || fallbackTitle;
+
+    await renamePlaceholderChatSession({
+      userId: params.userId,
+      sessionId: params.sessionId,
+      title: nextTitle,
+    });
+    return;
+  } catch (error) {
+    console.warn("[knowledge] chat title generation failed", {
+      errorMessage: readErrorText(error) || undefined,
+      errorName: error instanceof Error ? error.name : undefined,
+      ...getRuntimeModelLogContext(),
+    });
+  }
+
+  try {
+    await renamePlaceholderChatSession({
+      userId: params.userId,
+      sessionId: params.sessionId,
+      title: fallbackTitle,
+    });
+  } catch (error) {
+    console.warn("[knowledge] chat title fallback update failed", {
+      errorMessage: readErrorText(error) || undefined,
+      errorName: error instanceof Error ? error.name : undefined,
+      ...getRuntimeModelLogContext(),
+    });
+  }
+}
+
 async function prepareChatReplyExecution(params: {
   userId: string;
   sessionId: string;
@@ -116,12 +162,20 @@ async function prepareChatReplyExecution(params: {
     role: "user",
     content: params.query,
   });
+  const titleUpdatePromise = isPlaceholderChatSession(session)
+    ? autoRenamePlaceholderChatSession({
+        userId: params.userId,
+        sessionId: session.id,
+        query: params.query,
+      })
+    : Promise.resolve();
 
   return {
     session,
     assistantRole,
     focusSource,
     userMessage,
+    titleUpdatePromise,
     agentParams: {
       question: params.query,
       collectionId: session.collectionId,
@@ -159,6 +213,7 @@ async function completeChatReply(params: {
   sessionId: string;
   userMessage: ChatReplyFinal["userMessage"];
   answer: string;
+  titleUpdatePromise?: Promise<void>;
 }): Promise<ChatReplyFinal> {
   const assistantMessage = await appendChatMessage({
     userId: params.userId,
@@ -167,6 +222,7 @@ async function completeChatReply(params: {
     role: "assistant",
     content: params.answer,
   });
+  await params.titleUpdatePromise;
   const session = await requireChatSession(params.userId, params.sessionId);
 
   return {
@@ -201,6 +257,7 @@ export async function createChatReply(params: {
     sessionId: execution.session.id,
     userMessage: execution.userMessage,
     answer: answer.answer,
+    titleUpdatePromise: execution.titleUpdatePromise,
   });
 }
 
@@ -311,6 +368,7 @@ export async function streamChatReply(params: {
             sessionId: session.id,
             userMessage,
             answer: answer.answer,
+            titleUpdatePromise: execution.titleUpdatePromise,
           });
 
           writeReplyEvent({
