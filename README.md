@@ -3,9 +3,10 @@
 Atlas KB is a Bun workspace for a multi-user knowledge base with auth, file
 upload, workspace search, chat retrieval, and briefing-opinion generation.
 
-The knowledge runtime now uses Mastra `Workspace + LocalFilesystem + Workspace Search`
-with BM25 plus Qdrant vector search. There is no `@cnpap/ops-agent-kit`, no
-Tika, and no import job pipeline.
+The knowledge runtime uses Mastra `Workspace + Workspace Search` together with
+`@cnpap/ops-agent-kit` for Docling-backed content proxying and workspace index
+maintenance. Search runs with BM25 plus optional Qdrant vector search, and file
+imports are processed through the knowledge import job pipeline.
 
 ## Packages
 
@@ -35,7 +36,7 @@ bun run mastra:dev
 - API: `http://localhost:6112`
 - Web: `http://localhost:6111`
 - Mastra: `http://localhost:4111`
-- Postgres: `postgresql://127.0.0.1:5432/ops_agent_kit`
+- Postgres: `postgresql://127.0.0.1:15432/atlas_kb_admin`
 - Qdrant: `http://127.0.0.1:6333`
 
 ## Default Login
@@ -72,8 +73,8 @@ credentials into this repo's `.env` before starting API or Mastra.
 
 ## Upload Support
 
-The current ingestion path assumes uploaded files are text or code-like files.
-Atlas KB stores each source inside its Mastra workspace, indexes it immediately,
-and makes it searchable without a background import queue. Manually entered text
-sources are also written to
-`<prefix>/<userId>/<collectionId>/<sourceId>/content.txt`.
+Atlas KB stores uploaded sources in the collection workspace filesystem and
+indexes them through the knowledge import pipeline. Text-like sources can be
+written and indexed immediately, while file uploads can be queued for
+background extraction and indexing. Manually entered text sources are also
+written to `<prefix>/<userId>/<collectionId>/<sourceId>/content.txt`.

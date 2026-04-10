@@ -1,5 +1,0 @@
-configuration-as-code
-git
-github
-job-dsl
-workflow-aggregator

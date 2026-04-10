@@ -4,13 +4,8 @@
 }
 
 :7171 {
-  @jenkins host {$JENKINS_DOMAIN}
   @atlas_kb host {$ATLAS_KB_DOMAIN}
   @openvscode host ide.vmvm.cloud
-
-  handle @jenkins {
-    reverse_proxy jenkins:8080
-  }
 
   handle @atlas_kb {
     @api path /api /api/*
