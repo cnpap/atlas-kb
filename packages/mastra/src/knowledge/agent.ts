@@ -12,8 +12,8 @@ import { requireKnowledgeCollection } from "./collections-repository";
 import type { AssistantRolePromptConfig } from "./repository-shared";
 import { getKnowledgeWorkspace } from "./runtime";
 
-const AGENT_EXECUTION_TIMEOUT_MS = 60_000;
-const MAX_AGENT_STEPS = 6;
+const AGENT_EXECUTION_TIMEOUT_MS = 300_000;
+const MAX_AGENT_STEPS = 25;
 const KNOWLEDGE_AGENT_TIMEOUT_MESSAGE = "知识库回答超时，请稍后重试。";
 const KNOWLEDGE_EMPTY_EVIDENCE_ANSWER =
   "没有在当前资料文件夹中找到能直接回答该问题的证据。你可以换个问法，或者先导入更相关的资料。";
