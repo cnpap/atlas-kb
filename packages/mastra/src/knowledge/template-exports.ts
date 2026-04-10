@@ -19,7 +19,6 @@ import {
   createKnowledgeCollectionFilesystem,
   createKnowledgeStoragePrefixFilesystem,
 } from "./runtime";
-import { buildSummary } from "./search-utils";
 
 const TEMPLATE_EXPORT_TIMEOUT_MS = 20_000;
 const TEMPLATE_EXPORT_TIMEOUT_MESSAGE = "模板导出超时，请稍后重试。";
@@ -369,7 +368,7 @@ export async function generateKnowledgeTemplateExportPayload(args: {
       template: args.template,
       userId: args.userId,
     }),
-    summary: source.summary.trim() || buildSummary(source.content, 280),
+    summary: source.summary?.trim() || "",
     citations: [],
   };
 }

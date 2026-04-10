@@ -5,6 +5,7 @@ import {
 } from "@atlas-kb/errors";
 import type { AuthUser } from "@atlas-kb/schema";
 import { ensureKnowledgeDatabase } from "./db";
+import { ensureDefaultKnowledgeCollection } from "./collections-repository";
 import { nowIso, toDbUserId } from "./repository-shared";
 
 const DEFAULT_USERNAME = "admin";
@@ -81,7 +82,9 @@ export async function ensureDefaultUser(): Promise<AuthUser> {
   const existing = await getUserRowByUsername(getDefaultUsername());
 
   if (existing) {
-    return toAuthUser(existing);
+    const user = toAuthUser(existing);
+    await ensureDefaultKnowledgeCollection(user.id);
+    return user;
   }
 
   return createUser({
@@ -149,7 +152,9 @@ export async function createUser(params: {
     throw new ConflictError(`用户名 "${username}" 保存失败`);
   }
 
-  return toAuthUser(row);
+  const authUser = toAuthUser(row);
+  await ensureDefaultKnowledgeCollection(authUser.id);
+  return authUser;
 }
 
 export async function authenticateUser(params: {

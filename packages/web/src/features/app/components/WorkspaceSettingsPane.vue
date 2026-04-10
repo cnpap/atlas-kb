@@ -8,6 +8,7 @@
     activeAssistantRoleId: string;
     activeCollection: KnowledgeCollection | null;
     assistantRoles: AssistantRole[];
+    canDeleteCollection?: boolean;
     deletingCollection?: boolean;
     deletingRoleId?: string;
     loadingAssistantRoles?: boolean;
@@ -533,10 +534,16 @@
       </div>
 
       <div v-if="!confirmCollectionDelete" class="mt-4">
+        <p
+          v-if="!canDeleteCollection"
+          class="mb-3 text-sm leading-6 text-[var(--text-muted)]"
+        >
+          至少保留一个工作区，最后一个工作区不能删除。
+        </p>
         <button
           class="soft-button warn"
           type="button"
-          :disabled="deletingCollection"
+          :disabled="deletingCollection || !canDeleteCollection"
           @click="confirmCollectionDelete = true"
         >
           删除当前资料文件夹

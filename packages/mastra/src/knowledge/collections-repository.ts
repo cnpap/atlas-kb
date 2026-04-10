@@ -1,4 +1,4 @@
-import { NotFoundError } from "@atlas-kb/errors";
+import { BadRequestError, NotFoundError } from "@atlas-kb/errors";
 import type {
   DashboardSummary,
   KnowledgeCollection,
@@ -8,11 +8,10 @@ import type {
 import { sql } from "kysely";
 import { ensureKnowledgeDatabase } from "./db";
 import { deleteKnowledgeImportJobsForCollection } from "./import-jobs-repository";
-import { buildKnowledgeTenantId } from "./ops-agent-kit";
 import {
-  getKnowledgeTenantIndexService,
-  invalidateKnowledgeWorkspace,
   getKnowledgeWorkspace,
+  getKnowledgeWorkspaceIndexer,
+  invalidateKnowledgeWorkspace,
 } from "./runtime";
 import { slugify } from "./search-utils";
 import {
@@ -21,6 +20,9 @@ import {
   toDbUserId,
   type CollectionRow,
 } from "./repository-shared";
+
+const DEFAULT_COLLECTION_NAME = "默认工作区";
+const DEFAULT_COLLECTION_DESCRIPTION = "用户创建后自动生成的默认工作区。";
 
 function buildCollectionQuery(userId: string) {
   return ensureKnowledgeDatabase().then((db) =>
@@ -119,12 +121,58 @@ async function getCollectionRow(
 export async function listKnowledgeCollections(
   userId: string,
 ): Promise<KnowledgeCollection[]> {
+  await ensureDefaultKnowledgeCollection(userId);
   const rows = await (await buildCollectionQuery(userId))
     .orderBy("c.is_pinned", "desc")
     .orderBy("c.updated_at", "desc")
     .execute();
 
   return rows.map((row) => toCollection(row));
+}
+
+export async function ensureDefaultKnowledgeCollection(
+  userId: string,
+): Promise<KnowledgeCollection> {
+  const existing = await (await buildCollectionQuery(userId))
+    .orderBy("c.is_pinned", "desc")
+    .orderBy("c.updated_at", "desc")
+    .executeTakeFirst();
+
+  if (existing) {
+    return toCollection(existing);
+  }
+
+  return createKnowledgeCollection({
+    userId,
+    input: {
+      name: DEFAULT_COLLECTION_NAME,
+      description: DEFAULT_COLLECTION_DESCRIPTION,
+      color: "#0f766e",
+      icon: "i-lucide-library",
+    },
+  });
+}
+
+export async function resolveActiveKnowledgeCollectionId(args: {
+  requestedCollectionId?: string;
+  userId: string;
+}): Promise<string> {
+  const ensuredCollection = await ensureDefaultKnowledgeCollection(args.userId);
+  const collections = await (await buildCollectionQuery(args.userId))
+    .orderBy("c.is_pinned", "desc")
+    .orderBy("c.updated_at", "desc")
+    .execute()
+    .then((rows) => rows.map((row) => toCollection(row)));
+  const requestedCollectionId = args.requestedCollectionId?.trim();
+
+  if (
+    requestedCollectionId &&
+    collections.some((collection) => collection.id === requestedCollectionId)
+  ) {
+    return requestedCollectionId;
+  }
+
+  return collections[0]?.id || ensuredCollection.id;
 }
 
 export async function createKnowledgeCollection(params: {
@@ -231,13 +279,19 @@ export async function deleteKnowledgeCollection(
   userId: string,
   collectionId: string,
 ): Promise<void> {
+  const collections = await listKnowledgeCollections(userId);
+
+  if (collections.length <= 1) {
+    throw new BadRequestError("至少保留一个工作区，无法删除最后一个工作区。");
+  }
+
   const db = await ensureKnowledgeDatabase();
   await deleteKnowledgeImportJobsForCollection({
     userId,
     collectionId,
   });
-  const [tenantIndexService, workspace] = await Promise.all([
-    getKnowledgeTenantIndexService({
+  const [workspaceIndexer, workspace] = await Promise.all([
+    getKnowledgeWorkspaceIndexer({
       userId,
       collectionId,
     }).catch(() => undefined),
@@ -253,14 +307,7 @@ export async function deleteKnowledgeCollection(
     .where("id", "=", collectionId)
     .execute();
 
-  await tenantIndexService
-    ?.clear({
-      tenantId: buildKnowledgeTenantId({
-        userId,
-        collectionId,
-      }),
-    })
-    .catch(() => undefined);
+  await workspaceIndexer?.clear().catch(() => undefined);
 
   await workspace?.filesystem
     ?.rmdir("", { recursive: true })

@@ -10,21 +10,9 @@ import type {
 } from "@atlas-kb/schema";
 import { dispatchKnowledgeImportDrainInAdmin } from "./admin-client";
 import { hasEmbeddingConfig } from "./config";
-import {
-  isKnowledgeSourceContentEditable,
-  isDoclingManagedFile,
-} from "./document-file-types";
-import {
-  buildKnowledgeTenantId,
-  deriveUploadTitle,
-  readKnowledgeWorkspaceTextFile,
-  shouldSyncTenantIndex,
-} from "./ops-agent-kit";
-import {
-  PENDING_FILE_IMPORT_CONTENT,
-  PENDING_FILE_IMPORT_SUMMARY,
-  waitForPendingKnowledgeImports,
-} from "./import-jobs";
+import { isKnowledgeSourceContentEditable } from "./document-file-types";
+import { deriveUploadTitle } from "./ops-agent-kit";
+import { waitForPendingKnowledgeImports } from "./import-jobs";
 import { enqueueKnowledgeFileImport } from "./import-jobs-repository";
 import {
   allocateManagedSourceFileName,
@@ -32,11 +20,7 @@ import {
   buildTextSourceContent,
 } from "./storage";
 import { buildSummary } from "./search-utils";
-import {
-  getKnowledgeTenantIndexService,
-  getKnowledgeWorkspace,
-  removeDocumentFromKnowledgeWorkspace,
-} from "./runtime";
+import { getKnowledgeWorkspace, getKnowledgeWorkspaceIndexer } from "./runtime";
 import {
   createKnowledgeSourceRecord,
   deleteKnowledgeSource,
@@ -75,8 +59,6 @@ async function resolveManagedImportFileName(args: {
   title: string;
   userId: string;
 }) {
-  // 上传文件和文本导入共用同一个文件名分配器，保证每个资料最终都落成
-  // 当前资料库内唯一的 workspace 相对路径。
   const sources = await listKnowledgeSources(args.userId, args.collectionId);
   const usedNames = new Set(
     sources
@@ -96,31 +78,13 @@ async function resolveManagedImportFileName(args: {
   );
 }
 
-function buildIndexMetadata(args: {
-  collectionId: string;
-  sourceType: KnowledgeSource["sourceType"];
-  sourceFilename?: string;
-  summary: string;
-  tags: string[];
-  title: string;
-}) {
-  return {
-    collectionId: args.collectionId,
-    sourceFilename: args.sourceFilename,
-    sourceType: args.sourceType,
-    summary: args.summary,
-    tags: args.tags,
-    title: args.title,
-  };
-}
-
 async function getMutableWorkspace(params: {
   collectionId: string;
   userId: string;
 }) {
-  const [workspace, tenantIndexService] = await Promise.all([
+  const [workspace, workspaceIndexer] = await Promise.all([
     getKnowledgeWorkspace(params),
-    getKnowledgeTenantIndexService(params),
+    getKnowledgeWorkspaceIndexer(params),
   ]);
   const filesystem = workspace.filesystem;
 
@@ -130,44 +94,15 @@ async function getMutableWorkspace(params: {
 
   return {
     filesystem,
-    tenantIndexService,
     workspace,
+    workspaceIndexer,
   };
-}
-
-function buildTenantIndexIdentity(args: {
-  collectionId: string;
-  documentId: string;
-  userId: string;
-}) {
-  return {
-    tenantId: buildKnowledgeTenantId({
-      userId: args.userId,
-      collectionId: args.collectionId,
-    }),
-    path: args.documentId,
-  };
-}
-
-function shouldUseTenantIndexOnly(args: {
-  mimeType?: string;
-  sourceFilename: string;
-  sourceType: KnowledgeSource["sourceType"];
-}): boolean {
-  if (args.sourceType !== "file") {
-    return false;
-  }
-
-  return isDoclingManagedFile({
-    fileName: args.sourceFilename,
-    mimeType: args.mimeType,
-  });
 }
 
 async function createFileBackedSource(args: {
   byteSize?: number;
   collectionId: string;
-  content?: string;
+  content: string;
   fileBody: string | Uint8Array;
   mimeType?: string;
   sourceFilename: string;
@@ -178,25 +113,16 @@ async function createFileBackedSource(args: {
   title: string;
   userId: string;
 }): Promise<KnowledgeImportData> {
-  // 这是本项目唯一的导入主链路：
-  // 1. 先把文件写入当前资料库的 workspace
-  // 2. 再对同一个相对路径执行手动索引
-  // 3. 最后落一条指向同一路径的资料记录
   await requireKnowledgeCollection(args.userId, args.collectionId);
 
-  const { filesystem, tenantIndexService, workspace } =
-    await getMutableWorkspace({
-      userId: args.userId,
-      collectionId: args.collectionId,
-    });
+  const { filesystem, workspaceIndexer } = await getMutableWorkspace({
+    userId: args.userId,
+    collectionId: args.collectionId,
+  });
   const documentId = args.sourceFilename;
   const normalizedTags = parseTags(args.tags);
-  let content = args.content;
-  const useTenantIndexOnly = shouldUseTenantIndexOnly({
-    sourceType: args.sourceType,
-    sourceFilename: args.sourceFilename,
-    mimeType: args.mimeType,
-  });
+  const content = args.content.trim();
+  const summary = args.summary?.trim() || buildSummary(content, 160);
 
   await filesystem.writeFile(documentId, args.fileBody, {
     mimeType: args.mimeType,
@@ -204,43 +130,10 @@ async function createFileBackedSource(args: {
   });
 
   try {
-    if (!content) {
-      content = await readKnowledgeWorkspaceTextFile(filesystem, documentId);
-    }
-
-    const summary = args.summary?.trim() || buildSummary(content, 160);
-
-    if (!useTenantIndexOnly) {
-      await workspace.index(documentId, content, {
-        mimeType: args.mimeType,
-        metadata: buildIndexMetadata({
-          collectionId: args.collectionId,
-          sourceFilename: args.sourceFilename,
-          sourceType: args.sourceType,
-          summary,
-          tags: normalizedTags,
-          title: args.title,
-        }),
-      });
-    }
-
-    if (
-      tenantIndexService &&
-      shouldSyncTenantIndex({
-        sourceType: args.sourceType,
-        fileName: args.sourceFilename,
-        mimeType: args.mimeType,
-      })
-    ) {
-      await tenantIndexService.createIndex({
-        ...buildTenantIndexIdentity({
-          userId: args.userId,
-          collectionId: args.collectionId,
-          documentId,
-        }),
-        visionMode: "off",
-      });
-    }
+    await workspaceIndexer.createIndex({
+      path: documentId,
+      visionMode: "off",
+    });
 
     const source = await createKnowledgeSourceRecord({
       sourceId: args.sourceId,
@@ -267,19 +160,8 @@ async function createFileBackedSource(args: {
       engine: getImportEngine(),
     };
   } catch (error) {
-    await removeDocumentFromKnowledgeWorkspace({
-      userId: args.userId,
-      collectionId: args.collectionId,
-      documentId,
-    }).catch(() => undefined);
-    await tenantIndexService
-      ?.deleteIndex(
-        buildTenantIndexIdentity({
-          userId: args.userId,
-          collectionId: args.collectionId,
-          documentId,
-        }),
-      )
+    await workspaceIndexer
+      .deleteIndex({ path: documentId })
       .catch(() => undefined);
     await filesystem
       .deleteFile(documentId, { force: true })
@@ -321,8 +203,8 @@ async function createQueuedFileSource(args: {
       documentId,
       sourceType: "file",
       title: args.title,
-      summary: args.summary?.trim() || PENDING_FILE_IMPORT_SUMMARY,
-      content: PENDING_FILE_IMPORT_CONTENT,
+      summary: args.summary?.trim(),
+      content: undefined,
       tags: normalizedTags,
       sourceFilename: args.sourceFilename,
       mimeType: args.mimeType,
@@ -500,17 +382,13 @@ export async function updateKnowledgeSource(
   sourceId: string,
   input: KnowledgeSourceUpdateRequest,
 ): Promise<KnowledgeSource> {
-  // 编辑资料时，只做三件事：覆盖原文件、移除旧索引、对同一路径重新索引。
   const source = await requireKnowledgeSource(userId, sourceId);
   const requestedContent =
-    input.content !== undefined ? input.content.trim() : source.content;
-
-  if (!requestedContent) {
-    throw new BadRequestError("资料内容不能为空");
-  }
-
+    input.content !== undefined
+      ? input.content.trim()
+      : source.content?.trim() || "";
   const nextTitle = input.title?.trim() || source.title;
-  const nextSummary = input.summary?.trim() || source.summary;
+  const nextSummary = input.summary?.trim() || source.summary?.trim();
   const nextTags = parseTags(input.tags ?? source.tags);
   const documentId = source.documentId;
   const sourceFilename = source.sourceFilename;
@@ -522,7 +400,7 @@ export async function updateKnowledgeSource(
   if (!isKnowledgeSourceContentEditable(source)) {
     if (
       input.content !== undefined &&
-      input.content.trim() !== source.content.trim()
+      input.content.trim() !== (source.content?.trim() || "")
     ) {
       throw new BadRequestError(
         "当前 PDF、Word、Excel 资料只支持更新标题、摘要和标签；如需替换正文，请重新上传文件。",
@@ -535,7 +413,7 @@ export async function updateKnowledgeSource(
       documentId,
       title: nextTitle,
       summary: nextSummary,
-      content: source.content,
+      content: undefined,
       tags: nextTags,
       mimeType: source.mimeType,
       byteSize: source.byteSize ?? undefined,
@@ -545,50 +423,23 @@ export async function updateKnowledgeSource(
     });
   }
 
-  const { filesystem, tenantIndexService, workspace } =
-    await getMutableWorkspace({
-      userId,
-      collectionId: source.collectionId,
-    });
+  if (!requestedContent) {
+    throw new BadRequestError("资料内容不能为空");
+  }
+
+  const { filesystem, workspaceIndexer } = await getMutableWorkspace({
+    userId,
+    collectionId: source.collectionId,
+  });
 
   await filesystem.writeFile(documentId, requestedContent, {
     mimeType: source.mimeType,
     overwrite: true,
   });
-  await removeDocumentFromKnowledgeWorkspace({
-    userId,
-    collectionId: source.collectionId,
-    documentId,
+  await workspaceIndexer.updateIndex({
+    path: documentId,
+    visionMode: "off",
   });
-  await workspace.index(documentId, requestedContent, {
-    mimeType: source.mimeType,
-    metadata: buildIndexMetadata({
-      collectionId: source.collectionId,
-      sourceFilename,
-      sourceType: source.sourceType,
-      summary: nextSummary,
-      tags: nextTags,
-      title: nextTitle,
-    }),
-  });
-
-  if (
-    tenantIndexService &&
-    shouldSyncTenantIndex({
-      sourceType: source.sourceType,
-      fileName: sourceFilename,
-      mimeType: source.mimeType,
-    })
-  ) {
-    await tenantIndexService.updateIndex({
-      ...buildTenantIndexIdentity({
-        userId,
-        collectionId: source.collectionId,
-        documentId,
-      }),
-      visionMode: "off",
-    });
-  }
 
   return replaceSourceContent({
     userId,

@@ -7,12 +7,13 @@ import {
   ensureDefaultUser,
   getDefaultPassword,
   getDefaultUsername,
-  LocalFilesystem,
   resetKnowledgeRepository,
   resetKnowledgeRuntimeCache,
   setKnowledgeFilesystemFactoryForTests,
   waitForPendingKnowledgeImports,
 } from "@atlas-kb/mastra/knowledge";
+import { buildMockDoclingConvertPayload } from "../../mastra/src/knowledge/test-docling";
+import { TestS3LocalFilesystem } from "../../mastra/src/knowledge/test-s3-filesystem";
 import { createApp } from "./app";
 
 const originalFetch = globalThis.fetch;
@@ -28,6 +29,9 @@ const originalS3Region = process.env.ATLAS_KB_S3_REGION;
 const originalS3Bucket = process.env.ATLAS_KB_S3_BUCKET;
 const originalS3AccessKeyId = process.env.ATLAS_KB_S3_ACCESS_KEY_ID;
 const originalS3SecretAccessKey = process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY;
+const originalInternalSecret = process.env.ATLAS_KB_INTERNAL_SECRET;
+const originalDoclingBaseUrl = process.env.DOCLING_BASE_URL;
+const originalDoclingConvertPath = process.env.DOCLING_CONVERT_PATH;
 
 function getWorkspaceFilePath(args: {
   collectionId: string;
@@ -273,6 +277,10 @@ function mockProviders() {
       });
     }
 
+    if (url.includes("/v1/convert/file")) {
+      return jsonResponse(await buildMockDoclingConvertPayload(init?.body));
+    }
+
     if (url.includes("/api/internal/knowledge-templates?")) {
       return jsonResponse({
         data: [
@@ -501,6 +509,7 @@ async function login(
   );
 
   const data = await readJson<{
+    activeCollectionId: string;
     token: string;
     user: {
       id: string;
@@ -512,6 +521,34 @@ async function login(
     response,
     ...data,
   };
+}
+
+async function switchWorkspace(params: {
+  app: ReturnType<typeof createApp>;
+  collectionId: string;
+  token: string;
+}) {
+  const response = await params.app.handle(
+    new Request("http://localhost/api/auth/active-workspace", {
+      method: "POST",
+      headers: {
+        ...authHeaders(params.token),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        collectionId: params.collectionId,
+      }),
+    }),
+  );
+
+  return readJson<{
+    activeCollectionId: string;
+    token: string;
+    user: {
+      id: string;
+      username: string;
+    };
+  }>(response);
 }
 
 function authHeaders(token: string): Record<string, string> {
@@ -581,13 +618,17 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
     process.env.ATLAS_KB_S3_BUCKET = "atlas-kb-test";
     process.env.ATLAS_KB_S3_ACCESS_KEY_ID = "test-access-key";
     process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY = "test-secret-key";
+    process.env.ATLAS_KB_INTERNAL_SECRET = "test-internal-secret";
+    process.env.DOCLING_BASE_URL = "http://docling.local";
+    process.env.DOCLING_CONVERT_PATH = "/v1/convert/file";
     globalThis.fetch = originalFetch;
     resetKnowledgeRuntimeCache();
     await resetKnowledgeRepository();
     await ensureDefaultUser();
     setKnowledgeFilesystemFactoryForTests(({ userId, collectionId }) => {
-      return new LocalFilesystem({
+      return new TestS3LocalFilesystem({
         basePath: join(workspaceFilesDir, userId, collectionId),
+        prefix: `${userId}/${collectionId}`,
       });
     });
     mockProviders();
@@ -670,6 +711,24 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
       process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY = originalS3SecretAccessKey;
     }
 
+    if (originalInternalSecret === undefined) {
+      delete process.env.ATLAS_KB_INTERNAL_SECRET;
+    } else {
+      process.env.ATLAS_KB_INTERNAL_SECRET = originalInternalSecret;
+    }
+
+    if (originalDoclingBaseUrl === undefined) {
+      delete process.env.DOCLING_BASE_URL;
+    } else {
+      process.env.DOCLING_BASE_URL = originalDoclingBaseUrl;
+    }
+
+    if (originalDoclingConvertPath === undefined) {
+      delete process.env.DOCLING_CONVERT_PATH;
+    } else {
+      process.env.DOCLING_CONVERT_PATH = originalDoclingConvertPath;
+    }
+
     resetKnowledgeRuntimeCache();
     globalThis.fetch = originalFetch;
     setKnowledgeFilesystemFactoryForTests();
@@ -701,6 +760,11 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
           id: string;
         };
       }>(createCollectionResponse);
+      const workspaceSession = await switchWorkspace({
+        app,
+        token: session.token,
+        collectionId: collectionData.collection.id,
+      });
 
       const importResponse = await app.handle(
         new Request(
@@ -708,7 +772,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
           {
             method: "POST",
             headers: {
-              ...authHeaders(session.token),
+              ...authHeaders(workspaceSession.token),
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
@@ -731,7 +795,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
         new Request("http://localhost/api/kb/search", {
           method: "POST",
           headers: {
-            ...authHeaders(session.token),
+            ...authHeaders(workspaceSession.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -778,10 +842,15 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
           id: string;
         };
       }>(createCollectionResponse);
+      const workspaceSession = await switchWorkspace({
+        app,
+        token: session.token,
+        collectionId: collectionData.collection.id,
+      });
 
       const upload = await uploadFileThroughDirectObjectFlow({
         app,
-        token: session.token,
+        token: workspaceSession.token,
         collectionId: collectionData.collection.id,
         file: new File(["downloadable file body"], "downloadable.txt", {
           type: "text/plain",
@@ -802,7 +871,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
         new Request(
           `http://localhost/api/kb/sources/${importData.source.id}/download`,
           {
-            headers: authHeaders(session.token),
+            headers: authHeaders(workspaceSession.token),
           },
         ),
       );
@@ -843,10 +912,15 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
           id: string;
         };
       }>(createCollectionResponse);
+      const workspaceSession = await switchWorkspace({
+        app,
+        token: session.token,
+        collectionId: collectionData.collection.id,
+      });
 
       const firstUpload = await uploadFileThroughDirectObjectFlow({
         app,
-        token: session.token,
+        token: workspaceSession.token,
         collectionId: collectionData.collection.id,
         file: new File(["first body"], "first.txt", {
           type: "text/plain",
@@ -854,7 +928,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
       });
       const secondUpload = await uploadFileThroughDirectObjectFlow({
         app,
-        token: session.token,
+        token: workspaceSession.token,
         collectionId: collectionData.collection.id,
         file: new File(["second body"], "second.txt", {
           type: "text/plain",
@@ -912,6 +986,110 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
 
       expect(payload.error.code).toBe("VALIDATION_ERROR");
       expect(payload.error.message).toContain("description");
+    },
+  );
+
+  it.serial(
+    "creates a default workspace for new users and rejects deleting the last workspace",
+    async () => {
+      const app = createApp();
+      await createUser({
+        username: "default-workspace-user",
+        password: "default-pass",
+      });
+      const session = await login(app, {
+        username: "default-workspace-user",
+        password: "default-pass",
+      });
+
+      const collectionsResponse = await app.handle(
+        new Request("http://localhost/api/kb/collections", {
+          headers: authHeaders(session.token),
+        }),
+      );
+      const collectionsData = await readJson<{
+        collections: Array<{
+          id: string;
+          name: string;
+        }>;
+      }>(collectionsResponse);
+
+      expect(collectionsData.collections).toHaveLength(1);
+      expect(collectionsData.collections[0]?.name).toBe("默认工作区");
+
+      const deleteResponse = await app.handle(
+        new Request(
+          `http://localhost/api/kb/collections/${collectionsData.collections[0]!.id}`,
+          {
+            method: "DELETE",
+            headers: authHeaders(session.token),
+          },
+        ),
+      );
+
+      expect(deleteResponse.status).toBe(400);
+      const deletePayload = (await deleteResponse.json()) as {
+        error: {
+          message: string;
+        };
+        success: false;
+      };
+      expect(deletePayload.error.message).toContain("至少保留一个工作区");
+    },
+  );
+
+  it.serial(
+    "mints a new token when switching the active workspace",
+    async () => {
+      const app = createApp();
+      const session = await login(app);
+
+      const createCollectionResponse = await app.handle(
+        new Request("http://localhost/api/kb/collections", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            id: "switch-workspace",
+            name: "Switch Workspace",
+            description: "workspace switch tests",
+          }),
+        }),
+      );
+      const collectionData = await readJson<{
+        collection: {
+          id: string;
+        };
+      }>(createCollectionResponse);
+      const switchedSession = await switchWorkspace({
+        app,
+        token: session.token,
+        collectionId: collectionData.collection.id,
+      });
+
+      expect(switchedSession.token).not.toBe(session.token);
+      expect(switchedSession.activeCollectionId).toBe(
+        collectionData.collection.id,
+      );
+
+      const currentSessionResponse = await app.handle(
+        new Request("http://localhost/api/auth/me", {
+          headers: authHeaders(switchedSession.token),
+        }),
+      );
+      const currentSession = await readJson<{
+        activeCollectionId: string;
+        user: {
+          id: string;
+        };
+      }>(currentSessionResponse);
+
+      expect(currentSession.activeCollectionId).toBe(
+        collectionData.collection.id,
+      );
+      expect(currentSession.user.id).toBe(session.user.id);
     },
   );
 
@@ -990,12 +1168,17 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
           id: string;
         };
       }>(secondCollectionResponse);
+      const firstWorkspace = await switchWorkspace({
+        app,
+        token: session.token,
+        collectionId: firstCollection.collection.id,
+      });
 
       await app.handle(
         new Request("http://localhost/api/chat/sessions", {
           method: "POST",
           headers: {
-            ...authHeaders(session.token),
+            ...authHeaders(firstWorkspace.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -1004,11 +1187,16 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
           }),
         }),
       );
+      const secondWorkspace = await switchWorkspace({
+        app,
+        token: firstWorkspace.token,
+        collectionId: secondCollection.collection.id,
+      });
       await app.handle(
         new Request("http://localhost/api/chat/sessions", {
           method: "POST",
           headers: {
-            ...authHeaders(session.token),
+            ...authHeaders(secondWorkspace.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -1017,12 +1205,17 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
           }),
         }),
       );
+      const listWorkspace = await switchWorkspace({
+        app,
+        token: secondWorkspace.token,
+        collectionId: firstCollection.collection.id,
+      });
 
       const listResponse = await app.handle(
         new Request(
           `http://localhost/api/chat/sessions?collectionId=${encodeURIComponent(firstCollection.collection.id)}`,
           {
-            headers: authHeaders(session.token),
+            headers: authHeaders(listWorkspace.token),
           },
         ),
       );
@@ -1213,12 +1406,17 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
           id: string;
         };
       }>(createCollectionResponse);
+      const workspaceSession = await switchWorkspace({
+        app,
+        token: session.token,
+        collectionId: collectionData.collection.id,
+      });
 
       const createSessionResponse = await app.handle(
         new Request("http://localhost/api/chat/sessions", {
           method: "POST",
           headers: {
-            ...authHeaders(session.token),
+            ...authHeaders(workspaceSession.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -1239,7 +1437,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
           {
             method: "POST",
             headers: {
-              ...authHeaders(session.token),
+              ...authHeaders(workspaceSession.token),
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
@@ -1266,7 +1464,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
         new Request("http://localhost/api/kb/assistant-roles", {
           method: "POST",
           headers: {
-            ...authHeaders(session.token),
+            ...authHeaders(workspaceSession.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -1285,7 +1483,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
         new Request("http://localhost/api/kb/assistant-roles/active", {
           method: "PATCH",
           headers: {
-            ...authHeaders(session.token),
+            ...authHeaders(workspaceSession.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -1300,7 +1498,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
           {
             method: "POST",
             headers: {
-              ...authHeaders(session.token),
+              ...authHeaders(workspaceSession.token),
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
@@ -1327,7 +1525,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
         new Request(
           `http://localhost/api/chat/sessions/${chatSessionData.session.id}/messages`,
           {
-            headers: authHeaders(session.token),
+            headers: authHeaders(workspaceSession.token),
           },
         ),
       );
@@ -1378,6 +1576,11 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
           id: string;
         };
       }>(createCollectionResponse);
+      const workspaceSession = await switchWorkspace({
+        app,
+        token: session.token,
+        collectionId: collectionData.collection.id,
+      });
 
       const importResponse = await app.handle(
         new Request(
@@ -1385,7 +1588,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
           {
             method: "POST",
             headers: {
-              ...authHeaders(session.token),
+              ...authHeaders(workspaceSession.token),
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
@@ -1417,7 +1620,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
         new Request(`http://localhost/api/kb/sources/${importData.source.id}`, {
           method: "PATCH",
           headers: {
-            ...authHeaders(session.token),
+            ...authHeaders(workspaceSession.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -1434,7 +1637,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
       const deleteResponse = await app.handle(
         new Request(`http://localhost/api/kb/sources/${importData.source.id}`, {
           method: "DELETE",
-          headers: authHeaders(session.token),
+          headers: authHeaders(workspaceSession.token),
         }),
       );
 
@@ -1468,6 +1671,11 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
           id: string;
         };
       }>(createCollectionResponse);
+      const workspaceSession = await switchWorkspace({
+        app,
+        token: session.token,
+        collectionId: collectionData.collection.id,
+      });
 
       const importResponse = await app.handle(
         new Request(
@@ -1475,7 +1683,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
           {
             method: "POST",
             headers: {
-              ...authHeaders(session.token),
+              ...authHeaders(workspaceSession.token),
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
@@ -1498,7 +1706,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
           {
             method: "POST",
             headers: {
-              ...authHeaders(session.token),
+              ...authHeaders(workspaceSession.token),
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
@@ -1520,7 +1728,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
 
       const detailResponse = await app.handle(
         new Request("http://localhost/api/kb/export-tasks/task-existing", {
-          headers: authHeaders(session.token),
+          headers: authHeaders(workspaceSession.token),
         }),
       );
       const detailData = await readJson<{
@@ -1543,7 +1751,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
         new Request("http://localhost/api/kb/export-tasks/task-existing", {
           method: "PATCH",
           headers: {
-            ...authHeaders(session.token),
+            ...authHeaders(workspaceSession.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -1630,6 +1838,11 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
         id: string;
       };
     }>(createCollectionResponse);
+    const alphaWorkspace = await switchWorkspace({
+      app,
+      token: alpha.token,
+      collectionId: collectionData.collection.id,
+    });
 
     await app.handle(
       new Request(
@@ -1637,7 +1850,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
         {
           method: "POST",
           headers: {
-            ...authHeaders(alpha.token),
+            ...authHeaders(alphaWorkspace.token),
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -1662,7 +1875,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
       }),
     );
 
-    expect(betaSearchResponse.status).toBe(404);
+    expect(betaSearchResponse.status).toBe(400);
   });
 
   it.serial(

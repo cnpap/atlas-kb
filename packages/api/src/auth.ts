@@ -1,6 +1,12 @@
 import { UnauthorizedError } from "@atlas-kb/errors";
-import { authenticateUser, getAuthUserById } from "@atlas-kb/mastra/knowledge";
 import {
+  authenticateUser,
+  getAuthUserById,
+  requireKnowledgeCollection,
+  resolveActiveKnowledgeCollectionId,
+} from "@atlas-kb/mastra/knowledge";
+import {
+  type AuthUser,
   type LoginRequest,
   LoginRequestSchema,
   type LoginResult,
@@ -41,6 +47,45 @@ function parseBearerToken(authorization?: string): string {
   return match[1].trim();
 }
 
+async function signSessionToken(args: {
+  activeCollectionId: string;
+  expiresAt: Date;
+  user: AuthUser;
+}) {
+  const token = await new SignJWT({
+    activeCollectionId: args.activeCollectionId,
+    username: args.user.username,
+  })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(args.user.id)
+    .setIssuer(JWT_ISSUER)
+    .setAudience(JWT_AUDIENCE)
+    .setExpirationTime(args.expiresAt)
+    .sign(getJwtSecret());
+
+  return token;
+}
+
+async function createLoginResult(args: {
+  activeCollectionId: string;
+  expiresAt?: Date;
+  user: AuthUser;
+}): Promise<LoginResult> {
+  const expiresAt = args.expiresAt ?? resolveExpirationDate();
+  const token = await signSessionToken({
+    user: args.user,
+    activeCollectionId: args.activeCollectionId,
+    expiresAt,
+  });
+
+  return {
+    token,
+    user: args.user,
+    activeCollectionId: args.activeCollectionId,
+    expiresAt: expiresAt.toISOString(),
+  };
+}
+
 export async function login(input: LoginRequest): Promise<LoginResult> {
   const parsedInput = LoginRequestSchema.parse(input);
 
@@ -53,22 +98,14 @@ export async function login(input: LoginRequest): Promise<LoginResult> {
     throw new UnauthorizedError("用户名或密码错误");
   }
 
-  const expiresAt = resolveExpirationDate();
-  const token = await new SignJWT({
-    username: user.username,
-  })
-    .setProtectedHeader({ alg: "HS256" })
-    .setSubject(user.id)
-    .setIssuer(JWT_ISSUER)
-    .setAudience(JWT_AUDIENCE)
-    .setExpirationTime(expiresAt)
-    .sign(getJwtSecret());
+  const activeCollectionId = await resolveActiveKnowledgeCollectionId({
+    userId: user.id,
+  });
 
-  return {
-    token,
+  return createLoginResult({
     user,
-    expiresAt: expiresAt.toISOString(),
-  };
+    activeCollectionId,
+  });
 }
 
 export async function requireAuthenticatedSession(
@@ -98,8 +135,38 @@ export async function requireAuthenticatedSession(
     throw new UnauthorizedError("当前用户不存在");
   }
 
+  const activeCollectionId = await resolveActiveKnowledgeCollectionId({
+    userId,
+    requestedCollectionId:
+      typeof verification.payload.activeCollectionId === "string"
+        ? verification.payload.activeCollectionId
+        : undefined,
+  });
+
   return {
+    activeCollectionId,
     user,
     expiresAt,
   };
+}
+
+export async function switchActiveWorkspace(args: {
+  collectionId: string;
+  userId: string;
+}): Promise<LoginResult> {
+  const user = await getAuthUserById(args.userId);
+
+  if (!user) {
+    throw new UnauthorizedError("当前用户不存在");
+  }
+
+  const collection = await requireKnowledgeCollection(
+    args.userId,
+    args.collectionId,
+  );
+
+  return createLoginResult({
+    user,
+    activeCollectionId: collection.id,
+  });
 }

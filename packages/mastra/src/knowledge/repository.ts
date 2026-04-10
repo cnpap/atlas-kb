@@ -13,8 +13,10 @@ import {
 } from "./assistant-roles-repository";
 import {
   appendChatMessage,
+  getChatMessageById,
   createChatSession,
   deleteChatSession,
+  requireChatMessage,
   getChatSessionById,
   listChatMessages,
   listChatSessions,
@@ -25,10 +27,12 @@ import {
 import {
   createKnowledgeCollection,
   deleteKnowledgeCollection,
+  ensureDefaultKnowledgeCollection,
   getDashboardCounts,
   getKnowledgeCollection,
   listKnowledgeCollections,
   requireKnowledgeCollection,
+  resolveActiveKnowledgeCollectionId,
   updateKnowledgeCollection,
 } from "./collections-repository";
 import {
@@ -78,9 +82,11 @@ export {
   deleteAssistantRole,
   deleteChatSession,
   deleteKnowledgeCollection,
+  ensureDefaultKnowledgeCollection,
   deleteKnowledgeSource,
   getActiveAssistantRole,
   getActiveAssistantRolePromptConfig,
+  getChatMessageById,
   getChatSessionById,
   getKnowledgeCollection,
   getKnowledgeCollectionSourcesData,
@@ -92,9 +98,11 @@ export {
   listKnowledgeCollections,
   listKnowledgeSources,
   replaceSourceContent,
+  requireChatMessage,
   requireChatSession,
   requireKnowledgeCollection,
   requireKnowledgeSource,
+  resolveActiveKnowledgeCollectionId,
   saveMessageFeedback,
   setActiveAssistantRole,
   updateAssistantRole,

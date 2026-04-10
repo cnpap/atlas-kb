@@ -18,6 +18,7 @@ export const LoginRequestSchema = z.object({
 });
 
 export const SessionSchema = z.object({
+  activeCollectionId: z.string().trim().min(1),
   user: AuthUserSchema,
   expiresAt: TimestampSchema,
 });
@@ -26,12 +27,21 @@ export const LoginResultSchema = SessionSchema.extend({
   token: z.string().trim().min(1),
 });
 
+export const ActiveWorkspaceSelectionRequestSchema = z.object({
+  collectionId: z.string().trim().min(1),
+});
+
 export const LoginResponseSchema =
   createApiSuccessResponseSchema(LoginResultSchema);
 export const SessionResponseSchema =
   createApiSuccessResponseSchema(SessionSchema);
+export const ActiveWorkspaceSelectionResponseSchema =
+  createApiSuccessResponseSchema(LoginResultSchema);
 
 export type AuthUser = z.infer<typeof AuthUserSchema>;
+export type ActiveWorkspaceSelectionRequest = z.infer<
+  typeof ActiveWorkspaceSelectionRequestSchema
+>;
 export type LoginRequest = z.infer<typeof LoginRequestSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type LoginResult = z.infer<typeof LoginResultSchema>;

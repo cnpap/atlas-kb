@@ -6,7 +6,7 @@ import type {
 } from "@atlas-kb/schema";
 import { SearchKnowledgeRequestSchema } from "@atlas-kb/schema";
 import { listKnowledgeSources, requireKnowledgeCollection } from "./repository";
-import { getKnowledgeWorkspace, toVectorPointId } from "./runtime";
+import { getKnowledgeWorkspace } from "./runtime";
 import { buildSearchSnippet } from "./search-utils";
 
 const DEFAULT_SEARCH_LIMIT = 8;
@@ -103,6 +103,8 @@ function toSearchHit(args: {
   };
   source: Awaited<ReturnType<typeof listKnowledgeSources>>[number];
 }): SearchKnowledgeHit {
+  const summary = args.source.summary || args.source.title;
+
   return {
     sourceId: args.source.id,
     documentId: args.source.documentId || args.source.id,
@@ -112,12 +114,8 @@ function toSearchHit(args: {
       lineRange: args.result.lineRange,
     }),
     title: args.source.title,
-    summary: args.source.summary,
-    snippet: buildSearchSnippet(
-      args.result.content,
-      args.query,
-      args.source.summary,
-    ),
+    summary,
+    snippet: buildSearchSnippet(args.result.content, args.query, summary),
     sectionPath: buildSectionPath(args.result),
     sourceFilename: args.source.sourceFilename,
     sourceType: args.source.sourceType,
@@ -160,14 +158,7 @@ export async function searchKnowledge(
   ]);
   const filteredSources = filterSources(sources, parsedInput);
   const sourceMap = new Map(
-    filteredSources.flatMap((source) => {
-      const documentId = source.documentId || source.id;
-
-      return [
-        [documentId, source] as const,
-        [toVectorPointId(documentId), source] as const,
-      ];
-    }),
+    filteredSources.map((source) => [source.documentId || source.id, source]),
   );
   const engine = toSearchEngine(workspace);
   const results = await workspace.search(parsedInput.query, {

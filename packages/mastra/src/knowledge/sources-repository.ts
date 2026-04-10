@@ -1,13 +1,8 @@
 import { NotFoundError } from "@atlas-kb/errors";
 import type { KnowledgeCollection, KnowledgeSource } from "@atlas-kb/schema";
-import { buildKnowledgeTenantId, shouldSyncTenantIndex } from "./ops-agent-kit";
 import { deleteKnowledgeImportJobsForSource } from "./import-jobs-repository";
 import { ensureKnowledgeDatabase } from "./db";
-import {
-  getKnowledgeTenantIndexService,
-  getKnowledgeWorkspace,
-  removeDocumentFromKnowledgeWorkspace,
-} from "./runtime";
+import { getKnowledgeWorkspace, getKnowledgeWorkspaceIndexer } from "./runtime";
 import { buildSummary, normalizeWhitespace } from "./search-utils";
 import {
   nowIso,
@@ -99,7 +94,7 @@ export async function createKnowledgeSourceRecord(params: {
   sourceType: KnowledgeSource["sourceType"];
   title: string;
   summary?: string;
-  content: string;
+  content?: string;
   tags: string[];
   sourceFilename?: string;
   mimeType?: string;
@@ -111,8 +106,11 @@ export async function createKnowledgeSourceRecord(params: {
   const db = await ensureKnowledgeDatabase();
   const now = nowIso();
   const id = params.sourceId ?? crypto.randomUUID();
-  const content = normalizeWhitespace(params.content);
-  const summary = params.summary?.trim() || buildSummary(content);
+  const content = params.content
+    ? normalizeWhitespace(params.content)
+    : undefined;
+  const summary =
+    params.summary?.trim() || (content ? buildSummary(content) : undefined);
 
   await db
     .insertInto("kb_sources")
@@ -122,8 +120,8 @@ export async function createKnowledgeSourceRecord(params: {
       collection_id: params.collectionId,
       document_id: params.documentId,
       title: params.title.trim(),
-      summary,
-      content,
+      summary: summary ?? null,
+      content: content ?? null,
       tags_json: params.tags,
       source_type: params.sourceType,
       status: params.status,
@@ -146,7 +144,7 @@ export async function replaceSourceContent(params: {
   documentId: string;
   title: string;
   summary?: string;
-  content: string;
+  content?: string;
   tags: string[];
   mimeType?: string;
   byteSize?: number;
@@ -156,8 +154,11 @@ export async function replaceSourceContent(params: {
 }): Promise<KnowledgeSource> {
   const current = await requireKnowledgeSource(params.userId, params.sourceId);
   const db = await ensureKnowledgeDatabase();
-  const content = normalizeWhitespace(params.content);
-  const summary = params.summary?.trim() || buildSummary(content);
+  const content = params.content
+    ? normalizeWhitespace(params.content)
+    : undefined;
+  const summary =
+    params.summary?.trim() || (content ? buildSummary(content) : undefined);
   const now = nowIso();
 
   await db
@@ -165,8 +166,8 @@ export async function replaceSourceContent(params: {
     .set({
       document_id: params.documentId,
       title: params.title.trim(),
-      summary,
-      content,
+      summary: summary ?? null,
+      content: content ?? null,
       tags_json: params.tags,
       source_filename:
         params.sourceFilename ??
@@ -198,8 +199,8 @@ export async function deleteKnowledgeSource(
     sourceId,
   });
   const documentId = source.documentId || source.sourceFilename;
-  const [tenantIndexService, workspace] = await Promise.all([
-    getKnowledgeTenantIndexService({
+  const [workspaceIndexer, workspace] = await Promise.all([
+    getKnowledgeWorkspaceIndexer({
       userId,
       collectionId: source.collectionId,
     }).catch(() => undefined),
@@ -210,30 +211,9 @@ export async function deleteKnowledgeSource(
   ]);
 
   if (documentId) {
-    await removeDocumentFromKnowledgeWorkspace({
-      userId,
-      collectionId: source.collectionId,
-      documentId,
-    }).catch(() => undefined);
-
-    if (
-      tenantIndexService &&
-      shouldSyncTenantIndex({
-        sourceType: source.sourceType,
-        fileName: source.sourceFilename ?? documentId,
-        mimeType: source.mimeType,
-      })
-    ) {
-      await tenantIndexService
-        .deleteIndex({
-          tenantId: buildKnowledgeTenantId({
-            userId,
-            collectionId: source.collectionId,
-          }),
-          path: documentId,
-        })
-        .catch(() => undefined);
-    }
+    await workspaceIndexer
+      ?.deleteIndex({ path: documentId })
+      .catch(() => undefined);
   }
 
   await db

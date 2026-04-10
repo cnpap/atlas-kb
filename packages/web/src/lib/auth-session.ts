@@ -4,6 +4,7 @@ import {
   fetchCurrentSessionRequest,
   getErrorMessage,
   loginRequest,
+  switchActiveWorkspaceRequest,
 } from "./api-client";
 import {
   AUTH_EXPIRED_EVENT,
@@ -35,6 +36,16 @@ function redirectToLogin(): void {
 function setSession(session: Session | null): void {
   sessionRef.value = session;
   initializedRef.value = true;
+}
+
+function applyLoginResult(result: LoginResult): LoginResult {
+  setAuthToken(result.token);
+  setSession({
+    user: result.user,
+    expiresAt: result.expiresAt,
+    activeCollectionId: result.activeCollectionId,
+  });
+  return result;
 }
 
 function bindAuthEvent(): void {
@@ -98,12 +109,25 @@ export async function loginWithPassword(
 
   try {
     const result = await loginRequest(input);
-    setAuthToken(result.token);
-    setSession({
-      user: result.user,
-      expiresAt: result.expiresAt,
+    return applyLoginResult(result);
+  } catch (error) {
+    throw new Error(getErrorMessage(error));
+  } finally {
+    pendingRef.value = false;
+  }
+}
+
+export async function switchActiveWorkspace(
+  collectionId: string,
+): Promise<LoginResult> {
+  bindAuthEvent();
+  pendingRef.value = true;
+
+  try {
+    const result = await switchActiveWorkspaceRequest({
+      collectionId,
     });
-    return result;
+    return applyLoginResult(result);
   } catch (error) {
     throw new Error(getErrorMessage(error));
   } finally {

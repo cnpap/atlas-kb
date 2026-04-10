@@ -1,12 +1,18 @@
 import { Elysia } from "elysia";
 import {
+  ActiveWorkspaceSelectionRequestSchema,
+  ActiveWorkspaceSelectionResponseSchema,
   AuthorizationHeadersSchema,
   LoginRequestSchema,
   LoginResponseSchema,
   SessionResponseSchema,
   success,
 } from "@atlas-kb/schema";
-import { login, requireAuthenticatedSession } from "../auth";
+import {
+  login,
+  requireAuthenticatedSession,
+  switchActiveWorkspace,
+} from "../auth";
 
 export const authRoutes = new Elysia({ prefix: "/api/auth" })
   .post(
@@ -27,5 +33,22 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
     {
       headers: AuthorizationHeadersSchema,
       response: SessionResponseSchema,
+    },
+  )
+  .post(
+    "/active-workspace",
+    async ({ body, headers }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success(
+        await switchActiveWorkspace({
+          userId: session.user.id,
+          collectionId: body.collectionId,
+        }),
+      );
+    },
+    {
+      body: ActiveWorkspaceSelectionRequestSchema,
+      headers: AuthorizationHeadersSchema,
+      response: ActiveWorkspaceSelectionResponseSchema,
     },
   );

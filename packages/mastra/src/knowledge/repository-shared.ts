@@ -26,7 +26,7 @@ export type CollectionRow = {
 export type SourceRow = {
   byte_size: number | string | null;
   collection_id: string;
-  content: string;
+  content: string | null;
   created_at: Date | string;
   document_id: string;
   failure_message: string | null;
@@ -36,7 +36,7 @@ export type SourceRow = {
   source_filename: string | null;
   source_type: string;
   status: string;
-  summary: string;
+  summary: string | null;
   tags_json: unknown;
   title: string;
   updated_at: Date | string;
@@ -197,8 +197,8 @@ export function toSource(row: SourceRow): KnowledgeSource {
     documentId: row.document_id,
     collectionId: row.collection_id,
     title: row.title,
-    summary: row.summary,
-    content: row.content,
+    summary: row.summary ?? undefined,
+    content: row.content ?? undefined,
     tags: parseJsonArray(row.tags_json),
     sourceType: row.source_type as KnowledgeSource["sourceType"],
     status: row.status as KnowledgeSource["status"],

@@ -5,11 +5,16 @@
 
 import type { ColumnType } from "kysely";
 
-export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
-  ? ColumnType<S, I | undefined, U>
-  : ColumnType<T, T | undefined, T>;
+export type Generated<T> =
+  T extends ColumnType<infer S, infer I, infer U>
+    ? ColumnType<S, I | undefined, U>
+    : ColumnType<T, T | undefined, T>;
 
-export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>;
+export type Int8 = ColumnType<
+  string,
+  bigint | number | string,
+  bigint | number | string
+>;
 
 export type Json = JsonValue;
 
@@ -159,7 +164,7 @@ export interface KbImportJobs {
 export interface KbSources {
   byte_size: Int8 | null;
   collection_id: string;
-  content: string;
+  content: string | null;
   created_at: Timestamp;
   document_id: string;
   failure_message: string | null;
@@ -169,7 +174,7 @@ export interface KbSources {
   source_filename: string;
   source_type: string;
   status: string;
-  summary: string;
+  summary: string | null;
   tags_json: Json;
   title: string;
   updated_at: Timestamp;

@@ -280,6 +280,15 @@ export async function fetchCurrentSessionRequest(): Promise<Session> {
   return requestJson<Session>("/api/auth/me");
 }
 
+export async function switchActiveWorkspaceRequest(params: {
+  collectionId: string;
+}): Promise<LoginResult> {
+  return requestJson<LoginResult>("/api/auth/active-workspace", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
 export async function listKnowledgeCollections(): Promise<{
   collections: KnowledgeCollection[];
 }> {

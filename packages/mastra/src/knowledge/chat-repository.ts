@@ -135,6 +135,27 @@ export async function requireChatSession(
   return session;
 }
 
+export async function getChatMessageById(
+  userId: string,
+  messageId: string,
+): Promise<ChatMessage | undefined> {
+  const row = await getChatMessageRow(userId, messageId);
+  return row ? toChatMessage(row) : undefined;
+}
+
+export async function requireChatMessage(
+  userId: string,
+  messageId: string,
+): Promise<ChatMessage> {
+  const message = await getChatMessageById(userId, messageId);
+
+  if (!message) {
+    throw new NotFoundError(`Chat message "${messageId}" not found`);
+  }
+
+  return message;
+}
+
 export async function updateChatSession(params: {
   userId: string;
   sessionId: string;

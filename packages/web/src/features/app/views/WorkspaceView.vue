@@ -40,6 +40,7 @@
   import {
     initializeAuthSession,
     logout,
+    switchActiveWorkspace,
     useAuthSession,
   } from "@/lib/auth-session";
   import { generateClientId } from "@/lib/ids";
@@ -64,6 +65,7 @@
     currentUser,
     initialized: authInitialized,
     pending: authPending,
+    session,
   } = useAuthSession();
 
   const assistantRoles = ref<AssistantRole[]>([]);
@@ -130,7 +132,12 @@
 
     return "library";
   });
-  const activeCollectionId = computed(() => readQueryValue(route.query.group));
+  const tokenCollectionId = computed(
+    () => session.value?.activeCollectionId?.trim() || "",
+  );
+  const activeCollectionId = computed(
+    () => tokenCollectionId.value || readQueryValue(route.query.group),
+  );
   const activeSessionId = computed(() => readQueryValue(route.query.session));
   const routeSourceId = computed(() => readQueryValue(route.query.source));
 
@@ -156,7 +163,7 @@
     }
 
     return sources.value.filter((source) =>
-      `${source.title}\n${source.summary}\n${source.tags.join(" ")}`
+      `${source.title}\n${source.summary || ""}\n${source.tags.join(" ")}`
         .toLowerCase()
         .includes(keyword),
     );
@@ -528,6 +535,7 @@
         name: payload.name.trim(),
         description: payload.description.trim(),
       });
+      await switchActiveWorkspace(data.collection.id);
 
       showCreateCollection.value = false;
       await loadCollections();
@@ -587,6 +595,10 @@
       await loadCollections();
 
       const nextCollectionId = collections.value[0]?.id || "";
+
+      if (nextCollectionId) {
+        await switchActiveWorkspace(nextCollectionId);
+      }
 
       await replaceWorkspaceQuery({
         group: nextCollectionId || undefined,
@@ -1010,7 +1022,7 @@
   }
 
   async function saveSource(payload: {
-    content: string;
+    content?: string;
     summary: string;
     tags: string;
     title: string;
@@ -1029,7 +1041,7 @@
           title: payload.title.trim() || undefined,
           summary: payload.summary.trim() || undefined,
           tags: parseTags(payload.tags),
-          content: payload.content.trim() || undefined,
+          content: payload.content?.trim() || undefined,
         },
       });
 
@@ -1086,6 +1098,11 @@
   }
 
   async function selectCollection(collectionId: string) {
+    if (!collectionId || collectionId === tokenCollectionId.value) {
+      return;
+    }
+
+    await switchActiveWorkspace(collectionId);
     await replaceWorkspaceQuery({
       group: collectionId,
       session: undefined,
@@ -1149,7 +1166,7 @@
       ]);
 
       const resolvedCollectionId =
-        activeCollectionId.value || collections.value[0]?.id || "";
+        tokenCollectionId.value || collections.value[0]?.id || "";
 
       if (!resolvedCollectionId) {
         sources.value = [];
@@ -1158,7 +1175,7 @@
         return;
       }
 
-      if (resolvedCollectionId !== activeCollectionId.value) {
+      if (resolvedCollectionId !== readQueryValue(route.query.group)) {
         await replaceWorkspaceQuery({
           group: resolvedCollectionId,
           panel: panel.value,
@@ -1321,6 +1338,7 @@
       :active-assistant-role-id="activeAssistantRoleId"
       :active-collection="activeCollection"
       :assistant-roles="assistantRoles"
+      :can-delete-collection="collections.length > 1"
       :deleting-collection="deletingCollection"
       :deleting-role-id="deletingAssistantRoleId"
       :export-tasks="exportTasks"

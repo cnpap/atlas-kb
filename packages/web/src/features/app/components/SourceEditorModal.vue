@@ -20,7 +20,7 @@
     "update:open": [value: boolean];
     submit: [
       payload: {
-        content: string;
+        content?: string;
         summary: string;
         tags: string;
         title: string;
@@ -78,7 +78,9 @@
       title: title.value.trim(),
       summary: summary.value.trim(),
       tags: tags.value,
-      content: content.value.trim(),
+      content: isDoclingManagedSource(props.source)
+        ? undefined
+        : content.value.trim(),
     });
   }
 
@@ -93,7 +95,7 @@
     title="资料编辑器"
     :description="
       isDoclingManagedSource(source)
-        ? '当前 PDF、Word、Excel 资料的正文为只读提取结果；你仍然可以更新标题、摘要和标签。'
+        ? '当前 PDF、Word、Excel 资料不再持久化正文快照；你仍然可以更新标题、摘要和标签。'
         : '编辑标题、摘要、标签和正文内容，保存后会立即更新检索。'
     "
     :close="!saving"
@@ -131,17 +133,12 @@
           >
         </div>
 
-        <div class="space-y-1.5">
+        <div v-if="!isDoclingManagedSource(source)" class="space-y-1.5">
           <p class="section-label">正文内容</p>
           <textarea
             v-model="content"
             class="field-shell w-full text-sm !min-h-[260px] font-mono leading-6"
-            :disabled="isDoclingManagedSource(source)"
-            :placeholder="
-              isDoclingManagedSource(source)
-                ? '当前文件正文由系统提取生成，仅供查看。若要替换文件内容，请重新上传原文件。'
-                : '编辑当前资料正文'
-            "
+            placeholder="编辑当前资料正文"
           />
         </div>
       </div>

@@ -14,7 +14,6 @@ import {
   importKnowledgeText,
   listChatMessages,
   listChatSessions,
-  LocalFilesystem,
   resetKnowledgeRepository,
   resetKnowledgeRuntimeCache,
   saveMessageFeedback,
@@ -22,6 +21,9 @@ import {
   setKnowledgeFilesystemFactoryForTests,
   waitForPendingKnowledgeImports,
 } from "./index";
+import { buildMockDoclingConvertPayload } from "./test-docling";
+import { buildMockQdrantResponse } from "./test-qdrant";
+import { TestS3LocalFilesystem } from "./test-s3-filesystem";
 
 const originalFetch = globalThis.fetch;
 const originalApiKey = process.env.OPENAI_API_KEY;
@@ -36,6 +38,8 @@ const originalS3Region = process.env.ATLAS_KB_S3_REGION;
 const originalS3Bucket = process.env.ATLAS_KB_S3_BUCKET;
 const originalS3AccessKeyId = process.env.ATLAS_KB_S3_ACCESS_KEY_ID;
 const originalS3SecretAccessKey = process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY;
+const originalDoclingBaseUrl = process.env.DOCLING_BASE_URL;
+const originalDoclingConvertPath = process.env.DOCLING_CONVERT_PATH;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -395,12 +399,11 @@ function mockProvidersWithOptions(options?: {
     }
 
     if (url.includes(":6333")) {
-      return jsonResponse({
-        result: {
-          points: [],
-          status: "ok",
-        },
-      });
+      return jsonResponse(buildMockQdrantResponse(url, init?.method || "GET"));
+    }
+
+    if (url.includes("/v1/convert/file")) {
+      return jsonResponse(await buildMockDoclingConvertPayload(init?.body));
     }
 
     if (url.includes("chat/completions")) {
@@ -572,11 +575,14 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
     process.env.ATLAS_KB_S3_BUCKET = "atlas-kb-test";
     process.env.ATLAS_KB_S3_ACCESS_KEY_ID = "test-access-key";
     process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY = "test-secret-key";
+    process.env.DOCLING_BASE_URL = "http://docling.local";
+    process.env.DOCLING_CONVERT_PATH = "/v1/convert/file";
     resetKnowledgeRuntimeCache();
     await resetKnowledgeRepository();
     setKnowledgeFilesystemFactoryForTests(({ userId, collectionId }) => {
-      return new LocalFilesystem({
+      return new TestS3LocalFilesystem({
         basePath: join(workspaceFilesDir, userId, collectionId),
+        prefix: `${userId}/${collectionId}`,
       });
     });
     mockProviders();
@@ -657,6 +663,18 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
       delete process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY;
     } else {
       process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY = originalS3SecretAccessKey;
+    }
+
+    if (originalDoclingBaseUrl === undefined) {
+      delete process.env.DOCLING_BASE_URL;
+    } else {
+      process.env.DOCLING_BASE_URL = originalDoclingBaseUrl;
+    }
+
+    if (originalDoclingConvertPath === undefined) {
+      delete process.env.DOCLING_CONVERT_PATH;
+    } else {
+      process.env.DOCLING_CONVERT_PATH = originalDoclingConvertPath;
     }
 
     globalThis.fetch = originalFetch;

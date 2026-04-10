@@ -45,7 +45,7 @@
         "@atlas-kb/schema": "workspace:*",
         "@aws-sdk/client-s3": "^3.1025.0",
         "@aws-sdk/s3-request-presigner": "^3.1025.0",
-        "@cnpap/ops-agent-kit": "^0.3.2",
+        "@cnpap/ops-agent-kit": "0.4.0",
         "@mastra/core": "1.13.2",
         "@mastra/memory": "1.13.1",
         "@mastra/pg": "^1.8.3",
@@ -305,7 +305,7 @@
 
     "@clack/prompts": ["@clack/prompts@1.1.0", "https://registry.npmmirror.com/@clack/prompts/-/prompts-1.1.0.tgz", { "dependencies": { "@clack/core": "1.1.0", "sisteransi": "^1.0.5" } }, "sha512-pkqbPGtohJAvm4Dphs2M8xE29ggupihHdy1x84HNojZuMtFsHiUlRvqD24tM2+XmI+61LlfNceM3Wr7U5QES5g=="],
 
-    "@cnpap/ops-agent-kit": ["@cnpap/ops-agent-kit@0.3.2", "https://npm.pkg.github.com/download/@cnpap/ops-agent-kit/0.3.2/ef9fc1e985b813fc87006054f66a2a87c7c22ab4", { "dependencies": { "@mastra/core": "1.13.2", "@mastra/lance": "1.0.4", "@mastra/qdrant": "1.0.2", "@mastra/s3": "0.3.0", "zod": "4.3.6" }, "peerDependencies": { "typescript": "^5" } }, "sha512-mH7gth3WoBlAeM25uzzhIh433CsO3i2baIgyxRq6Pjn7yExOjop2SLmPJ7qcIcU3+oEhjNJvbphJ/EOuuEsemQ=="],
+    "@cnpap/ops-agent-kit": ["@cnpap/ops-agent-kit@0.4.0", "https://npm.pkg.github.com/download/@cnpap/ops-agent-kit/0.4.0/73d03a9435a481630a254e0995b4a4c7bb5acd37", { "dependencies": { "@mastra/core": "1.13.2", "@mastra/lance": "1.0.4", "@mastra/qdrant": "1.0.2", "@mastra/s3": "0.3.0", "zod": "4.3.6" }, "peerDependencies": { "typescript": "^5" } }, "sha512-mkul/t3Aj6Q5OgE8Y2nq81r+V4N4CcqsWGXE4jziU4FBvx5yvI6a23B2c9woowuDHWF4tXJJMawcFq4hUrH48w=="],
 
     "@cnpap/vue-jump": ["@cnpap/vue-jump@0.0.1", "https://npm.pkg.github.com/download/@cnpap/vue-jump/0.0.1/896f2185b9c93223e04a2e78db955adeace443dd", { "dependencies": { "@vue/compiler-core": "^3.5.31", "@vue/compiler-sfc": "^3.5.31", "magic-string": "^0.30.14" }, "peerDependencies": { "vite": ">=5", "vue": ">=3.5.0" } }, "sha512-EvXIMqwGJhIkHio/NsNQh2YyMlDQHfkRNws8XdJdVYDKz7fVje9Dw15Gkx7OwQaoWj/I8tBXv1excHe7e20OYA=="],
 

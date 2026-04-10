@@ -46,13 +46,17 @@ export {
   createKnowledgeCollection,
   deleteKnowledgeCollection,
   deleteKnowledgeSource,
+  ensureDefaultKnowledgeCollection,
   getDashboardSummary,
+  getChatMessageById,
   getKnowledgeCollectionSourcesData,
   listKnowledgeCollections,
+  requireChatMessage,
   requireChatSession,
   requireKnowledgeCollection,
   requireKnowledgeSource,
   resetKnowledgeRepository,
+  resolveActiveKnowledgeCollectionId,
   updateKnowledgeCollection,
 } from "./repository";
 export {

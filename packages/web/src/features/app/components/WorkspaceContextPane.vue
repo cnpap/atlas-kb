@@ -19,6 +19,7 @@
     activeAssistantRoleId: string;
     activeCollection: KnowledgeCollection | null;
     assistantRoles: AssistantRole[];
+    canDeleteCollection?: boolean;
     deletingCollection?: boolean;
     deletingRoleId?: string;
     exportTasks: KnowledgeExportTask[];
@@ -180,7 +181,7 @@
                 <p
                   class="mt-1 line-clamp-3 text-[12px] leading-6 text-[var(--text-muted)]"
                 >
-                  {{ source.summary }}
+                  {{ source.summary || "未填写摘要" }}
                 </p>
               </div>
 
@@ -316,6 +317,7 @@
       :active-assistant-role-id="activeAssistantRoleId"
       :active-collection="activeCollection"
       :assistant-roles="assistantRoles"
+      :can-delete-collection="canDeleteCollection"
       :deleting-collection="deletingCollection"
       :deleting-role-id="deletingRoleId"
       :loading-assistant-roles="loadingAssistantRoles"
