@@ -60,7 +60,8 @@ Override them in `.env` with `ATLAS_KB_DEFAULT_USERNAME` and
 - `QDRANT_URL`: Qdrant endpoint
 - `QDRANT_API_KEY`: optional Qdrant API key
 - `QDRANT_COLLECTION_PREFIX`: optional prefix for workspace vector collections
-- `ATLAS_KB_S3_ENDPOINT`: required S3-compatible endpoint such as RustFS
+- `ATLAS_KB_S3_ENDPOINT`: required internal S3-compatible endpoint such as RustFS
+- `ATLAS_KB_S3_PUBLIC_ENDPOINT`: optional browser-facing S3 endpoint used for presigned download links; defaults to `ATLAS_KB_S3_ENDPOINT`
 - `ATLAS_KB_S3_REGION`: required S3 region
 - `ATLAS_KB_S3_BUCKET`: required bucket for source files
 - `ATLAS_KB_S3_ACCESS_KEY_ID`: required access key used for source mirroring
@@ -71,7 +72,10 @@ Override them in `.env` with `ATLAS_KB_DEFAULT_USERNAME` and
 
 Atlas KB now reads these values only from the runtime environment loaded from
 project `.env`. If you run RustFS locally, copy its endpoint, bucket, and
-credentials into this repo's `.env` before starting API or Mastra.
+credentials into this repo's `.env` before starting API or Mastra. When the
+API talks to RustFS through a container-only hostname such as `rustfs:9000`,
+set `ATLAS_KB_S3_PUBLIC_ENDPOINT` to a browser-reachable address such as
+`http://192.168.99.209:9000`.
 
 ## Upload Support
 

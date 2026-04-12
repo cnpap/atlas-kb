@@ -4,6 +4,7 @@ import {
   getChatTitleModel,
   getOpenAIBaseUrl,
   getOpenAIUrl,
+  getKnowledgeS3PublicEndpoint,
   resetKnowledgeConfigCache,
 } from "./config";
 
@@ -13,6 +14,8 @@ const originalEmbeddingBaseUrl = process.env.EMBEDDING_BASE_URL;
 const originalRuntimeProvider = process.env.RUNTIME_PROVIDER;
 const originalRuntimeModel = process.env.RUNTIME_MODEL;
 const originalChatTitleModel = process.env.ATLAS_KB_CHAT_TITLE_MODEL;
+const originalS3Endpoint = process.env.ATLAS_KB_S3_ENDPOINT;
+const originalS3PublicEndpoint = process.env.ATLAS_KB_S3_PUBLIC_ENDPOINT;
 
 afterEach(() => {
   if (originalOpenAIBaseUrl === undefined) {
@@ -51,6 +54,18 @@ afterEach(() => {
     process.env.ATLAS_KB_CHAT_TITLE_MODEL = originalChatTitleModel;
   }
 
+  if (originalS3Endpoint === undefined) {
+    delete process.env.ATLAS_KB_S3_ENDPOINT;
+  } else {
+    process.env.ATLAS_KB_S3_ENDPOINT = originalS3Endpoint;
+  }
+
+  if (originalS3PublicEndpoint === undefined) {
+    delete process.env.ATLAS_KB_S3_PUBLIC_ENDPOINT;
+  } else {
+    process.env.ATLAS_KB_S3_PUBLIC_ENDPOINT = originalS3PublicEndpoint;
+  }
+
   resetKnowledgeConfigCache();
 });
 
@@ -80,5 +95,19 @@ describe("@atlas-kb/mastra knowledge config", () => {
     expect(getChatTitleBaseUrl()).toBe(
       "https://dashscope.aliyuncs.com/compatible-mode/v1",
     );
+  });
+
+  it("uses the dedicated public S3 endpoint for download links when configured", () => {
+    process.env.ATLAS_KB_S3_ENDPOINT = "http://rustfs:9000";
+    process.env.ATLAS_KB_S3_PUBLIC_ENDPOINT = "http://192.168.99.209:9000";
+
+    expect(getKnowledgeS3PublicEndpoint()).toBe("http://192.168.99.209:9000");
+  });
+
+  it("falls back to the internal S3 endpoint for download links", () => {
+    process.env.ATLAS_KB_S3_ENDPOINT = "http://rustfs:9000";
+    delete process.env.ATLAS_KB_S3_PUBLIC_ENDPOINT;
+
+    expect(getKnowledgeS3PublicEndpoint()).toBe("http://rustfs:9000");
   });
 });

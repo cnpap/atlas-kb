@@ -6,6 +6,7 @@ import {
   getKnowledgeS3Endpoint,
   getKnowledgeS3ForcePathStyle,
   getKnowledgeS3Prefix,
+  getKnowledgeS3PublicEndpoint,
   getKnowledgeS3Region,
   getKnowledgeS3SecretAccessKey,
   validateKnowledgeStorageConfig,
@@ -56,7 +57,10 @@ export function buildKnowledgeSourceObjectKey(args: {
 
 const DEFAULT_PRESIGN_EXPIRY = 900;
 
-function createRawS3Client(): { client: S3Client; bucket: string } {
+function createS3Client(endpoint: string): {
+  client: S3Client;
+  bucket: string;
+} {
   validateKnowledgeStorageConfig();
 
   return {
@@ -66,7 +70,7 @@ function createRawS3Client(): { client: S3Client; bucket: string } {
         accessKeyId: getKnowledgeS3AccessKeyId()!,
         secretAccessKey: getKnowledgeS3SecretAccessKey()!,
       },
-      endpoint: getKnowledgeS3Endpoint()!,
+      endpoint,
       forcePathStyle: getKnowledgeS3ForcePathStyle(),
       region: getKnowledgeS3Region()!,
     }),
@@ -80,7 +84,9 @@ export async function getPresignedGetUrl(args: {
   expiresIn?: number;
 }): Promise<string> {
   // 下载链路只需要把资料路径转换成一个可下载的临时签名地址。
-  const { client, bucket } = createRawS3Client();
+  const { client, bucket } = createS3Client(
+    getKnowledgeS3PublicEndpoint() ?? getKnowledgeS3Endpoint()!,
+  );
   const key = buildKnowledgeSourceObjectKey(args);
 
   return getSignedUrl(

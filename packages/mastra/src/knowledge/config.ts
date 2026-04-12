@@ -200,6 +200,13 @@ export function getKnowledgeS3Endpoint(): string | undefined {
   return trimEnvValue(process.env.ATLAS_KB_S3_ENDPOINT);
 }
 
+export function getKnowledgeS3PublicEndpoint(): string | undefined {
+  return (
+    trimEnvValue(process.env.ATLAS_KB_S3_PUBLIC_ENDPOINT) ??
+    getKnowledgeS3Endpoint()
+  );
+}
+
 export function getKnowledgeS3Region(): string | undefined {
   return trimEnvValue(process.env.ATLAS_KB_S3_REGION);
 }

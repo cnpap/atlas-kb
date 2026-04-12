@@ -26,6 +26,7 @@ const originalQdrantApiKey = process.env.QDRANT_API_KEY;
 const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
 const originalQdrantUrl = process.env.QDRANT_URL;
 const originalS3Endpoint = process.env.ATLAS_KB_S3_ENDPOINT;
+const originalS3PublicEndpoint = process.env.ATLAS_KB_S3_PUBLIC_ENDPOINT;
 const originalS3Region = process.env.ATLAS_KB_S3_REGION;
 const originalS3Bucket = process.env.ATLAS_KB_S3_BUCKET;
 const originalS3AccessKeyId = process.env.ATLAS_KB_S3_ACCESS_KEY_ID;
@@ -615,6 +616,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
     delete process.env.EMBEDDING_DIMENSIONS;
     process.env.EMBEDDING_MIN_INTERVAL_MS = "1";
     process.env.ATLAS_KB_S3_ENDPOINT = "http://127.0.0.1:9000";
+    delete process.env.ATLAS_KB_S3_PUBLIC_ENDPOINT;
     process.env.ATLAS_KB_S3_REGION = "us-east-1";
     process.env.ATLAS_KB_S3_BUCKET = "atlas-kb-test";
     process.env.ATLAS_KB_S3_ACCESS_KEY_ID = "test-access-key";
@@ -691,6 +693,12 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
       delete process.env.ATLAS_KB_S3_ENDPOINT;
     } else {
       process.env.ATLAS_KB_S3_ENDPOINT = originalS3Endpoint;
+    }
+
+    if (originalS3PublicEndpoint === undefined) {
+      delete process.env.ATLAS_KB_S3_PUBLIC_ENDPOINT;
+    } else {
+      process.env.ATLAS_KB_S3_PUBLIC_ENDPOINT = originalS3PublicEndpoint;
     }
 
     if (originalS3Region === undefined) {
@@ -820,6 +828,8 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
   it.serial(
     "imports one file through the direct object upload flow and returns a download url",
     async () => {
+      process.env.ATLAS_KB_S3_ENDPOINT = "http://rustfs:9000";
+      process.env.ATLAS_KB_S3_PUBLIC_ENDPOINT = "http://192.168.99.209:9000";
       const app = createApp();
       const session = await login(app);
 
@@ -883,7 +893,77 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
         mimeType: string;
       }>(downloadResponse);
       expect(downloadData.url).toBeString();
+      expect(new URL(downloadData.url).origin).toBe(
+        "http://192.168.99.209:9000",
+      );
       expect(downloadData.filename).toBe("downloadable.txt");
+    },
+  );
+
+  it.serial(
+    "falls back to the internal S3 endpoint when no public download endpoint is configured",
+    async () => {
+      process.env.ATLAS_KB_S3_ENDPOINT = "http://rustfs:9000";
+      delete process.env.ATLAS_KB_S3_PUBLIC_ENDPOINT;
+      const app = createApp();
+      const session = await login(app);
+
+      const createCollectionResponse = await app.handle(
+        new Request("http://localhost/api/kb/collections", {
+          method: "POST",
+          headers: {
+            ...authHeaders(session.token),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            id: "api-download-fallback",
+            name: "API Download Fallback",
+            description: "download fallback tests",
+          }),
+        }),
+      );
+      const collectionData = await readJson<{
+        collection: {
+          id: string;
+        };
+      }>(createCollectionResponse);
+      const workspaceSession = await switchWorkspace({
+        app,
+        collectionId: collectionData.collection.id,
+        token: session.token,
+      });
+
+      const upload = await uploadFileThroughDirectObjectFlow({
+        app,
+        token: workspaceSession.token,
+        collectionId: collectionData.collection.id,
+        file: new File(["fallback file body"], "fallback.txt", {
+          type: "text/plain",
+        }),
+      });
+      const importData = await readJson<{
+        source: {
+          id: string;
+        };
+      }>(upload.confirmResponse);
+
+      const downloadResponse = await app.handle(
+        new Request(
+          `http://localhost/api/kb/sources/${importData.source.id}/download`,
+          {
+            headers: authHeaders(workspaceSession.token),
+          },
+        ),
+      );
+
+      expect(downloadResponse.status).toBe(200);
+      const downloadData = await readJson<{
+        url: string;
+        filename: string;
+        mimeType: string;
+      }>(downloadResponse);
+      expect(new URL(downloadData.url).origin).toBe("http://rustfs:9000");
+      expect(downloadData.filename).toBe("fallback.txt");
     },
   );
 
