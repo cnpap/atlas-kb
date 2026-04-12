@@ -68,7 +68,7 @@ function deriveFileName(init?: RequestInit): string {
   if (contentDisposition) {
     const filenameMatch =
       /filename\*=UTF-8''([^;]+)/i.exec(contentDisposition) ??
-      /filename=\"?([^\";]+)\"?/i.exec(contentDisposition);
+      /filename="?([^";]+)"?/i.exec(contentDisposition);
 
     if (filenameMatch?.[1]) {
       try {

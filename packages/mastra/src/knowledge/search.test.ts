@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { MastraDBMessage } from "@mastra/core/agent";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import postgres from "postgres";
 import { createKnowledgeAgent } from "../agents";
+import {
+  KNOWLEDGE_MEMORY_MESSAGE_MAX_CHARS,
+  KNOWLEDGE_MEMORY_TRUNCATION_NOTICE,
+} from "../memory";
 import {
   answerKnowledgeQuestion,
   createChatReply,
@@ -349,12 +355,32 @@ function buildToolDrivenAnswer(args: { messages: unknown[]; query: string }) {
   return buildFinalAnswer(args.query);
 }
 
+function applyMockAnswerOptions(
+  answer: string,
+  options?: {
+    answerRepeatCount?: number;
+  },
+) {
+  const repeatCount = options?.answerRepeatCount ?? 1;
+
+  if (repeatCount <= 1) {
+    return answer;
+  }
+
+  return Array.from({
+    length: repeatCount,
+  })
+    .fill(answer)
+    .join(" ");
+}
+
 function mockProviders() {
   mockProvidersWithOptions();
 }
 
 function mockProvidersWithOptions(options?: {
   bareOpenAIFileListAnswer?: boolean;
+  answerRepeatCount?: number;
 }) {
   globalThis.fetch = (async (
     input: string | URL | Request,
@@ -455,10 +481,13 @@ function mockProvidersWithOptions(options?: {
             finish_reason: "stop",
             message: {
               role: "assistant",
-              content: buildToolDrivenAnswer({
-                messages,
-                query,
-              }),
+              content: applyMockAnswerOptions(
+                buildToolDrivenAnswer({
+                  messages,
+                  query,
+                }),
+                options,
+              ),
             },
           },
         ],
@@ -507,12 +536,15 @@ function mockProvidersWithOptions(options?: {
         });
       }
 
-      const answer = /有哪些文件|哪些资料|哪些文档/.test(responseInputText)
-        ? buildToolDrivenAnswer({
-            messages: Array.isArray(body.input) ? body.input : [],
-            query: responseInputText,
-          })
-        : buildFinalAnswer(responseInputText);
+      const answer = applyMockAnswerOptions(
+        /有哪些文件|哪些资料|哪些文档/.test(responseInputText)
+          ? buildToolDrivenAnswer({
+              messages: Array.isArray(body.input) ? body.input : [],
+              query: responseInputText,
+            })
+          : buildFinalAnswer(responseInputText),
+        options,
+      );
 
       return jsonResponse({
         id: "resp_test",
@@ -547,14 +579,66 @@ function mockProvidersWithOptions(options?: {
         {
           index: 0,
           message: {
-            content: buildFinalAnswer(
-              query || readMessageText(lastMessage?.content),
+            content: applyMockAnswerOptions(
+              buildFinalAnswer(query || readMessageText(lastMessage?.content)),
+              options,
             ),
           },
         },
       ],
     });
   }) as typeof fetch;
+}
+
+type StoredMastraMessageRow = {
+  content: string;
+  id: string;
+  role: string;
+};
+
+type StoredMastraMessage = {
+  content: MastraDBMessage["content"];
+  id: string;
+  role: string;
+};
+
+async function listStoredMastraMessages(
+  threadId: string,
+): Promise<StoredMastraMessage[]> {
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+
+  if (!databaseUrl) {
+    throw new Error("缺少 DATABASE_URL，无法读取 Mastra memory 消息。");
+  }
+
+  const sql = postgres(databaseUrl, {
+    onnotice() {},
+    prepare: false,
+  });
+
+  try {
+    const rows = await sql<StoredMastraMessageRow[]>`
+      select id, role, content
+      from atlas_kb_mastra.mastra_messages
+      where "thread_id" = ${threadId}
+      order by "createdAt" asc
+    `;
+
+    return rows.map((row) => ({
+      id: row.id,
+      role: row.role,
+      content: JSON.parse(row.content) as MastraDBMessage["content"],
+    }));
+  } finally {
+    await sql.end();
+  }
+}
+
+function readStoredMastraText(content: MastraDBMessage["content"]): string {
+  return content.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("");
 }
 
 describe.serial("@atlas-kb/mastra workspace search flow", () => {
@@ -830,6 +914,79 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
       expect(messages[0]?.content).toBe("Who handles malware incidents?");
       expect(messages[1]?.role).toBe("assistant");
       expect(messages[1]?.content).toBe(reply.assistantMessage.content);
+    },
+  );
+
+  it.serial(
+    "keeps Mastra memory bounded across long knowledge chat sessions",
+    async () => {
+      mockProvidersWithOptions({
+        answerRepeatCount: 320,
+      });
+
+      const user = await ensureDefaultUser();
+      const collection = await createKnowledgeCollection({
+        userId: user.id,
+        input: {
+          id: "chat-memory-bounded",
+          name: "Chat Memory Bounded",
+          description: "long chat memory regression",
+        },
+      });
+
+      await importKnowledgeText({
+        userId: user.id,
+        collectionId: collection.id,
+        input: {
+          title: "部门职责",
+          content:
+            "Malware incidents on office devices are handled by the infosec team.",
+        },
+      });
+
+      const session = await createChatSession({
+        userId: user.id,
+        collectionId: collection.id,
+        title: "Long chat regression",
+      });
+
+      for (let round = 0; round < 15; round += 1) {
+        const query =
+          round === 0
+            ? "Who handles malware incidents?"
+            : `请把上一轮回答改写得更正式一些，第 ${String(round)} 轮。`;
+        const reply = await createChatReply({
+          userId: user.id,
+          sessionId: session.id,
+          input: {
+            query,
+          },
+        });
+
+        expect(reply.assistantMessage.content).toBeTruthy();
+      }
+
+      const chatMessages = await listChatMessages(user.id, session.id);
+      const storedMessages = await listStoredMastraMessages(session.id);
+      const storedTexts = storedMessages.map((message) =>
+        readStoredMastraText(message.content),
+      );
+
+      expect(chatMessages).toHaveLength(30);
+      expect(storedMessages).toHaveLength(30);
+      expect(
+        storedMessages.every((message) =>
+          message.content.parts.every((part) => part.type === "text"),
+        ),
+      ).toBe(true);
+      expect(
+        storedTexts.some((text) =>
+          text.includes(KNOWLEDGE_MEMORY_TRUNCATION_NOTICE),
+        ),
+      ).toBe(true);
+      expect(
+        Math.max(...storedTexts.map((text) => text.length)),
+      ).toBeLessThanOrEqual(KNOWLEDGE_MEMORY_MESSAGE_MAX_CHARS);
     },
   );
 

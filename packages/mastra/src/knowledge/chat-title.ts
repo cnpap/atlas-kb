@@ -91,8 +91,8 @@ function readChatCompletionMessageContent(payload: unknown): string {
 function stripTitleDecorations(value: string): string {
   return value
     .replace(/^(?:标题|会话标题)\s*[:：-]\s*/iu, "")
-    .replace(/^[`"'“”‘’《》「」『』【】\[\]()（）]+/u, "")
-    .replace(/[`"'“”‘’《》「」『』【】\[\]()（）]+$/u, "")
+    .replace(/^[`"'“”‘’《》「」『』【】[\]()（）]+/u, "")
+    .replace(/[`"'“”‘’《》「」『』【】[\]()（）]+$/u, "")
     .replace(/[。！？!?；;，,、:：]+$/u, "")
     .replace(/(?:对话|会话)+$/u, "")
     .trim();

@@ -1,6 +1,7 @@
 import { createOpenAI } from "@ai-sdk/openai";
+import type { MastraDBMessage } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
-import { PostgresStore } from "@mastra/pg";
+import { MemoryPG, PostgresStore } from "@mastra/pg";
 import { QdrantVector } from "@mastra/qdrant";
 import { createRuntimeModel } from "../models/runtime-model";
 import {
@@ -22,12 +23,38 @@ function requireEmbeddingApiKey(): string {
   return apiKey;
 }
 
+class KnowledgeMemoryStore extends MemoryPG {
+  override async saveMessages(
+    args: Parameters<MemoryPG["saveMessages"]>[0],
+  ): ReturnType<MemoryPG["saveMessages"]> {
+    const messages = sanitizeKnowledgeMemoryMessages(args.messages);
+
+    if (messages.length === 0) {
+      return {
+        messages: [],
+      };
+    }
+
+    return super.saveMessages({
+      messages,
+    });
+  }
+}
+
 function createMemoryStorage() {
-  return new PostgresStore({
+  const config = {
     id: "memory-storage",
     connectionString: getDatabaseUrl(),
     schemaName: "atlas_kb_mastra",
+  } satisfies ConstructorParameters<typeof PostgresStore>[0];
+  const store = new PostgresStore(config);
+
+  store.stores.memory = new KnowledgeMemoryStore({
+    client: store.db,
+    schemaName: config.schemaName,
   });
+
+  return store;
 }
 
 function createMemoryVector() {
@@ -47,6 +74,83 @@ function createMemoryEmbedder() {
   });
 
   return provider.embedding(getEmbeddingModel());
+}
+
+export const KNOWLEDGE_MEMORY_MESSAGE_MAX_CHARS = 8_000;
+export const KNOWLEDGE_MEMORY_TRUNCATION_NOTICE =
+  "\n[内容过长，已为上下文裁剪]";
+
+type KnowledgeMemoryPart = MastraDBMessage["content"]["parts"][number];
+
+function truncateKnowledgeMemoryText(text: string, limit: number): string {
+  if (text.length <= limit) {
+    return text;
+  }
+
+  if (limit <= KNOWLEDGE_MEMORY_TRUNCATION_NOTICE.length) {
+    return KNOWLEDGE_MEMORY_TRUNCATION_NOTICE.slice(0, limit);
+  }
+
+  return `${text.slice(0, limit - KNOWLEDGE_MEMORY_TRUNCATION_NOTICE.length)}${KNOWLEDGE_MEMORY_TRUNCATION_NOTICE}`;
+}
+
+function sanitizeKnowledgeMemoryPart(
+  part: KnowledgeMemoryPart,
+  remainingChars: number,
+): KnowledgeMemoryPart | null {
+  if (part.type !== "text" || remainingChars <= 0 || !part.text.length) {
+    return null;
+  }
+
+  const { providerMetadata: _providerMetadata, ...restPart } = part;
+
+  return {
+    ...restPart,
+    text: truncateKnowledgeMemoryText(part.text, remainingChars),
+  };
+}
+
+export function sanitizeKnowledgeMemoryMessage(
+  message: MastraDBMessage,
+): MastraDBMessage | null {
+  let remainingChars = KNOWLEDGE_MEMORY_MESSAGE_MAX_CHARS;
+  const parts: KnowledgeMemoryPart[] = [];
+
+  for (const part of message.content.parts) {
+    const sanitizedPart = sanitizeKnowledgeMemoryPart(part, remainingChars);
+
+    if (!sanitizedPart) {
+      continue;
+    }
+
+    parts.push(sanitizedPart);
+    remainingChars -= sanitizedPart.text.length;
+
+    if (remainingChars <= 0) {
+      break;
+    }
+  }
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  return {
+    ...message,
+    content: {
+      format: 2,
+      parts,
+    },
+  };
+}
+
+export function sanitizeKnowledgeMemoryMessages(
+  messages: readonly MastraDBMessage[],
+): MastraDBMessage[] {
+  return messages.flatMap((message) => {
+    const sanitizedMessage = sanitizeKnowledgeMemoryMessage(message);
+    return sanitizedMessage ? [sanitizedMessage] : [];
+  });
 }
 
 export function buildKnowledgeMemoryResourceId(
@@ -73,6 +177,17 @@ export const knowledgeMemory = new Memory({
       enabled: true,
       scope: "thread",
       model: createRuntimeModel(),
+      observation: {
+        messageTokens: 10_000,
+        bufferTokens: 2_000,
+        bufferActivation: 0.8,
+        blockAfter: 1.15,
+      },
+      reflection: {
+        observationTokens: 24_000,
+        bufferActivation: 0.5,
+        blockAfter: 1.2,
+      },
     },
   },
 });

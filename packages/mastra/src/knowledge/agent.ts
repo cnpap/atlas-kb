@@ -298,7 +298,6 @@ async function executeKnowledgeQuestion(
             context.agent.generate(params.question, context.options),
             AGENT_EXECUTION_TIMEOUT_MS,
           );
-
     return buildKnowledgeAnswerResult({
       collectionId: params.collectionId,
       output,
