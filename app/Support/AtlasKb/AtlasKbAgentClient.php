@@ -79,39 +79,6 @@ class AtlasKbAgentClient
         ];
     }
 
-    /**
-     * @return array{processed:bool, jobId?:string, sourceId?:string, sourceStatus?:string}
-     */
-    public function processNextImportJob(): array
-    {
-        $response = $this->http
-            ->baseUrl((string) config('atlas-kb.api_base_url'))
-            ->connectTimeout((int) config('atlas-kb.timeouts.connect'))
-            ->timeout((int) config('atlas-kb.timeouts.request'))
-            ->acceptJson()
-            ->withHeaders([
-                'X-Atlas-Kb-Internal-Secret' => (string) config('atlas-kb.internal_secret'),
-            ])
-            ->post('/api/kb/internal/import-jobs/process-next');
-
-        if (! $response->successful()) {
-            throw new RuntimeException('Atlas KB import job request failed: '.$response->status().' '.$response->body());
-        }
-
-        $result = $response->json('data.result');
-
-        if (! is_array($result) || ! array_key_exists('processed', $result)) {
-            throw new RuntimeException('Atlas KB import job endpoint returned an invalid response.');
-        }
-
-        return array_filter([
-            'processed' => (bool) $result['processed'],
-            'jobId' => isset($result['jobId']) ? (string) $result['jobId'] : null,
-            'sourceId' => isset($result['sourceId']) ? (string) $result['sourceId'] : null,
-            'sourceStatus' => isset($result['sourceStatus']) ? (string) $result['sourceStatus'] : null,
-        ], static fn (mixed $value): bool => $value !== null);
-    }
-
     protected function formatAtlasKbTimestamp(?DateTimeInterface $value): ?string
     {
         return $value?->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.v\Z');

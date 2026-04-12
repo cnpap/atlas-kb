@@ -100,7 +100,6 @@ test('deleting a knowledge user cascades through dependent kb tables', function 
     $knowledgeUser = KnowledgeUser::factory()->create();
     $collectionId = (string) fake()->uuid();
     $sourceId = (string) fake()->uuid();
-    $importJobId = (string) fake()->uuid();
     $assistantRoleId = (string) fake()->uuid();
     $chatSessionId = (string) fake()->uuid();
     $chatMessageId = (string) fake()->uuid();
@@ -136,22 +135,9 @@ test('deleting a knowledge user cascades through dependent kb tables', function 
         'mime_type' => 'text/plain',
         'byte_size' => 10,
         'failure_message' => null,
+        'index_chunk_count' => 0,
         'created_at' => $now,
         'updated_at' => $now,
-    ]);
-
-    DB::table('kb_import_jobs')->insert([
-        'id' => $importJobId,
-        'owner_user_id' => $knowledgeUser->getKey(),
-        'source_id' => $sourceId,
-        'collection_id' => $collectionId,
-        'source_type' => 'text',
-        'stage' => 'indexing',
-        'status' => 'completed',
-        'attempt' => 1,
-        'error_message' => null,
-        'started_at' => $now,
-        'finished_at' => $now,
     ]);
 
     DB::table('kb_assistant_roles')->insert([
@@ -224,7 +210,6 @@ test('deleting a knowledge user cascades through dependent kb tables', function 
 
     expect(DB::table('kb_collections')->where('id', $collectionId)->exists())->toBeFalse()
         ->and(DB::table('kb_sources')->where('id', $sourceId)->exists())->toBeFalse()
-        ->and(DB::table('kb_import_jobs')->where('id', $importJobId)->exists())->toBeFalse()
         ->and(DB::table('kb_assistant_roles')->where('id', $assistantRoleId)->exists())->toBeFalse()
         ->and(DB::table('kb_user_settings')->where('user_id', $knowledgeUser->getKey())->exists())->toBeFalse()
         ->and(DB::table('kb_chat_sessions')->where('id', $chatSessionId)->exists())->toBeFalse()

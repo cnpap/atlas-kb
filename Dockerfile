@@ -38,7 +38,6 @@ WORKDIR /app
 FROM php-base AS vendor
 
 ENV APP_ENV=production
-ENV APP_KEY=base64:MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
 ENV CACHE_STORE=array
 ENV DB_CONNECTION=sqlite
 ENV DB_DATABASE=/app/database/database.sqlite
@@ -67,6 +66,7 @@ RUN mkdir -p \
     storage/logs \
   && touch storage/logs/laravel.log \
   && rm -f bootstrap/cache/*.php \
+  && export APP_KEY=base64:MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA= \
   && php artisan package:discover --ansi \
   && php artisan filament:upgrade --ansi
 

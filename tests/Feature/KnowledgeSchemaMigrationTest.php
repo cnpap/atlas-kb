@@ -65,6 +65,7 @@ test('development migrations are consolidated around feature boundaries', functi
         '2026_04_03_032232_create_kb_conversation_tables.php',
         '2026_04_03_074812_create_kb_template_domain_tables.php',
         '2026_04_10_061150_create_kb_workspace_index_runtime_tables.php',
+        '2026_04_12_000000_streamline_kb_source_indexing_runtime.php',
     ];
 
     $obsoleteMigrationFiles = [
@@ -117,47 +118,12 @@ test('knowledge base tables are created with the expected contract', function ()
                 'byte_size' => ['data_type' => 'bigint', 'is_nullable' => 'YES'],
                 'source_filename' => ['data_type' => 'text', 'is_nullable' => 'NO'],
                 'failure_message' => ['data_type' => 'text', 'is_nullable' => 'YES'],
+                'index_chunk_count' => ['data_type' => 'integer', 'is_nullable' => 'NO'],
             ],
             'indexes' => [
                 'idx_kb_sources_collection' => 'collection_id, updated_at DESC',
                 'idx_kb_sources_document' => 'owner_user_id, document_id',
                 'idx_kb_sources_owner' => 'owner_user_id, updated_at DESC',
-            ],
-            'foreign_keys' => [
-                'FOREIGN KEY (collection_id) REFERENCES kb_collections(id) ON DELETE CASCADE',
-                'FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE',
-            ],
-        ],
-        'kb_import_jobs' => [
-            'columns' => [
-                'owner_user_id' => ['data_type' => 'bigint', 'is_nullable' => 'NO'],
-                'attempt' => ['data_type' => 'integer', 'is_nullable' => 'NO'],
-                'finished_at' => ['data_type' => 'timestamp with time zone', 'is_nullable' => 'YES'],
-            ],
-            'indexes' => [
-                'idx_kb_import_jobs_owner' => 'owner_user_id, started_at DESC',
-            ],
-            'foreign_keys' => [
-                'FOREIGN KEY (collection_id) REFERENCES kb_collections(id) ON DELETE CASCADE',
-                'FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE',
-                'FOREIGN KEY (source_id) REFERENCES kb_sources(id) ON DELETE CASCADE',
-            ],
-        ],
-        'kb_workspace_index_checkpoints' => [
-            'columns' => [
-                'scope_key' => ['data_type' => 'text', 'is_nullable' => 'NO'],
-                'path' => ['data_type' => 'text', 'is_nullable' => 'NO'],
-                'owner_user_id' => ['data_type' => 'bigint', 'is_nullable' => 'NO'],
-                'collection_id' => ['data_type' => 'text', 'is_nullable' => 'NO'],
-                'status' => ['data_type' => 'text', 'is_nullable' => 'NO'],
-                'checkpoint_json' => ['data_type' => 'jsonb', 'is_nullable' => 'NO'],
-                'updated_at' => ['data_type' => 'timestamp with time zone', 'is_nullable' => 'NO'],
-            ],
-            'indexes' => [
-                'idx_kb_workspace_index_checkpoints_collection' => 'collection_id, updated_at DESC',
-                'idx_kb_workspace_index_checkpoints_owner' => 'owner_user_id, updated_at DESC',
-                'idx_kb_workspace_index_checkpoints_status' => 'status, updated_at DESC',
-                'kb_workspace_index_checkpoints_pkey' => 'UNIQUE',
             ],
             'foreign_keys' => [
                 'FOREIGN KEY (collection_id) REFERENCES kb_collections(id) ON DELETE CASCADE',
@@ -407,6 +373,9 @@ test('knowledge base tables are created with the expected contract', function ()
             expect(Schema::hasColumns($table, array_keys($expectations['columns'])))->toBeTrue();
         }
 
+        expect(Schema::hasTable('kb_import_jobs'))->toBeFalse();
+        expect(Schema::hasTable('kb_workspace_index_checkpoints'))->toBeFalse();
+
         return;
     }
 
@@ -442,6 +411,9 @@ test('knowledge base tables are created with the expected contract', function ()
             expect(implode("\n", $foreignKeys))->toContain($definition);
         }
     }
+
+    expect(Schema::hasTable('kb_import_jobs'))->toBeFalse();
+    expect(Schema::hasTable('kb_workspace_index_checkpoints'))->toBeFalse();
 });
 
 test('knowledge base users are unified into the users table', function () {
