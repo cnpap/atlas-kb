@@ -23,8 +23,14 @@ import {
   requireKnowledgeSource,
   requireKnowledgeSourceRow,
 } from "./sources-repository";
-import { enqueueKnowledgeSourceImport, waitForPendingKnowledgeImports } from "./source-import-workflow";
-import { indexKnowledgeSourceContent, removeKnowledgeSourceChunks } from "./source-indexing";
+import {
+  enqueueKnowledgeSourceImport,
+  waitForPendingKnowledgeImports,
+} from "./source-import-workflow";
+import {
+  indexKnowledgeSourceContent,
+  removeKnowledgeSourceChunks,
+} from "./source-indexing";
 import {
   allocateManagedSourceFileName,
   buildManagedSourceFileName,

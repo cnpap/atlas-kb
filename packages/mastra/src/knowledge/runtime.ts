@@ -224,8 +224,8 @@ class KnowledgeWorkspaceS3Filesystem extends S3Filesystem {
               ? {}
               : {
                   CreateBucketConfiguration: {
-                    LocationConstraint:
-                      this.workspaceRegion as BucketLocationConstraint,
+                    LocationConstraint: this
+                      .workspaceRegion as BucketLocationConstraint,
                   },
                 }),
           }),

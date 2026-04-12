@@ -176,7 +176,8 @@
     );
   });
   const editingSource = computed(
-    () => sources.value.find((item) => item.id === editingSourceId.value) || null,
+    () =>
+      sources.value.find((item) => item.id === editingSourceId.value) || null,
   );
   const hasProcessingSources = computed(() =>
     sources.value.some((source) => source.status === "processing"),

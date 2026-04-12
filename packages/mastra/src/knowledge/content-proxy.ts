@@ -20,9 +20,7 @@ const EXTRACTABLE_MIME_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]);
 
-const RAW_WORKSPACE_FILESYSTEM = Symbol(
-  "atlas-kb.raw-workspace-filesystem",
-);
+const RAW_WORKSPACE_FILESYSTEM = Symbol("atlas-kb.raw-workspace-filesystem");
 
 function getPathExtension(path: string): string | null {
   const sanitized = path.split("?")[0]?.split("#")[0] ?? path;
@@ -59,7 +57,10 @@ function deriveFileName(path: string): string {
   return normalized.split("/").at(-1)?.trim() || "document";
 }
 
-function isExtractableDocument(args: { path: string; mimeType?: string }): boolean {
+function isExtractableDocument(args: {
+  path: string;
+  mimeType?: string;
+}): boolean {
   const extension = getPathExtension(args.path);
 
   if (extension && EXTRACTABLE_EXTENSIONS.has(extension)) {

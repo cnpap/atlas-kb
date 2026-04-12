@@ -69,9 +69,10 @@ async function runKnowledgeSourceImport(args: {
   sourceId: string;
   userId: string;
 }): Promise<z.infer<typeof KnowledgeSourceImportWorkflowOutputSchema>> {
-  const source = await requireKnowledgeSourceRow(args.userId, args.sourceId).catch(
-    () => null,
-  );
+  const source = await requireKnowledgeSourceRow(
+    args.userId,
+    args.sourceId,
+  ).catch(() => null);
 
   if (!source) {
     return {
@@ -98,7 +99,9 @@ async function runKnowledgeSourceImport(args: {
       summary: source.summary ?? undefined,
       content: undefined,
       tags: Array.isArray(source.tags_json)
-        ? source.tags_json.filter((value): value is string => typeof value === "string")
+        ? source.tags_json.filter(
+            (value): value is string => typeof value === "string",
+          )
         : [],
       mimeType: source.mime_type ?? undefined,
       byteSize:
@@ -152,7 +155,9 @@ async function runKnowledgeSourceImport(args: {
       summary: source.summary ?? undefined,
       content: undefined,
       tags: Array.isArray(source.tags_json)
-        ? source.tags_json.filter((value): value is string => typeof value === "string")
+        ? source.tags_json.filter(
+            (value): value is string => typeof value === "string",
+          )
         : [],
       mimeType: source.mime_type ?? undefined,
       byteSize:
@@ -192,7 +197,9 @@ async function runKnowledgeSourceImport(args: {
       summary: source.summary ?? undefined,
       content: undefined,
       tags: Array.isArray(source.tags_json)
-        ? source.tags_json.filter((value): value is string => typeof value === "string")
+        ? source.tags_json.filter(
+            (value): value is string => typeof value === "string",
+          )
         : [],
       mimeType: source.mime_type ?? undefined,
       byteSize:

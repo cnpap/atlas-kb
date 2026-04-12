@@ -28,7 +28,10 @@ function buildDeterministicUuid(seed: string): string {
   return formatUuidFromHex(Buffer.from(bytes).toString("hex"));
 }
 
-export function buildKnowledgeChunkId(sourceId: string, ordinal: number): string {
+export function buildKnowledgeChunkId(
+  sourceId: string,
+  ordinal: number,
+): string {
   return buildDeterministicUuid(`atlas-kb:${sourceId}:chunk:${ordinal}`);
 }
 
