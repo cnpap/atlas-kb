@@ -10,11 +10,10 @@
   } from "lucide-vue-next";
   import {
     formatDateTime,
-    formatPageNumberList,
-    getSourceIndexProgressStatusLabel,
     getSourceStatusLabel,
     getSourceStatusTone,
-    shouldShowSourceIndexProgress,
+    getSourceTaskMessage,
+    shouldShowSourceTaskMessage,
   } from "@/lib/knowledge-ui";
 
   const props = defineProps<{
@@ -44,7 +43,7 @@
   const tags = ref("");
   const content = ref("");
 
-  function isDoclingManagedSource(source: KnowledgeSource | null): boolean {
+  function isBinaryManagedSource(source: KnowledgeSource | null): boolean {
     if (!source) {
       return false;
     }
@@ -89,7 +88,7 @@
       title: title.value.trim(),
       summary: summary.value.trim(),
       tags: tags.value,
-      content: isDoclingManagedSource(props.source)
+      content: isBinaryManagedSource(props.source)
         ? undefined
         : content.value.trim(),
     });
@@ -105,7 +104,7 @@
     :open="open"
     title="资料编辑器"
     :description="
-      isDoclingManagedSource(source)
+      isBinaryManagedSource(source)
         ? '当前 PDF、Word、Excel 资料不再持久化正文快照；你仍然可以更新标题、摘要和标签。'
         : '编辑标题、摘要、标签和正文内容，保存后会立即更新检索。'
     "
@@ -145,103 +144,28 @@
         </div>
 
         <div
-          v-if="shouldShowSourceIndexProgress(source)"
+          v-if="shouldShowSourceTaskMessage(source)"
           class="space-y-3 rounded-[8px] border border-[rgba(93,72,34,0.08)] bg-[rgba(255,250,240,0.6)] p-3"
         >
           <div class="flex items-center justify-between gap-3">
-            <p class="section-label">索引进度</p>
-            <span
-              v-if="source.indexProgress"
-              class="text-[11px] font-medium text-[var(--text-strong)]"
-            >
-              {{ getSourceIndexProgressStatusLabel(source.indexProgress) }}
+            <p class="section-label">后台状态</p>
+            <span class="text-[11px] font-medium text-[var(--text-strong)]">
+              {{ source.status === "failed" ? "处理失败" : "后台处理中" }}
             </span>
           </div>
-
-          <div v-if="source.indexProgress" class="grid gap-2 sm:grid-cols-2">
-            <div class="rounded-[6px] bg-white/70 px-3 py-2">
-              <p class="text-[11px] text-[var(--text-dim)]">分块进度</p>
-              <p class="mt-1 text-sm font-medium text-[var(--text-strong)]">
-                {{ source.indexProgress.completedChunks }}
-                /
-                {{ source.indexProgress.totalChunks }}
-                块
-              </p>
-            </div>
-            <div class="rounded-[6px] bg-white/70 px-3 py-2">
-              <p class="text-[11px] text-[var(--text-dim)]">失败分块</p>
-              <p class="mt-1 text-sm font-medium text-[var(--text-strong)]">
-                {{ source.indexProgress.failedChunks }}
-                块
-              </p>
-            </div>
-            <div class="rounded-[6px] bg-white/70 px-3 py-2">
-              <p class="text-[11px] text-[var(--text-dim)]">页进度</p>
-              <p class="mt-1 text-sm font-medium text-[var(--text-strong)]">
-                {{ source.indexProgress.completedPages }}
-                /
-                {{ source.indexProgress.totalPages }}
-                页
-              </p>
-            </div>
-            <div class="rounded-[6px] bg-white/70 px-3 py-2">
-              <p class="text-[11px] text-[var(--text-dim)]">最近处理页</p>
-              <p class="mt-1 text-sm font-medium text-[var(--text-strong)]">
-                {{ source.indexProgress.lastProcessedPage === null
-                    ? "未开始"
-                    : `第 ${source.indexProgress.lastProcessedPage} 页` }}
-              </p>
-            </div>
-          </div>
-
           <div
-            v-if="source.indexProgress?.lastError || source.failureMessage"
-            class="rounded-[6px] border border-[rgba(185,28,28,0.12)] bg-[rgba(254,242,242,0.78)] px-3 py-2"
+            class="rounded-[6px] border border-[rgba(93,72,34,0.08)] bg-white/70 px-3 py-2"
           >
-            <p class="text-[11px] text-[var(--text-dim)]">最近错误</p>
-            <p class="mt-1 text-sm leading-6 text-[var(--text-strong)]">
-              {{ source.indexProgress?.lastError ||
-                source.failureMessage ||
-                "未记录" }}
+            <p class="text-sm leading-6 text-[var(--text-strong)]">
+              {{ getSourceTaskMessage(source) }}
             </p>
           </div>
-
-          <div
-            v-if="source.indexProgress"
-            class="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[var(--text-muted)]"
-          >
-            <span
-              >更新时间：{{ formatDateTime(source.indexProgress.updatedAt) }}</span
-            >
-            <span>
-              {{ source.indexProgress.resumeable ? "支持续跑" : "无需续跑" }}
-            </span>
-          </div>
-
-          <div
-            v-if="source.indexProgress?.failedChunkDetails.length"
-            class="space-y-2"
-          >
-            <p class="text-[11px] font-medium text-[var(--text-dim)]">
-              失败分块
-            </p>
-            <div
-              v-for="failure in source.indexProgress.failedChunkDetails"
-              :key="failure.chunkId"
-              class="rounded-[6px] border border-[rgba(93,72,34,0.08)] bg-white/70 px-3 py-2"
-            >
-              <p class="text-xs font-medium text-[var(--text-strong)]">
-                块 {{ failure.ordinal + 1 }} ·
-                {{ formatPageNumberList(failure.pageNumbers) }}
-              </p>
-              <p class="mt-1 text-xs leading-5 text-[var(--text-muted)]">
-                {{ failure.error }}
-              </p>
-            </div>
+          <div class="text-[11px] text-[var(--text-muted)]">
+            更新时间：{{ formatDateTime(source.updatedAt) }}
           </div>
         </div>
 
-        <div v-if="!isDoclingManagedSource(source)" class="space-y-1.5">
+        <div v-if="!isBinaryManagedSource(source)" class="space-y-1.5">
           <p class="section-label">正文内容</p>
           <textarea
             v-model="content"

@@ -31,6 +31,7 @@ export type SourceRow = {
   document_id: string;
   failure_message: string | null;
   id: string;
+  index_chunk_count: number | string | null;
   mime_type: string | null;
   owner_user_id: string;
   source_filename: string | null;
@@ -90,6 +91,7 @@ export const SOURCE_COLUMNS = [
   "title",
   "summary",
   "content",
+  "index_chunk_count",
   "tags_json",
   "source_type",
   "status",

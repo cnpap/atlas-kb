@@ -83,7 +83,7 @@ ENV API_HOST=0.0.0.0
 ENV API_PORT=6112
 ENV BUN_INSTALL_CACHE_DIR=/var/lib/atlas-kb/bun-install-cache
 
-COPY --chown=bun:bun --from=runtime-deps /app/node_modules/.bun ./node_modules/.bun
+COPY --chown=bun:bun --from=runtime-deps /app/node_modules ./node_modules
 COPY --chown=bun:bun --from=runtime-deps /app/packages/api/node_modules ./packages/api/node_modules
 COPY --chown=bun:bun --from=runtime-deps /app/packages/mastra/node_modules ./packages/mastra/node_modules
 COPY --chown=bun:bun --from=runtime-deps /app/packages/schema/node_modules ./packages/schema/node_modules

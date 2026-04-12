@@ -1,10 +1,14 @@
 import { UpstreamServiceError } from "@atlas-kb/errors";
 import {
+  CreateBucketCommand,
+  HeadBucketCommand,
+  type BucketLocationConstraint,
+} from "@aws-sdk/client-s3";
+import {
   LocalFilesystem,
   Workspace,
   type WorkspaceFilesystem,
 } from "@mastra/core/workspace";
-import type { WorkspaceIndexer } from "@cnpap/ops-agent-kit";
 import { QdrantVector } from "@mastra/qdrant";
 import { S3Filesystem } from "@mastra/s3";
 import {
@@ -29,16 +33,11 @@ import {
   acquireEmbeddingThrottleLease,
   releaseEmbeddingThrottleLease,
 } from "./embedding-throttle";
+import { wrapKnowledgeFilesystemForReading } from "./content-proxy";
 import { buildKnowledgeSourceObjectPrefix } from "./object-storage";
-import {
-  createKnowledgeWorkspaceIndexer,
-  resetOpsAgentKitConfigCache,
-  wrapKnowledgeFilesystemForReading,
-} from "./ops-agent-kit";
 
 type WorkspaceEntry = {
   indexName: string;
-  workspaceIndexer: WorkspaceIndexer;
   vectorStore?: QdrantVector;
   workspace: Workspace<WorkspaceFilesystem>;
 };
@@ -184,8 +183,64 @@ function getWorkspaceIndexName(userId: string, collectionId: string): string {
 }
 
 class KnowledgeWorkspaceS3Filesystem extends S3Filesystem {
+  private readonly workspaceBucket: string;
+  private readonly workspaceRegion: string;
+
+  constructor(options: ConstructorParameters<typeof S3Filesystem>[0]) {
+    super(options);
+    this.workspaceBucket = options.bucket;
+    this.workspaceRegion = options.region;
+  }
+
   private normalizeWorkspacePath(path: string): string {
     return path.trim() === "." ? "" : path;
+  }
+
+  override async init(): Promise<void> {
+    const client = this.client;
+
+    try {
+      await client.send(
+        new HeadBucketCommand({
+          Bucket: this.workspaceBucket,
+        }),
+      );
+    } catch (error) {
+      const statusCode =
+        error &&
+        typeof error === "object" &&
+        "$metadata" in error &&
+        error.$metadata &&
+        typeof error.$metadata === "object" &&
+        "httpStatusCode" in error.$metadata
+          ? Number(error.$metadata.httpStatusCode)
+          : undefined;
+
+      if (statusCode === 404) {
+        await client.send(
+          new CreateBucketCommand({
+            Bucket: this.workspaceBucket,
+            ...(this.workspaceRegion === "us-east-1"
+              ? {}
+              : {
+                  CreateBucketConfiguration: {
+                    LocationConstraint:
+                      this.workspaceRegion as BucketLocationConstraint,
+                  },
+                }),
+          }),
+        );
+
+        await client.send(
+          new HeadBucketCommand({
+            Bucket: this.workspaceBucket,
+          }),
+        );
+        return;
+      }
+
+      throw error;
+    }
   }
 
   override readdir(
@@ -489,59 +544,51 @@ async function createWorkspaceEntry(
   return {
     indexName,
     workspace,
-    workspaceIndexer: createKnowledgeWorkspaceIndexer({
-      userId,
-      collectionId,
-      workspace,
-    }),
     vectorStore,
   };
+}
+
+async function getKnowledgeWorkspaceEntry(params: {
+  collectionId: string;
+  userId: string;
+}): Promise<WorkspaceEntry> {
+  const key = getCacheKey(params.userId, params.collectionId);
+  const cached = workspaceCache.get(key);
+
+  if (cached) {
+    return cached;
+  }
+
+  const pendingEntry = createWorkspaceEntry(
+    params.userId,
+    params.collectionId,
+  ).catch((error) => {
+    workspaceCache.delete(key);
+    throw error;
+  });
+
+  workspaceCache.set(key, pendingEntry);
+  return pendingEntry;
 }
 
 export async function getKnowledgeWorkspace(params: {
   collectionId: string;
   userId: string;
 }): Promise<Workspace<WorkspaceFilesystem>> {
-  const key = getCacheKey(params.userId, params.collectionId);
-  const cached = workspaceCache.get(key);
-
-  if (cached) {
-    return (await cached).workspace;
-  }
-
-  const pendingEntry = createWorkspaceEntry(
-    params.userId,
-    params.collectionId,
-  ).catch((error) => {
-    workspaceCache.delete(key);
-    throw error;
-  });
-
-  workspaceCache.set(key, pendingEntry);
-  return (await pendingEntry).workspace;
+  return (await getKnowledgeWorkspaceEntry(params)).workspace;
 }
 
-export async function getKnowledgeWorkspaceIndexer(params: {
+export async function getKnowledgeWorkspaceSearchState(params: {
   collectionId: string;
   userId: string;
-}): Promise<WorkspaceIndexer> {
-  const key = getCacheKey(params.userId, params.collectionId);
-  const cached = workspaceCache.get(key);
+}): Promise<Pick<WorkspaceEntry, "indexName" | "vectorStore" | "workspace">> {
+  const entry = await getKnowledgeWorkspaceEntry(params);
 
-  if (cached) {
-    return (await cached).workspaceIndexer;
-  }
-
-  const pendingEntry = createWorkspaceEntry(
-    params.userId,
-    params.collectionId,
-  ).catch((error) => {
-    workspaceCache.delete(key);
-    throw error;
-  });
-
-  workspaceCache.set(key, pendingEntry);
-  return (await pendingEntry).workspaceIndexer;
+  return {
+    indexName: entry.indexName,
+    vectorStore: entry.vectorStore,
+    workspace: entry.workspace,
+  };
 }
 
 export async function invalidateKnowledgeWorkspace(params: {
@@ -577,7 +624,6 @@ export function resetKnowledgeRuntimeCache(): void {
   embeddingDimensionPromises.clear();
   workspaceCache.clear();
   resetKnowledgeConfigCache();
-  resetOpsAgentKitConfigCache();
 }
 
 export function setKnowledgeFilesystemFactoryForTests(

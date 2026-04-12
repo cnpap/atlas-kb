@@ -16,13 +16,12 @@
   import WorkspaceSettingsPane from "@/features/app/components/WorkspaceSettingsPane.vue";
   import {
     formatRelativeTime,
-    getSourceIndexProgressStatusLabel,
-    getSourceIndexProgressSummaryLines,
     getExportTaskStatusLabel,
     getExportTaskStatusTone,
     getSourceStatusLabel,
     getSourceStatusTone,
-    shouldShowSourceIndexProgress,
+    getSourceTaskMessage,
+    shouldShowSourceTaskMessage,
   } from "@/lib/knowledge-ui";
 
   defineProps<{
@@ -197,18 +196,14 @@
               </div>
 
               <div
-                v-if="shouldShowSourceIndexProgress(source)"
+                v-if="shouldShowSourceTaskMessage(source)"
                 class="rounded-[6px] border border-[rgba(93,72,34,0.08)] bg-[rgba(255,250,240,0.65)] px-3 py-2"
               >
                 <p class="text-[11px] font-medium text-[var(--text-strong)]">
-                  {{ getSourceIndexProgressStatusLabel(source.indexProgress) }}
+                  {{ source.status === "failed" ? "处理失败" : "后台处理中" }}
                 </p>
-                <p
-                  v-for="line in getSourceIndexProgressSummaryLines(source.indexProgress)"
-                  :key="line"
-                  class="mt-1 text-[11px] leading-5 text-[var(--text-muted)]"
-                >
-                  {{ line }}
+                <p class="mt-1 text-[11px] leading-5 text-[var(--text-muted)]">
+                  {{ getSourceTaskMessage(source) }}
                 </p>
               </div>
 

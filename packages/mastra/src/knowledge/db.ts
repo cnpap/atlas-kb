@@ -49,11 +49,9 @@ export async function resetKnowledgeDatabase(): Promise<void> {
         ${sql.table(KNOWLEDGE_TABLES.userSettings)},
         ${sql.table(KNOWLEDGE_TABLES.embeddingRateLimitLeases)},
         ${sql.table(KNOWLEDGE_TABLES.embeddingRateLimitStates)},
-        ${sql.table(KNOWLEDGE_TABLES.workspaceIndexCheckpoints)},
         ${sql.table(KNOWLEDGE_TABLES.chatFeedback)},
         ${sql.table(KNOWLEDGE_TABLES.chatMessages)},
         ${sql.table(KNOWLEDGE_TABLES.chatSessions)},
-        ${sql.table(KNOWLEDGE_TABLES.importJobs)},
         ${sql.table(KNOWLEDGE_TABLES.sources)},
         ${sql.table(KNOWLEDGE_TABLES.collections)}
       CASCADE

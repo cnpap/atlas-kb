@@ -1,6 +1,5 @@
 export {
   createKnowledgeExportTaskInAdmin,
-  dispatchKnowledgeImportDrainInAdmin,
   downloadKnowledgeExportTaskFromAdmin,
   getKnowledgeExportTaskDetailFromAdmin,
   getKnowledgeTemplateDetailFromAdmin,
@@ -35,7 +34,6 @@ export {
   validateKnowledgeStorageConfig,
 } from "./config";
 export { getKnowledgeSourceDownloadUrl } from "./download";
-export { processNextKnowledgeImportJob } from "./import-jobs";
 export {
   importKnowledgeFile,
   importKnowledgeText,

@@ -2,6 +2,7 @@ import {
   getDatabaseUrl,
   validateKnowledgeStorageConfig,
 } from "../knowledge/config";
+import { knowledgeSourceImportWorkflow } from "../knowledge/source-import-workflow";
 import { memory } from "../memory";
 import { tools } from "../tools";
 import { Mastra } from "@mastra/core";
@@ -35,6 +36,9 @@ export const mastra = new Mastra({
   tools,
   storage: defaultStorage,
   memory,
+  workflows: {
+    knowledgeSourceImportWorkflow,
+  },
   server: {
     host: getMastraHost(),
     port: getMastraPort(),

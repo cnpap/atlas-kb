@@ -4,8 +4,6 @@ export const KNOWLEDGE_TABLES = {
   userSettings: "kb_user_settings",
   collections: "kb_collections",
   sources: "kb_sources",
-  importJobs: "kb_import_jobs",
-  workspaceIndexCheckpoints: "kb_workspace_index_checkpoints",
   embeddingRateLimitStates: "kb_embedding_rate_limit_states",
   embeddingRateLimitLeases: "kb_embedding_rate_limit_leases",
   chatSessions: "kb_chat_sessions",

@@ -1,10 +1,9 @@
 import { NotFoundError } from "@atlas-kb/errors";
 import type { KnowledgeCollection, KnowledgeSource } from "@atlas-kb/schema";
-import { deleteKnowledgeImportJobsForSource } from "./import-jobs-repository";
 import { ensureKnowledgeDatabase } from "./db";
-import { getKnowledgeWorkspace, getKnowledgeWorkspaceIndexer } from "./runtime";
+import { getKnowledgeWorkspace } from "./runtime";
 import { buildSummary, normalizeWhitespace } from "./search-utils";
-import { clearKnowledgeIndexState } from "./workspace-indexing";
+import { removeKnowledgeSourceChunks } from "./source-indexing";
 import {
   nowIso,
   SOURCE_COLUMNS,
@@ -12,7 +11,6 @@ import {
   toSource,
   type SourceRow,
 } from "./repository-shared";
-import { attachKnowledgeSourceIndexProgress } from "./workspace-index-checkpoints";
 import {
   requireKnowledgeCollection,
   touchCollection,
@@ -34,6 +32,19 @@ async function getSourceRow(
   );
 }
 
+export async function requireKnowledgeSourceRow(
+  userId: string,
+  sourceId: string,
+): Promise<SourceRow> {
+  const row = await getSourceRow(userId, sourceId);
+
+  if (!row) {
+    throw new NotFoundError(`Source "${sourceId}" not found`);
+  }
+
+  return row;
+}
+
 export async function listKnowledgeSources(
   userId: string,
   collectionId?: string,
@@ -49,11 +60,7 @@ export async function listKnowledgeSources(
   }
 
   const rows = await query.orderBy("updated_at", "desc").execute();
-  return attachKnowledgeSourceIndexProgress(
-    userId,
-    rows.map((row) => toSource(row)),
-    collectionId,
-  );
+  return rows.map((row) => toSource(row));
 }
 
 export async function getKnowledgeCollectionSourcesData(
@@ -81,10 +88,7 @@ export async function getKnowledgeSourceById(
     return undefined;
   }
 
-  const [source] = await attachKnowledgeSourceIndexProgress(userId, [
-    toSource(row),
-  ]);
-  return source;
+  return toSource(row);
 }
 
 export async function requireKnowledgeSource(
@@ -113,6 +117,7 @@ export async function createKnowledgeSourceRecord(params: {
   sourceFilename?: string;
   mimeType?: string;
   byteSize?: number;
+  indexChunkCount?: number;
   status: KnowledgeSource["status"];
   failureMessage?: string;
 }): Promise<KnowledgeSource> {
@@ -142,6 +147,7 @@ export async function createKnowledgeSourceRecord(params: {
       source_filename: params.sourceFilename ?? params.documentId,
       mime_type: params.mimeType ?? null,
       byte_size: params.byteSize ?? null,
+      index_chunk_count: params.indexChunkCount ?? 0,
       failure_message: params.failureMessage ?? null,
       created_at: now,
       updated_at: now,
@@ -163,10 +169,14 @@ export async function replaceSourceContent(params: {
   mimeType?: string;
   byteSize?: number;
   sourceFilename?: string;
+  indexChunkCount?: number;
   status: KnowledgeSource["status"];
   failureMessage?: string;
 }): Promise<KnowledgeSource> {
-  const current = await requireKnowledgeSource(params.userId, params.sourceId);
+  const current = await requireKnowledgeSourceRow(
+    params.userId,
+    params.sourceId,
+  );
   const db = await ensureKnowledgeDatabase();
   const content = params.content
     ? normalizeWhitespace(params.content)
@@ -185,11 +195,17 @@ export async function replaceSourceContent(params: {
       tags_json: params.tags,
       source_filename:
         params.sourceFilename ??
-        current.sourceFilename ??
-        current.documentId ??
+        current.source_filename ??
+        current.document_id ??
         params.documentId,
-      mime_type: params.mimeType ?? current.mimeType ?? null,
-      byte_size: params.byteSize ?? current.byteSize ?? null,
+      mime_type: params.mimeType ?? current.mime_type ?? null,
+      byte_size:
+        params.byteSize ??
+        (current.byte_size === null || current.byte_size === undefined
+          ? null
+          : Number(current.byte_size)),
+      index_chunk_count:
+        params.indexChunkCount ?? Number(current.index_chunk_count ?? 0),
       status: params.status,
       failure_message: params.failureMessage ?? null,
       updated_at: now,
@@ -198,7 +214,7 @@ export async function replaceSourceContent(params: {
     .where("id", "=", params.sourceId)
     .execute();
 
-  await touchCollection(current.collectionId);
+  await touchCollection(current.collection_id);
   return requireKnowledgeSource(params.userId, params.sourceId);
 }
 
@@ -206,31 +222,20 @@ export async function deleteKnowledgeSource(
   userId: string,
   sourceId: string,
 ): Promise<void> {
-  const source = await requireKnowledgeSource(userId, sourceId);
+  const source = await requireKnowledgeSourceRow(userId, sourceId);
   const db = await ensureKnowledgeDatabase();
-  await deleteKnowledgeImportJobsForSource({
+  const documentId = source.document_id || source.source_filename;
+  const workspace = await getKnowledgeWorkspace({
     userId,
-    sourceId,
-  });
-  const documentId = source.documentId || source.sourceFilename;
-  const [workspaceIndexer, workspace] = await Promise.all([
-    getKnowledgeWorkspaceIndexer({
-      userId,
-      collectionId: source.collectionId,
-    }).catch(() => undefined),
-    getKnowledgeWorkspace({
-      userId,
-      collectionId: source.collectionId,
-    }).catch(() => undefined),
-  ]);
+    collectionId: source.collection_id,
+  }).catch(() => undefined);
 
-  if (documentId) {
-    await clearKnowledgeIndexState({
-      userId,
-      collectionId: source.collectionId,
-      path: documentId,
-      workspaceIndexer,
-    });
+  if (workspace) {
+    await removeKnowledgeSourceChunks({
+      workspace,
+      sourceId,
+      chunkCount: Number(source.index_chunk_count ?? 0),
+    }).catch(() => undefined);
   }
 
   await db

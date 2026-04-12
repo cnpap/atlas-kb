@@ -183,12 +183,3 @@ export async function downloadKnowledgeExportTaskFromAdmin(args: {
     data: await response.arrayBuffer(),
   };
 }
-
-export async function dispatchKnowledgeImportDrainInAdmin(): Promise<void> {
-  await requestAdminInternal<{ data: { queued: boolean } }>(
-    "/api/internal/atlas-kb-import-jobs/dispatch",
-    {
-      method: "POST",
-    },
-  );
-}

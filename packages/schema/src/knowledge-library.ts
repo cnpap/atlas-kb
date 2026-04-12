@@ -24,37 +24,6 @@ export const KnowledgeSourceStatusSchema = z.enum([
   "archived",
 ]);
 
-export const KnowledgeIndexLifecycleStatusSchema = z.enum([
-  "canonicalizing",
-  "indexing",
-  "paused",
-  "failed",
-  "completed",
-]);
-
-export const KnowledgeIndexFailureSchema = z.object({
-  chunkId: z.string().trim().min(1),
-  ordinal: z.number().int().nonnegative(),
-  pageNumbers: z.array(z.number().int().positive()),
-  error: z.string().trim().min(1),
-});
-
-export const KnowledgeSourceIndexProgressSchema = z.object({
-  path: z.string().trim().min(1),
-  status: KnowledgeIndexLifecycleStatusSchema,
-  totalChunks: z.number().int().nonnegative(),
-  completedChunks: z.number().int().nonnegative(),
-  failedChunks: z.number().int().nonnegative(),
-  totalPages: z.number().int().nonnegative(),
-  completedPages: z.number().int().nonnegative(),
-  failedPages: z.number().int().nonnegative(),
-  lastProcessedPage: z.number().int().positive().nullable(),
-  resumeable: z.boolean(),
-  failedChunkDetails: z.array(KnowledgeIndexFailureSchema),
-  lastError: z.string().trim().min(1).nullable(),
-  updatedAt: TimestampSchema,
-});
-
 export const KnowledgeCollectionSchema = z.object({
   id: z.string().trim().min(1),
   name: z.string().trim().min(1),
@@ -85,7 +54,6 @@ export const KnowledgeSourceSchema = z.object({
   mimeType: z.string().trim().min(1).optional(),
   byteSize: z.number().int().positive().optional(),
   failureMessage: z.string().trim().min(1).optional(),
-  indexProgress: KnowledgeSourceIndexProgressSchema.optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
 });
@@ -207,9 +175,6 @@ export const KnowledgeImportResponseSchema = createApiSuccessResponseSchema(
 
 export type KnowledgeCollection = z.infer<typeof KnowledgeCollectionSchema>;
 export type KnowledgeSource = z.infer<typeof KnowledgeSourceSchema>;
-export type KnowledgeSourceIndexProgress = z.infer<
-  typeof KnowledgeSourceIndexProgressSchema
->;
 export type KnowledgeCollectionCreateRequest = z.infer<
   typeof KnowledgeCollectionCreateRequestSchema
 >;

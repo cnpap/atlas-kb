@@ -16,7 +16,7 @@ import {
   updateKnowledgeSource,
   waitForPendingKnowledgeImports,
 } from "./index";
-import { buildMockDoclingConvertPayload } from "./test-docling";
+import { buildMockTikaExtractPayload } from "./test-tika";
 import { TestS3LocalFilesystem } from "./test-s3-filesystem";
 
 const originalFetch = globalThis.fetch;
@@ -27,8 +27,7 @@ const originalEmbeddingApiKey = process.env.EMBEDDING_API_KEY;
 const originalEmbeddingDimensions = process.env.EMBEDDING_DIMENSIONS;
 const originalQdrantUrl = process.env.QDRANT_URL;
 const originalQdrantApiKey = process.env.QDRANT_API_KEY;
-const originalDoclingBaseUrl = process.env.DOCLING_BASE_URL;
-const originalDoclingConvertPath = process.env.DOCLING_CONVERT_PATH;
+const originalTikaBaseUrl = process.env.ATLAS_KB_TIKA_BASE_URL;
 const originalVisionBaseUrl = process.env.VISION_BASE_URL;
 const originalVisionApiKey = process.env.VISION_API_KEY;
 const originalVisionModel = process.env.VISION_MODEL;
@@ -56,8 +55,7 @@ describe.serial("knowledge ingest", () => {
     delete process.env.EMBEDDING_DIMENSIONS;
     delete process.env.QDRANT_URL;
     delete process.env.QDRANT_API_KEY;
-    process.env.DOCLING_BASE_URL = "http://docling.local";
-    process.env.DOCLING_CONVERT_PATH = "/v1/convert/file";
+    process.env.ATLAS_KB_TIKA_BASE_URL = "http://tika.local";
     delete process.env.VISION_BASE_URL;
     delete process.env.VISION_API_KEY;
     delete process.env.VISION_MODEL;
@@ -80,8 +78,8 @@ describe.serial("knowledge ingest", () => {
             ? input.toString()
             : input.url;
 
-      if (url.includes("/v1/convert/file")) {
-        return jsonResponse(await buildMockDoclingConvertPayload(init?.body));
+      if (url.includes("/rmeta/text")) {
+        return jsonResponse(buildMockTikaExtractPayload(init));
       }
 
       return jsonResponse({
@@ -137,16 +135,10 @@ describe.serial("knowledge ingest", () => {
       process.env.QDRANT_API_KEY = originalQdrantApiKey;
     }
 
-    if (originalDoclingBaseUrl === undefined) {
-      delete process.env.DOCLING_BASE_URL;
+    if (originalTikaBaseUrl === undefined) {
+      delete process.env.ATLAS_KB_TIKA_BASE_URL;
     } else {
-      process.env.DOCLING_BASE_URL = originalDoclingBaseUrl;
-    }
-
-    if (originalDoclingConvertPath === undefined) {
-      delete process.env.DOCLING_CONVERT_PATH;
-    } else {
-      process.env.DOCLING_CONVERT_PATH = originalDoclingConvertPath;
+      process.env.ATLAS_KB_TIKA_BASE_URL = originalTikaBaseUrl;
     }
 
     if (originalVisionBaseUrl === undefined) {
@@ -170,7 +162,7 @@ describe.serial("knowledge ingest", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("allows metadata-only updates for docling-managed sources but rejects content replacement", async () => {
+  it("allows metadata-only updates for binary-managed sources but rejects content replacement", async () => {
     const user = await createUser({
       username: "docling-readonly",
       password: "test-pass",
@@ -280,7 +272,7 @@ describe.serial("knowledge ingest", () => {
   });
 
   it("requeues failed file imports and clears the previous failure state", async () => {
-    let failDoclingRequest = true;
+    let failTikaRequest = true;
     globalThis.fetch = (async (
       input: string | URL | Request,
       init?: RequestInit,
@@ -292,8 +284,8 @@ describe.serial("knowledge ingest", () => {
             ? input.toString()
             : input.url;
 
-      if (url.includes("/v1/convert/file")) {
-        if (failDoclingRequest) {
+      if (url.includes("/rmeta/text")) {
+        if (failTikaRequest) {
           return jsonResponse(
             {
               detail: "Gateway Timeout",
@@ -302,7 +294,7 @@ describe.serial("knowledge ingest", () => {
           );
         }
 
-        return jsonResponse(await buildMockDoclingConvertPayload(init?.body));
+        return jsonResponse(buildMockTikaExtractPayload(init));
       }
 
       return jsonResponse({
@@ -340,7 +332,6 @@ describe.serial("knowledge ingest", () => {
     );
     expect(failedSource.status).toBe("failed");
     expect(failedSource.failureMessage).toBeTruthy();
-    expect(failedSource.indexProgress).toBeUndefined();
 
     const renamedFailedSource = await updateKnowledgeSource(
       user.id,
@@ -353,7 +344,7 @@ describe.serial("knowledge ingest", () => {
     expect(renamedFailedSource.status).toBe("failed");
     expect(renamedFailedSource.failureMessage).toBeTruthy();
 
-    failDoclingRequest = false;
+    failTikaRequest = false;
 
     const retriedSource = await retryKnowledgeSourceImport(
       user.id,
@@ -361,7 +352,6 @@ describe.serial("knowledge ingest", () => {
     );
     expect(retriedSource.status).toBe("processing");
     expect(retriedSource.failureMessage).toBeUndefined();
-    expect(retriedSource.indexProgress).toBeUndefined();
 
     await waitForPendingKnowledgeImports();
 

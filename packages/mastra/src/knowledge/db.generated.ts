@@ -147,20 +147,6 @@ export interface KbCollections {
   updated_at: Timestamp;
 }
 
-export interface KbImportJobs {
-  attempt: number;
-  collection_id: string;
-  error_message: string | null;
-  finished_at: Timestamp | null;
-  id: string;
-  owner_user_id: Int8;
-  source_id: string;
-  source_type: string;
-  stage: string;
-  started_at: Timestamp;
-  status: string;
-}
-
 export interface KbSources {
   byte_size: Int8 | null;
   collection_id: string;
@@ -169,6 +155,7 @@ export interface KbSources {
   document_id: string;
   failure_message: string | null;
   id: string;
+  index_chunk_count: number | null;
   mime_type: string | null;
   owner_user_id: Int8;
   source_filename: string;
@@ -846,7 +833,6 @@ export interface DB {
   kb_chat_messages: KbChatMessages;
   kb_chat_sessions: KbChatSessions;
   kb_collections: KbCollections;
-  kb_import_jobs: KbImportJobs;
   kb_sources: KbSources;
   kb_template_export_tasks: KbTemplateExportTasks;
   kb_template_exports: KbTemplateExports;

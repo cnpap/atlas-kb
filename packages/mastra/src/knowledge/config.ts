@@ -8,6 +8,7 @@ const DEFAULT_EMBEDDING_MAX_CONCURRENCY = 5;
 const DEFAULT_EMBEDDING_MIN_INTERVAL_MS = 1_000;
 const DEFAULT_QDRANT_URL = "http://127.0.0.1:6333";
 const DEFAULT_KNOWLEDGE_S3_PREFIX = "knowledge-sources";
+const DEFAULT_TIKA_BASE_URL = "http://127.0.0.1:9998";
 const DEFAULT_ADMIN_API_BASE_URL = "http://127.0.0.1:8000";
 const DEFAULT_DATABASE_URL =
   "postgresql://ops_agent_kit:OpsAgentKit_TSDB_2026!x7Q2mP9r@127.0.0.1:15432/ops_agent_kit";
@@ -225,6 +226,12 @@ export function getKnowledgeS3ForcePathStyle(): boolean {
   return parseBooleanEnv(process.env.ATLAS_KB_S3_FORCE_PATH_STYLE, true);
 }
 
+export function getTikaBaseUrl(): string {
+  return (
+    trimEnvValue(process.env.ATLAS_KB_TIKA_BASE_URL) ?? DEFAULT_TIKA_BASE_URL
+  ).replace(/\/+$/g, "");
+}
+
 export function getAdminApiBaseUrl(): string {
   return (
     trimEnvValue(process.env.ATLAS_KB_ADMIN_API_BASE_URL) ??
@@ -243,6 +250,7 @@ export function validateKnowledgeStorageConfig(): void {
     ["ATLAS_KB_S3_BUCKET", getKnowledgeS3Bucket()],
     ["ATLAS_KB_S3_ACCESS_KEY_ID", getKnowledgeS3AccessKeyId()],
     ["ATLAS_KB_S3_SECRET_ACCESS_KEY", getKnowledgeS3SecretAccessKey()],
+    ["ATLAS_KB_TIKA_BASE_URL", getTikaBaseUrl()],
   ]
     .filter(([, value]) => !value)
     .map(([name]) => name);

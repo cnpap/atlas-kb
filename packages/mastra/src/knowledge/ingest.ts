@@ -8,35 +8,29 @@ import type {
   KnowledgeSourceUpdateRequest,
   KnowledgeTextImportRequest,
 } from "@atlas-kb/schema";
-import { dispatchKnowledgeImportDrainInAdmin } from "./admin-client";
 import { hasEmbeddingConfig } from "./config";
-import { isKnowledgeSourceContentEditable } from "./document-file-types";
-import { deriveUploadTitle } from "./ops-agent-kit";
-import { waitForPendingKnowledgeImports } from "./import-jobs";
 import {
-  enqueueKnowledgeFileImport,
-  requeueKnowledgeFileImport,
-} from "./import-jobs-repository";
-import {
-  allocateManagedSourceFileName,
-  buildManagedSourceFileName,
-  buildTextSourceContent,
-} from "./storage";
+  deriveKnowledgeSourceTitleFromFileName,
+  isKnowledgeSourceContentEditable,
+} from "./document-file-types";
+import { getKnowledgeWorkspace } from "./runtime";
 import { buildSummary } from "./search-utils";
-import { getKnowledgeWorkspace, getKnowledgeWorkspaceIndexer } from "./runtime";
-import {
-  clearKnowledgeIndexState,
-  createKnowledgeIndexNow,
-  updateKnowledgeIndexNow,
-} from "./workspace-indexing";
 import {
   createKnowledgeSourceRecord,
   deleteKnowledgeSource,
   listKnowledgeSources,
   replaceSourceContent,
-  requireKnowledgeCollection,
   requireKnowledgeSource,
-} from "./repository";
+  requireKnowledgeSourceRow,
+} from "./sources-repository";
+import { enqueueKnowledgeSourceImport, waitForPendingKnowledgeImports } from "./source-import-workflow";
+import { indexKnowledgeSourceContent, removeKnowledgeSourceChunks } from "./source-indexing";
+import {
+  allocateManagedSourceFileName,
+  buildManagedSourceFileName,
+  buildTextSourceContent,
+} from "./storage";
+import { requireKnowledgeCollection } from "./repository";
 
 type ImportResult = {
   collection: KnowledgeCollection;
@@ -56,6 +50,16 @@ function getImportEngine(): ImportResult["engine"] {
 
 function parseTags(tags?: string[]): string[] {
   return [...new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean))];
+}
+
+function deriveUploadTitle(args: {
+  fileName: string;
+  providedTitle?: string;
+}): string {
+  return (
+    args.providedTitle?.trim() ||
+    deriveKnowledgeSourceTitleFromFileName(args.fileName)
+  );
 }
 
 async function resolveManagedImportFileName(args: {
@@ -90,10 +94,7 @@ async function getMutableWorkspace(params: {
   collectionId: string;
   userId: string;
 }) {
-  const [workspace, workspaceIndexer] = await Promise.all([
-    getKnowledgeWorkspace(params),
-    getKnowledgeWorkspaceIndexer(params),
-  ]);
+  const workspace = await getKnowledgeWorkspace(params);
   const filesystem = workspace.filesystem;
 
   if (!filesystem) {
@@ -103,7 +104,6 @@ async function getMutableWorkspace(params: {
   return {
     filesystem,
     workspace,
-    workspaceIndexer,
   };
 }
 
@@ -123,7 +123,7 @@ async function createFileBackedSource(args: {
 }): Promise<KnowledgeImportData> {
   await requireKnowledgeCollection(args.userId, args.collectionId);
 
-  const { filesystem, workspaceIndexer } = await getMutableWorkspace({
+  const { filesystem, workspace } = await getMutableWorkspace({
     userId: args.userId,
     collectionId: args.collectionId,
   });
@@ -137,12 +137,9 @@ async function createFileBackedSource(args: {
     overwrite: false,
   });
 
-  try {
-    await createKnowledgeIndexNow({
-      path: documentId,
-      workspaceIndexer,
-    });
+  let createdSourceId: string | undefined;
 
+  try {
     const source = await createKnowledgeSourceRecord({
       sourceId: args.sourceId,
       userId: args.userId,
@@ -156,7 +153,36 @@ async function createFileBackedSource(args: {
       sourceFilename: args.sourceFilename,
       mimeType: args.mimeType,
       byteSize: args.byteSize,
+      indexChunkCount: 0,
+      status: "processing",
+    });
+    createdSourceId = source.id;
+
+    const indexed = await indexKnowledgeSourceContent({
+      workspace,
+      content,
+      source: {
+        id: source.id,
+        documentId,
+        mimeType: args.mimeType,
+        sourceFilename: args.sourceFilename,
+      },
+    });
+
+    const readySource = await replaceSourceContent({
+      userId: args.userId,
+      sourceId: source.id,
+      documentId,
+      title: args.title,
+      summary,
+      content,
+      tags: normalizedTags,
+      mimeType: args.mimeType,
+      byteSize: args.byteSize,
+      sourceFilename: args.sourceFilename,
+      indexChunkCount: indexed.chunkCount,
       status: "ready",
+      failureMessage: undefined,
     });
 
     return {
@@ -164,19 +190,20 @@ async function createFileBackedSource(args: {
         args.userId,
         args.collectionId,
       ),
-      source,
+      source: readySource,
       engine: getImportEngine(),
     };
   } catch (error) {
-    await clearKnowledgeIndexState({
-      userId: args.userId,
-      collectionId: args.collectionId,
-      path: documentId,
-      workspaceIndexer,
-    });
-    await filesystem
-      .deleteFile(documentId, { force: true })
-      .catch(() => undefined);
+    if (createdSourceId) {
+      await deleteKnowledgeSource(args.userId, createdSourceId).catch(
+        () => undefined,
+      );
+    } else {
+      await filesystem
+        .deleteFile(documentId, { force: true })
+        .catch(() => undefined);
+    }
+
     throw error;
   }
 }
@@ -220,26 +247,16 @@ async function createQueuedFileSource(args: {
       sourceFilename: args.sourceFilename,
       mimeType: args.mimeType,
       byteSize: args.byteSize,
+      indexChunkCount: 0,
       status: "processing",
       failureMessage: undefined,
     });
     createdSourceId = source.id;
 
-    await enqueueKnowledgeFileImport({
+    await enqueueKnowledgeSourceImport({
       userId: args.userId,
       collectionId: args.collectionId,
       sourceId: source.id,
-    });
-
-    void dispatchKnowledgeImportDrainInAdmin().catch((error) => {
-      console.error("[knowledge-import] failed to dispatch admin drain job", {
-        collectionId: args.collectionId,
-        sourceId: source.id,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unknown admin dispatch error",
-      });
     });
 
     return {
@@ -394,6 +411,7 @@ export async function updateKnowledgeSource(
   input: KnowledgeSourceUpdateRequest,
 ): Promise<KnowledgeSource> {
   const source = await requireKnowledgeSource(userId, sourceId);
+  const sourceRow = await requireKnowledgeSourceRow(userId, sourceId);
   const requestedContent =
     input.content !== undefined
       ? input.content.trim()
@@ -429,6 +447,7 @@ export async function updateKnowledgeSource(
       mimeType: source.mimeType,
       byteSize: source.byteSize ?? undefined,
       sourceFilename,
+      indexChunkCount: Number(sourceRow.index_chunk_count ?? 0),
       status: source.status,
       failureMessage: source.failureMessage,
     });
@@ -438,7 +457,7 @@ export async function updateKnowledgeSource(
     throw new BadRequestError("资料内容不能为空");
   }
 
-  const { filesystem, workspaceIndexer } = await getMutableWorkspace({
+  const { filesystem, workspace } = await getMutableWorkspace({
     userId,
     collectionId: source.collectionId,
   });
@@ -447,9 +466,22 @@ export async function updateKnowledgeSource(
     mimeType: source.mimeType,
     overwrite: true,
   });
-  await updateKnowledgeIndexNow({
-    path: documentId,
-    workspaceIndexer,
+
+  await removeKnowledgeSourceChunks({
+    workspace,
+    sourceId,
+    chunkCount: Number(sourceRow.index_chunk_count ?? 0),
+  });
+
+  const indexed = await indexKnowledgeSourceContent({
+    workspace,
+    content: requestedContent,
+    source: {
+      id: source.id,
+      documentId,
+      mimeType: source.mimeType,
+      sourceFilename,
+    },
   });
 
   return replaceSourceContent({
@@ -463,6 +495,7 @@ export async function updateKnowledgeSource(
     mimeType: source.mimeType,
     byteSize: new TextEncoder().encode(requestedContent).byteLength,
     sourceFilename,
+    indexChunkCount: indexed.chunkCount,
     status: "ready",
     failureMessage: undefined,
   });
@@ -473,6 +506,7 @@ export async function retryKnowledgeSourceImport(
   sourceId: string,
 ): Promise<KnowledgeSource> {
   const source = await requireKnowledgeSource(userId, sourceId);
+  const sourceRow = await requireKnowledgeSourceRow(userId, sourceId);
 
   if (source.sourceType !== "file") {
     throw new BadRequestError("只有文件资料支持重试导入。");
@@ -488,23 +522,16 @@ export async function retryKnowledgeSourceImport(
     throw new BadRequestError(`资料 "${sourceId}" 缺少必要文件信息`);
   }
 
-  const workspaceIndexer = await getKnowledgeWorkspaceIndexer({
+  const { workspace } = await getMutableWorkspace({
     userId,
     collectionId: source.collectionId,
-  }).catch(() => undefined);
-
-  await clearKnowledgeIndexState({
-    userId,
-    collectionId: source.collectionId,
-    path: documentId,
-    workspaceIndexer,
   });
 
-  await requeueKnowledgeFileImport({
-    userId,
-    collectionId: source.collectionId,
+  await removeKnowledgeSourceChunks({
+    workspace,
     sourceId: source.id,
-  });
+    chunkCount: Number(sourceRow.index_chunk_count ?? 0),
+  }).catch(() => undefined);
 
   const retriedSource = await replaceSourceContent({
     userId,
@@ -517,18 +544,36 @@ export async function retryKnowledgeSourceImport(
     mimeType: source.mimeType,
     byteSize: source.byteSize,
     sourceFilename: source.sourceFilename ?? documentId,
+    indexChunkCount: 0,
     status: "processing",
     failureMessage: undefined,
   });
 
-  void dispatchKnowledgeImportDrainInAdmin().catch((error) => {
-    console.error("[knowledge-import] failed to dispatch retry drain job", {
+  try {
+    await enqueueKnowledgeSourceImport({
+      userId,
       collectionId: source.collectionId,
       sourceId: source.id,
-      error:
-        error instanceof Error ? error.message : "Unknown admin dispatch error",
     });
-  });
+  } catch (error) {
+    await replaceSourceContent({
+      userId,
+      sourceId: source.id,
+      documentId,
+      title: source.title,
+      summary: source.summary,
+      content: undefined,
+      tags: source.tags,
+      mimeType: source.mimeType,
+      byteSize: source.byteSize,
+      sourceFilename: source.sourceFilename ?? documentId,
+      indexChunkCount: 0,
+      status: "failed",
+      failureMessage:
+        error instanceof Error ? error.message : "后台导入任务启动失败",
+    }).catch(() => undefined);
+    throw error;
+  }
 
   return retriedSource;
 }

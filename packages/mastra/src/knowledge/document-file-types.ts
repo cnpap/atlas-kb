@@ -51,7 +51,7 @@ const DEFAULT_EXTENSION_BY_MIME = new Map<string, string>([
   ["text/plain", ".txt"],
 ]);
 
-const DOCLING_MANAGED_MIME_TYPES = new Set([
+const TIKA_MANAGED_MIME_TYPES = new Set([
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -97,20 +97,17 @@ export function getDefaultExtensionForMimeType(mimeType?: string): string {
   );
 }
 
-export function isDoclingManagedFile(args: {
+export function isTikaManagedFile(args: {
   fileName?: string;
   mimeType?: string;
 }): boolean {
   const normalizedMimeType = normalizeMimeType(args.mimeType);
 
-  if (
-    normalizedMimeType &&
-    DOCLING_MANAGED_MIME_TYPES.has(normalizedMimeType)
-  ) {
+  if (normalizedMimeType && TIKA_MANAGED_MIME_TYPES.has(normalizedMimeType)) {
     return true;
   }
 
-  return DOCLING_MANAGED_MIME_TYPES.has(
+  return TIKA_MANAGED_MIME_TYPES.has(
     detectKnowledgeMimeType(args.fileName || "document", args.mimeType),
   );
 }
@@ -124,7 +121,7 @@ export function deriveKnowledgeSourceTitleFromFileName(
 export function isKnowledgeSourceContentEditable(
   source: Pick<KnowledgeSource, "documentId" | "mimeType" | "sourceFilename">,
 ): boolean {
-  return !isDoclingManagedFile({
+  return !isTikaManagedFile({
     fileName: source.sourceFilename ?? source.documentId,
     mimeType: source.mimeType ?? undefined,
   });

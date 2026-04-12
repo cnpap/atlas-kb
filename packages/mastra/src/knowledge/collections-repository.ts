@@ -7,10 +7,9 @@ import type {
 } from "@atlas-kb/schema";
 import { sql } from "kysely";
 import { ensureKnowledgeDatabase } from "./db";
-import { deleteKnowledgeImportJobsForCollection } from "./import-jobs-repository";
 import {
   getKnowledgeWorkspace,
-  getKnowledgeWorkspaceIndexer,
+  getKnowledgeWorkspaceSearchState,
   invalidateKnowledgeWorkspace,
 } from "./runtime";
 import { slugify } from "./search-utils";
@@ -286,12 +285,8 @@ export async function deleteKnowledgeCollection(
   }
 
   const db = await ensureKnowledgeDatabase();
-  await deleteKnowledgeImportJobsForCollection({
-    userId,
-    collectionId,
-  });
-  const [workspaceIndexer, workspace] = await Promise.all([
-    getKnowledgeWorkspaceIndexer({
+  const [searchState, workspace] = await Promise.all([
+    getKnowledgeWorkspaceSearchState({
       userId,
       collectionId,
     }).catch(() => undefined),
@@ -307,7 +302,11 @@ export async function deleteKnowledgeCollection(
     .where("id", "=", collectionId)
     .execute();
 
-  await workspaceIndexer?.clear().catch(() => undefined);
+  await searchState?.vectorStore
+    ?.deleteIndex({
+      indexName: searchState.indexName,
+    })
+    .catch(() => undefined);
 
   await workspace?.filesystem
     ?.rmdir("", { recursive: true })

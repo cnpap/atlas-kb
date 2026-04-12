@@ -12,8 +12,8 @@ import {
   setKnowledgeFilesystemFactoryForTests,
   waitForPendingKnowledgeImports,
 } from "@atlas-kb/mastra/knowledge";
-import { buildMockDoclingConvertPayload } from "../../mastra/src/knowledge/test-docling";
 import { TestS3LocalFilesystem } from "../../mastra/src/knowledge/test-s3-filesystem";
+import { buildMockTikaExtractPayload } from "../../mastra/src/knowledge/test-tika";
 import { createApp } from "./app";
 
 const originalFetch = globalThis.fetch;
@@ -31,8 +31,7 @@ const originalS3Bucket = process.env.ATLAS_KB_S3_BUCKET;
 const originalS3AccessKeyId = process.env.ATLAS_KB_S3_ACCESS_KEY_ID;
 const originalS3SecretAccessKey = process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY;
 const originalInternalSecret = process.env.ATLAS_KB_INTERNAL_SECRET;
-const originalDoclingBaseUrl = process.env.DOCLING_BASE_URL;
-const originalDoclingConvertPath = process.env.DOCLING_CONVERT_PATH;
+const originalTikaBaseUrl = process.env.ATLAS_KB_TIKA_BASE_URL;
 
 function getWorkspaceFilePath(args: {
   collectionId: string;
@@ -278,8 +277,8 @@ function mockProviders() {
       });
     }
 
-    if (url.includes("/v1/convert/file")) {
-      return jsonResponse(await buildMockDoclingConvertPayload(init?.body));
+    if (url.includes("/rmeta/text")) {
+      return jsonResponse(buildMockTikaExtractPayload(init));
     }
 
     if (url.includes("/api/internal/knowledge-templates?")) {
@@ -621,8 +620,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
     process.env.ATLAS_KB_S3_ACCESS_KEY_ID = "test-access-key";
     process.env.ATLAS_KB_S3_SECRET_ACCESS_KEY = "test-secret-key";
     process.env.ATLAS_KB_INTERNAL_SECRET = "test-internal-secret";
-    process.env.DOCLING_BASE_URL = "http://docling.local";
-    process.env.DOCLING_CONVERT_PATH = "/v1/convert/file";
+    process.env.ATLAS_KB_TIKA_BASE_URL = "http://tika.local";
     globalThis.fetch = originalFetch;
     resetKnowledgeRuntimeCache();
     await resetKnowledgeRepository();
@@ -725,16 +723,10 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
       process.env.ATLAS_KB_INTERNAL_SECRET = originalInternalSecret;
     }
 
-    if (originalDoclingBaseUrl === undefined) {
-      delete process.env.DOCLING_BASE_URL;
+    if (originalTikaBaseUrl === undefined) {
+      delete process.env.ATLAS_KB_TIKA_BASE_URL;
     } else {
-      process.env.DOCLING_BASE_URL = originalDoclingBaseUrl;
-    }
-
-    if (originalDoclingConvertPath === undefined) {
-      delete process.env.DOCLING_CONVERT_PATH;
-    } else {
-      process.env.DOCLING_CONVERT_PATH = originalDoclingConvertPath;
+      process.env.ATLAS_KB_TIKA_BASE_URL = originalTikaBaseUrl;
     }
 
     resetKnowledgeRuntimeCache();
@@ -898,7 +890,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
   it.serial(
     "retries failed file imports through the source retry route",
     async () => {
-      let failDoclingRequest = true;
+      let failTikaRequest = true;
       globalThis.fetch = (async (
         input: string | URL | Request,
         init?: RequestInit,
@@ -910,8 +902,8 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
               ? input.toString()
               : input.url;
 
-        if (url.includes("/v1/convert/file")) {
-          if (failDoclingRequest) {
+        if (url.includes("/rmeta/text")) {
+          if (failTikaRequest) {
             return jsonResponse(
               {
                 detail: "Gateway Timeout",
@@ -920,7 +912,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
             );
           }
 
-          return jsonResponse(await buildMockDoclingConvertPayload(init?.body));
+          return jsonResponse(buildMockTikaExtractPayload(init));
         }
 
         return jsonResponse({
@@ -994,7 +986,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
       expect(failedSourceData.source.status).toBe("failed");
       expect(failedSourceData.source.failureMessage).toBeTruthy();
 
-      failDoclingRequest = false;
+      failTikaRequest = false;
 
       const retryResponse = await app.handle(
         new Request(
