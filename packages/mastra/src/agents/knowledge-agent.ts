@@ -34,33 +34,10 @@ const KNOWLEDGE_AGENT_BASE_PROMPT = `
 - 如果工具结果里没有相关内容，再说明当前资料里没有足够证据，不要编造。
 `.trim();
 
-function buildFocusSourceInstructions(params: { path: string; title: string }) {
-  return [
-    "当前优先文件：",
-    `- 标题：${params.title}`,
-    `- 路径：${params.path}`,
-    "",
-    "优先处理规则：",
-    "- 如果用户当前是在围绕这份文件提问、提炼、总结、改写或审校，先直接读取这份文件，再回答。",
-    "- 不要先查看文件列表，也不要为了保险连续读取多份文件。",
-    "- 只有在这份文件证据不足、需要交叉核对，或用户明确要求查看整个资料文件夹、其他文件、文件列表或跨文件比较时，才扩展到其他资料。",
-    "- 如果确实补充查阅了其他资料，在最终回答里用一句话简短说明。",
-  ].join("\n");
-}
-
 function buildInstructions(params: {
   assistantRole: AssistantRolePromptConfig;
-  focusSource?: {
-    path: string;
-    sourceId: string;
-    title: string;
-  };
 }): string {
   const sections = [KNOWLEDGE_AGENT_BASE_PROMPT];
-
-  if (params.focusSource) {
-    sections.push(buildFocusSourceInstructions(params.focusSource));
-  }
 
   sections.push(`当前角色：${params.assistantRole.name}`);
 
@@ -89,11 +66,6 @@ function buildInstructions(params: {
 export function createKnowledgeAgent(params: {
   assistantRole: AssistantRolePromptConfig;
   collectionId: string;
-  focusSource?: {
-    path: string;
-    sourceId: string;
-    title: string;
-  };
   workspace: Workspace<WorkspaceFilesystem>;
 }) {
   // 这里只做最薄的一层智能体绑定：把当前资料库的 workspace、运行时模型
@@ -104,7 +76,6 @@ export function createKnowledgeAgent(params: {
     description: "Answers questions using the bound workspace.",
     instructions: buildInstructions({
       assistantRole: params.assistantRole,
-      focusSource: params.focusSource,
     }),
     model: createRuntimeModel(),
     memory: knowledgeMemory,

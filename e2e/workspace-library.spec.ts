@@ -80,6 +80,94 @@ test("上传文件后右栏布局正常，并且对话能列出当前文件", as
   });
 });
 
+test("资料编辑不会污染路由，也不会让聊天请求携带 sourceId", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+
+  const suffix = Date.now().toString(36);
+  const collectionName = `E2E 编辑 ${suffix}`;
+  const fileName = `editor-${suffix}.txt`;
+
+  await page.goto("/login");
+  await page.locator("#username").fill("admin");
+  await page.locator("#password").fill("atlas-kb-dev");
+  await page.getByRole("button", { name: "登 录" }).click();
+  await expect(page).toHaveURL(/\/app/);
+
+  await page.getByTestId("create-collection-button").click();
+  await page.getByTestId("create-collection-name").fill(collectionName);
+  await page
+    .getByTestId("create-collection-description")
+    .fill("用于验证资料编辑与聊天请求解耦。");
+  await page.getByTestId("create-collection-submit").click();
+
+  const collectionItem = page
+    .getByTestId("collection-item")
+    .filter({ hasText: collectionName });
+  await expect(collectionItem).toBeVisible();
+  await collectionItem.click();
+
+  await page.getByTestId("open-import-button").click();
+  await page.getByTestId("import-file-input").setInputFiles({
+    name: fileName,
+    mimeType: "text/plain",
+    buffer: Buffer.from("这是一份用于验证编辑解耦的测试文件。"),
+  });
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/kb/collections/") &&
+        response.url().includes("/uploads") &&
+        response.request().method() === "POST",
+    ),
+    page.getByTestId("import-submit-button").click(),
+  ]);
+  await expect(
+    page.getByRole("dialog", { name: "添加文件到当前分组" }),
+  ).toBeHidden({
+    timeout: 60_000,
+  });
+
+  const sourceCard = page.getByTestId("source-card").first();
+  await expect(sourceCard).toBeVisible({ timeout: 60_000 });
+  await sourceCard.getByTestId("source-edit-button").click();
+
+  const editorDialog = page.getByRole("dialog", { name: "资料编辑器" });
+  await expect(editorDialog).toBeVisible({ timeout: 60_000 });
+  await expect(page).not.toHaveURL(/source=/);
+
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/kb/sources/") &&
+        response.request().method() === "PATCH",
+    ),
+    editorDialog.getByRole("button", { name: "保存修改" }).click(),
+  ]);
+  await expect(editorDialog).toBeHidden({ timeout: 60_000 });
+
+  const replyRequestPromise = page.waitForRequest(
+    (request) =>
+      request.url().includes("/api/chat/sessions/") &&
+      request.url().includes("/reply/stream") &&
+      request.method() === "POST",
+  );
+
+  await page.getByTestId("chat-composer").fill("我们现在有哪些文件？");
+  await page.getByTestId("chat-submit").click();
+
+  const replyRequest = await replyRequestPromise;
+  const requestBody = replyRequest.postDataJSON() as Record<string, unknown>;
+
+  expect(requestBody.query).toBe("我们现在有哪些文件？");
+  expect(requestBody).not.toHaveProperty("sourceId");
+  await expect(page.getByText("当前优先文件：")).toHaveCount(0);
+  await expect(page.getByText(fileName, { exact: false }).last()).toBeVisible({
+    timeout: 60_000,
+  });
+});
+
 test("导出任务支持选择模板、查看详情并保存修改", async ({ page }) => {
   test.setTimeout(120_000);
 

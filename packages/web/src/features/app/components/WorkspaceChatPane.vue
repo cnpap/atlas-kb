@@ -62,9 +62,6 @@
       turn.assistantMessage?.id ?? "",
       turn.assistantMessage?.content.length ?? 0,
       turn.progress?.status ?? "",
-      turn.progress?.focusSource?.sourceId ?? "",
-      turn.progress?.focusSource?.title ?? "",
-      turn.progress?.focusSource?.path ?? "",
       turn.progress?.summaryLabel ?? "",
       turn.progress?.items
         .map((item) => `${item.id}:${item.status}:${item.label}`)
@@ -145,18 +142,6 @@
         turn.progress.status !== "completed" &&
         (turn.status === "streaming" || turn.status === "failed"),
     );
-  }
-
-  function getFocusSourceLabel(turn: WorkspaceChatTurn): string {
-    const focusSource = turn.progress?.focusSource;
-
-    if (!focusSource) {
-      return "";
-    }
-
-    return focusSource.path && focusSource.path !== `/${focusSource.title}`
-      ? `当前优先文件：${focusSource.title} · ${focusSource.path}`
-      : `当前优先文件：${focusSource.title}`;
   }
 
   function clearCopiedStateTimer() {
@@ -402,12 +387,6 @@
             </div>
 
             <div v-if="shouldShowProgress(turn)" class="execution-progress">
-              <p
-                v-if="turn.progress?.focusSource"
-                class="execution-progress-focus"
-              >
-                {{ getFocusSourceLabel(turn) }}
-              </p>
               <p class="execution-progress-summary">
                 {{ turn.progress?.summaryLabel || "正在生成回答..." }}
               </p>
@@ -617,13 +596,6 @@
     font-size: 12px;
     line-height: 1.6;
     color: var(--text-muted);
-  }
-
-  .execution-progress-focus {
-    margin: 0 0 0.22rem;
-    font-size: 12px;
-    line-height: 1.6;
-    color: var(--text-strong);
   }
 
   .execution-progress-list {

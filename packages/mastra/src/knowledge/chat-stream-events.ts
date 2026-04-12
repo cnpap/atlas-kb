@@ -1,7 +1,4 @@
-import type {
-  ChatReplyStreamDataEvent,
-  ChatReplyStreamFocusSource,
-} from "@atlas-kb/schema";
+import type { ChatReplyStreamDataEvent } from "@atlas-kb/schema";
 import type { ChunkType } from "@mastra/core/stream";
 import { normalizeWorkspaceDisplayPath } from "./workspace-paths";
 
@@ -120,9 +117,7 @@ function readChunkPayload(chunk: ChunkType): Record<string, unknown> {
     : {};
 }
 
-export function createChatReplyStreamEventMapper(params?: {
-  focusSource?: ChatReplyStreamFocusSource;
-}) {
+export function createChatReplyStreamEventMapper() {
   let currentStepIndex = -1;
   let emittedFailure = false;
   let emittedFinish = false;
@@ -315,7 +310,6 @@ export function createChatReplyStreamEventMapper(params?: {
           return [
             {
               type: "reply-progress-started",
-              focusSource: params?.focusSource,
               runId: getRunId(runId),
             },
           ];

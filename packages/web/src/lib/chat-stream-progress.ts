@@ -1,14 +1,6 @@
 import type { ChatReplyStreamDataEvent } from "@atlas-kb/schema";
 
 export type ChatReplyProgressItemStatus = "running" | "completed" | "failed";
-export type ChatReplyProgressFocusSource = NonNullable<
-  Extract<
-    ChatReplyStreamDataEvent,
-    {
-      type: "reply-progress-started";
-    }
-  >["focusSource"]
->;
 
 export type ChatReplyProgressItem = {
   id: string;
@@ -18,7 +10,6 @@ export type ChatReplyProgressItem = {
 };
 
 export type ChatReplyProgressState = {
-  focusSource?: ChatReplyProgressFocusSource;
   items: ChatReplyProgressItem[];
   runId: string;
   status: "running" | "completed" | "failed";
@@ -100,7 +91,6 @@ export function applyChatReplyProgressEvent(
   switch (event.type) {
     case "reply-progress-started":
       return {
-        focusSource: event.focusSource,
         items: [],
         runId: event.runId,
         status: "running",

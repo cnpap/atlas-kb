@@ -12,13 +12,7 @@ function createChunk(chunk: Record<string, unknown>): ChunkType {
 
 describe("chat stream event mapper", () => {
   it("maps progress events from Mastra chunks", () => {
-    const mapper = createChatReplyStreamEventMapper({
-      focusSource: {
-        sourceId: "source-1",
-        title: "约稿函",
-        path: "/约稿函.docx",
-      },
-    });
+    const mapper = createChatReplyStreamEventMapper();
 
     const events = [
       ...mapper.mapChunk(
@@ -127,11 +121,6 @@ describe("chat stream event mapper", () => {
       "reply-progress-finished",
     ]);
     expect(events[0]).toMatchObject({
-      focusSource: {
-        path: "/约稿函.docx",
-        sourceId: "source-1",
-        title: "约稿函",
-      },
       type: "reply-progress-started",
     });
     expect(events[2]).toMatchObject({

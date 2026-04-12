@@ -96,6 +96,7 @@
   const error = ref("");
   const composer = ref("");
   const sourceFilter = ref("");
+  const editingSourceId = ref("");
   const selectedAssistantMessageId = ref("");
   const streamProgressByMessageId = ref<Record<string, ChatReplyProgressState>>(
     {},
@@ -145,7 +146,6 @@
     () => tokenCollectionId.value || readQueryValue(route.query.group),
   );
   const activeSessionId = computed(() => readQueryValue(route.query.session));
-  const routeSourceId = computed(() => readQueryValue(route.query.source));
 
   const activeCollection = computed(
     () =>
@@ -175,8 +175,8 @@
         .includes(keyword),
     );
   });
-  const selectedSource = computed(
-    () => sources.value.find((item) => item.id === routeSourceId.value) || null,
+  const editingSource = computed(
+    () => sources.value.find((item) => item.id === editingSourceId.value) || null,
   );
   const hasProcessingSources = computed(() =>
     sources.value.some((source) => source.status === "processing"),
@@ -305,6 +305,7 @@
     patch: Record<string, string | undefined>,
   ) {
     const nextQuery = { ...route.query };
+    delete nextQuery.source;
 
     for (const [key, value] of Object.entries(patch)) {
       if (value) {
@@ -648,7 +649,6 @@
       await replaceWorkspaceQuery({
         group: nextCollectionId || undefined,
         session: undefined,
-        source: undefined,
         panel: "settings",
       });
 
@@ -663,6 +663,8 @@
         messages.value = [];
         clearAllAssistantProgress();
       }
+      editingSourceId.value = "";
+      showSourceEditorModal.value = false;
       showToast("资料文件夹已删除");
     } catch (cause) {
       error.value =
@@ -925,7 +927,6 @@
         body: {
           query: trimmed,
           limit: 6,
-          sourceId: selectedSource.value?.id,
         },
         onUpdate: ({ content, events, progress }) => {
           updateAssistantDraftFromStream(tempAssistantId, content);
@@ -1089,7 +1090,7 @@
     tags: string;
     title: string;
   }) {
-    if (!selectedSource.value) {
+    if (!editingSource.value) {
       return;
     }
 
@@ -1098,7 +1099,7 @@
 
     try {
       await updateKnowledgeSourceRequest({
-        sourceId: selectedSource.value.id,
+        sourceId: editingSource.value.id,
         body: {
           title: payload.title.trim() || undefined,
           summary: payload.summary.trim() || undefined,
@@ -1107,9 +1108,10 @@
         },
       });
 
-      await loadSources(selectedSource.value.collectionId);
+      await loadSources(editingSource.value.collectionId);
       await loadCollections();
       showSourceEditorModal.value = false;
+      editingSourceId.value = "";
       showToast("资料修改已保存");
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : "资料信息保存失败";
@@ -1133,13 +1135,10 @@
       await loadSources(source.collectionId);
       await loadCollections();
 
-      if (routeSourceId.value === source.id) {
-        await replaceWorkspaceQuery({
-          source: undefined,
-        });
-      }
-
       showSourceEditorModal.value = false;
+      if (editingSourceId.value === source.id) {
+        editingSourceId.value = "";
+      }
       showToast("资料已删除");
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : "删除资料失败";
@@ -1188,7 +1187,6 @@
     await replaceWorkspaceQuery({
       group: collectionId,
       session: undefined,
-      source: undefined,
       panel: "library",
     });
   }
@@ -1206,13 +1204,17 @@
     });
   }
 
-  async function openSource(source: KnowledgeSource) {
-    await replaceWorkspaceQuery({
-      group: source.collectionId,
-      source: source.id,
-      panel: "library",
-    });
+  function openSource(source: KnowledgeSource) {
+    editingSourceId.value = source.id;
     showSourceEditorModal.value = true;
+  }
+
+  function handleSourceEditorOpenChange(value: boolean) {
+    showSourceEditorModal.value = value;
+
+    if (!value) {
+      editingSourceId.value = "";
+    }
   }
 
   function handleOpenExportModal(source: KnowledgeSource) {
@@ -1246,6 +1248,10 @@
         loadCollections(),
         loadExportTemplates(),
       ]);
+
+      if (Object.hasOwn(route.query, "source")) {
+        await replaceWorkspaceQuery({});
+      }
 
       const resolvedCollectionId =
         tokenCollectionId.value || collections.value[0]?.id || "";
@@ -1308,6 +1314,9 @@
     if (value === previousValue) {
       return;
     }
+
+    editingSourceId.value = "";
+    showSourceEditorModal.value = false;
 
     if (!value) {
       sources.value = [];
@@ -1488,13 +1497,14 @@
   />
 
   <SourceEditorModal
-    v-model:open="showSourceEditorModal"
+    :open="showSourceEditorModal"
     :saving="savingSource"
-    :source="selectedSource"
-    :source-action-pending="sourceActionId === selectedSource?.id"
+    :source="editingSource"
+    :source-action-pending="sourceActionId === editingSource?.id"
     @delete="deleteSource"
     @download="downloadSource"
     @retry="retrySource"
     @submit="saveSource"
+    @update:open="handleSourceEditorOpenChange"
   />
 </template>

@@ -1008,6 +1008,7 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
       expect(String(text)).not.toContain(
         '当前绑定的资料文件夹是 "research-space"',
       );
+      expect(String(text)).not.toContain("当前优先文件：");
     },
   );
 
@@ -1046,51 +1047,6 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
       expect(String(text)).toContain("当前角色：我的审校风格");
       expect(String(text)).toContain("表达风格要求：");
       expect(String(text)).not.toContain("角色补充要求：");
-    },
-  );
-
-  it.serial(
-    "prioritizes the selected source file in the knowledge agent instructions",
-    async () => {
-      const agent = createKnowledgeAgent({
-        assistantRole: {
-          id: "builtin-default-knowledge-assistant",
-          name: "政策研判助手",
-          systemPrompt: "",
-          stylePrompt: "先给结论。",
-          isBuiltin: true,
-          isDefault: true,
-        },
-        collectionId: "research-space",
-        focusSource: {
-          path: "/约稿函.docx",
-          sourceId: "source-1",
-          title: "约稿函",
-        },
-        workspace: {} as never,
-      });
-      const instructions = await agent.getInstructions();
-      const text = Array.isArray(instructions)
-        ? instructions
-            .map((item) => {
-              if (typeof item === "string") {
-                return item;
-              }
-
-              return "content" in item ? JSON.stringify(item.content) : "";
-            })
-            .join("\n")
-        : typeof instructions === "string"
-          ? instructions
-          : "content" in instructions
-            ? JSON.stringify(instructions.content)
-            : "";
-
-      expect(String(text)).toContain("当前优先文件：");
-      expect(String(text)).toContain("标题：约稿函");
-      expect(String(text)).toContain("路径：/约稿函.docx");
-      expect(String(text)).toContain("先直接读取这份文件");
-      expect(String(text)).toContain("不要先查看文件列表");
     },
   );
 

@@ -180,23 +180,17 @@ describe("@atlas-kb/schema knowledge contracts", () => {
     expect(event.toolPath).toBe("/source/约稿函.docx");
   });
 
-  it("parses source-focused chat requests and start events", () => {
+  it("parses chat requests and progress start events without source focus", () => {
     const request = ChatReplyRequestSchema.parse({
       query: "请提炼这份材料的核心要点",
-      sourceId: "source-1",
     });
     const event = ChatReplyStreamDataEventSchema.parse({
       type: "reply-progress-started",
       runId: "run-1",
-      focusSource: {
-        sourceId: "source-1",
-        title: "约稿函",
-        path: "/约稿函.docx",
-      },
     });
 
-    expect(request.sourceId).toBe("source-1");
+    expect(request.query).toBe("请提炼这份材料的核心要点");
     expect(event.type).toBe("reply-progress-started");
-    expect(event.focusSource?.path).toBe("/约稿函.docx");
+    expect(event.runId).toBe("run-1");
   });
 });
