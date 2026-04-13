@@ -58,7 +58,12 @@
   import { generateClientId } from "@/lib/ids";
 
   type PanelMode = "library" | "exports" | "settings";
+  type SourceSortMode = "created-desc" | "title-asc" | "updated-desc";
   const SOURCE_POLL_INTERVAL_MS = 4_000;
+  const sourceTitleCollator = new Intl.Collator("zh-CN", {
+    numeric: true,
+    sensitivity: "base",
+  });
 
   const route = useRoute();
   const router = useRouter();
@@ -96,6 +101,7 @@
   const error = ref("");
   const composer = ref("");
   const sourceFilter = ref("");
+  const sourceSort = ref<SourceSortMode>("created-desc");
   const editingSourceId = ref("");
   const selectedAssistantMessageId = ref("");
   const streamProgressByMessageId = ref<Record<string, ChatReplyProgressState>>(
@@ -162,16 +168,69 @@
       selectedAssistantMessageId: selectedAssistantMessageId.value,
     }),
   );
-  const filteredSources = computed(() => {
-    const keyword = sourceFilter.value.trim().toLowerCase();
+  function compareTimestampDesc(left?: string, right?: string): number {
+    const leftTime = left ? Date.parse(left) : Number.NaN;
+    const rightTime = right ? Date.parse(right) : Number.NaN;
 
-    if (!keyword) {
-      return sources.value;
+    if (Number.isNaN(leftTime) && Number.isNaN(rightTime)) {
+      return 0;
     }
 
-    return sources.value.filter((source) =>
-      source.title.toLowerCase().includes(keyword),
-    );
+    if (Number.isNaN(leftTime)) {
+      return 1;
+    }
+
+    if (Number.isNaN(rightTime)) {
+      return -1;
+    }
+
+    return rightTime - leftTime;
+  }
+
+  function compareSourceTitles(left: KnowledgeSource, right: KnowledgeSource) {
+    return sourceTitleCollator.compare(left.title, right.title);
+  }
+
+  function sortSources(
+    items: KnowledgeSource[],
+    mode: SourceSortMode,
+  ): KnowledgeSource[] {
+    const nextItems = [...items];
+
+    nextItems.sort((left, right) => {
+      switch (mode) {
+        case "updated-desc":
+          return (
+            compareTimestampDesc(left.updatedAt, right.updatedAt) ||
+            compareTimestampDesc(left.createdAt, right.createdAt) ||
+            compareSourceTitles(left, right)
+          );
+        case "title-asc":
+          return (
+            compareSourceTitles(left, right) ||
+            compareTimestampDesc(left.createdAt, right.createdAt)
+          );
+        case "created-desc":
+        default:
+          return (
+            compareTimestampDesc(left.createdAt, right.createdAt) ||
+            compareSourceTitles(left, right)
+          );
+      }
+    });
+
+    return nextItems;
+  }
+
+  const filteredSources = computed(() => {
+    const keyword = sourceFilter.value.trim().toLowerCase();
+    const matchedSources = keyword
+      ? sources.value.filter((source) =>
+          source.title.toLowerCase().includes(keyword),
+        )
+      : sources.value;
+
+    return sortSources(matchedSources, sourceSort.value);
   });
   const editingSource = computed(
     () =>
@@ -1420,6 +1479,7 @@
       :saving-role="savingAssistantRole"
       :source-action-id="sourceActionId"
       :source-filter="sourceFilter"
+      :source-sort="sourceSort"
       :switching-assistant-role="switchingAssistantRole"
       @create-role="createAssistantRole"
       @delete-collection="removeCollection"
@@ -1438,6 +1498,7 @@
       @select-active-role="selectAssistantRole"
       @update-role="updateAssistantRole"
       @update:source-filter="sourceFilter = $event"
+      @update:source-sort="sourceSort = $event"
     />
   </section>
 

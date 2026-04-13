@@ -11,6 +11,7 @@
   import txtIcon from "@/assets/icon/txt.png";
   import wordIcon from "@/assets/icon/word.png";
   import {
+    ChevronDown,
     EllipsisVertical,
     FileCog,
     FolderPlus,
@@ -46,6 +47,7 @@
     savingRole?: boolean;
     sourceActionId: string;
     sourceFilter: string;
+    sourceSort: "created-desc" | "title-asc" | "updated-desc";
     switchingAssistantRole?: boolean;
   }>();
 
@@ -65,6 +67,7 @@
     retrySource: [source: KnowledgeSource];
     saveCollection: [payload: { description: string; name: string }];
     selectActiveRole: [roleId: string];
+    "update:sourceSort": [value: "created-desc" | "title-asc" | "updated-desc"];
     updateRole: [
       payload: {
         body: { name: string; stylePrompt: string };
@@ -313,18 +316,45 @@
       </div>
 
       <template v-else>
-        <div class="relative mb-4 w-full">
-          <Search
-            class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--text-dim)]"
-          />
-          <input
-            :value="sourceFilter"
-            class="field-shell w-full !rounded-[6px] !py-2.5 pl-9 pr-3 text-sm"
-            data-testid="source-filter-input"
-            placeholder="搜索文件标题"
-            type="search"
-            @input="emit('update:sourceFilter', ($event.target as HTMLInputElement).value)"
-          >
+        <div class="mb-4 flex items-center gap-2">
+          <div class="relative min-w-0 flex-1">
+            <Search
+              class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--text-dim)]"
+            />
+            <input
+              :value="sourceFilter"
+              class="field-shell w-full !rounded-[6px] !py-2.5 pl-9 pr-3 text-sm"
+              data-testid="source-filter-input"
+              placeholder="搜索文件标题"
+              type="search"
+              @input="emit('update:sourceFilter', ($event.target as HTMLInputElement).value)"
+            >
+          </div>
+
+          <div class="relative w-[126px] shrink-0">
+            <select
+              :value="sourceSort"
+              class="field-shell w-full appearance-none !rounded-[6px] !py-2.5 !pl-3 !pr-9 text-sm"
+              data-testid="source-sort-select"
+              @change="
+                emit(
+                  'update:sourceSort',
+                  ($event.target as HTMLSelectElement).value as
+                    | 'created-desc'
+                    | 'title-asc'
+                    | 'updated-desc',
+                )
+              "
+            >
+              <option value="created-desc">创建时间</option>
+              <option value="updated-desc">最近变更</option>
+              <option value="title-asc">名称</option>
+            </select>
+
+            <ChevronDown
+              class="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-[var(--text-dim)]"
+            />
+          </div>
         </div>
 
         <div
@@ -348,7 +378,8 @@
           <article
             v-for="source in filteredSources"
             :key="source.id"
-            class="stack-item !rounded-[8px] !px-2.5 !py-2 shadow-none"
+            :data-source-status="source.status"
+            class="stack-item source-card-surface !rounded-[8px] !px-2.5 !py-2 shadow-none"
             data-testid="source-card"
           >
             <div class="flex flex-col gap-1.5">

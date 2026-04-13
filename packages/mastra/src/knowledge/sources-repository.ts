@@ -59,7 +59,10 @@ export async function listKnowledgeSources(
     query = query.where("collection_id", "=", collectionId);
   }
 
-  const rows = await query.orderBy("updated_at", "desc").execute();
+  const rows = await query
+    .orderBy("created_at", "desc")
+    .orderBy("id", "desc")
+    .execute();
   return rows.map((row) => toSource(row));
 }
 

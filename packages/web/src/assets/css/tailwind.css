@@ -318,6 +318,40 @@
     background: rgba(255, 252, 247, 0.9);
   }
 
+  .source-card-surface {
+    @apply relative;
+  }
+
+  .source-card-surface[data-source-status="ready"] {
+    border-color: rgba(22, 163, 74, 0.16);
+    box-shadow: inset 0 0 0 1px rgba(22, 163, 74, 0.08);
+  }
+
+  .source-card-surface[data-source-status="processing"] {
+    border-color: rgba(202, 138, 4, 0.16);
+    box-shadow: inset 0 0 0 1px rgba(202, 138, 4, 0.08);
+  }
+
+  .source-card-surface[data-source-status="failed"] {
+    border-color: rgba(220, 38, 38, 0.16);
+    box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.08);
+  }
+
+  .source-card-surface[data-source-status="ready"]:hover {
+    border-color: rgba(22, 163, 74, 0.22);
+    box-shadow: inset 0 0 0 1px rgba(22, 163, 74, 0.1);
+  }
+
+  .source-card-surface[data-source-status="processing"]:hover {
+    border-color: rgba(202, 138, 4, 0.22);
+    box-shadow: inset 0 0 0 1px rgba(202, 138, 4, 0.1);
+  }
+
+  .source-card-surface[data-source-status="failed"]:hover {
+    border-color: rgba(220, 38, 38, 0.22);
+    box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.1);
+  }
+
   .stack-item.is-active {
     border-color: rgba(15, 118, 110, 0.28);
     background: rgba(15, 118, 110, 0.08);
