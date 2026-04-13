@@ -1,29 +1,18 @@
-import { basename, extname } from "node:path";
 import { getTikaBaseUrl } from "./config";
 
 type TikaDocument = {
   "Content-Type"?: string;
   "X-TIKA:content"?: string;
-  "dc:title"?: string;
 };
 
 type ExtractedTikaContent = {
   contentType?: string;
   text: string;
   textLength: number;
-  title?: string;
 };
 
 function normalizeText(text: string): string {
   return text.replace(/\r\n?/g, "\n").trim();
-}
-
-function deriveFallbackTitle(fileName?: string): string | undefined {
-  if (!fileName?.trim()) {
-    return undefined;
-  }
-
-  return basename(fileName.trim(), extname(fileName.trim())) || undefined;
 }
 
 function buildTikaHeaders(args: {
@@ -97,7 +86,6 @@ export async function extractContentFromBytes(args: {
   return {
     contentType:
       document?.["Content-Type"] ?? args.mimeType?.trim() ?? undefined,
-    title: document?.["dc:title"]?.trim() || deriveFallbackTitle(args.fileName),
     text,
     textLength: text.length,
   };

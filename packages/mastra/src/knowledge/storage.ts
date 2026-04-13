@@ -2,7 +2,6 @@ import { basename, extname } from "node:path";
 import type { KnowledgeSource } from "@atlas-kb/schema";
 import {
   detectKnowledgeMimeType,
-  deriveKnowledgeSourceTitleFromFileName,
   getDefaultExtensionForMimeType,
 } from "./document-file-types";
 import { normalizeWhitespace } from "./search-utils";
@@ -10,7 +9,7 @@ import { normalizeWhitespace } from "./search-utils";
 type ExtractedSourceContent = {
   content: string;
   mimeType: string;
-  title: string;
+  sourceFilename: string;
 };
 
 function stripControlCharacters(value: string) {
@@ -79,12 +78,9 @@ export function buildManagedSourceFileName(args: {
   mimeType?: string;
   sourceFilename?: string;
   sourceType: KnowledgeSource["sourceType"];
-  title: string;
+  fallbackName?: string;
 }) {
-  const preferredName =
-    args.sourceType === "file" || args.sourceType === "seed"
-      ? args.sourceFilename?.trim() || args.title.trim()
-      : `${args.title.trim()}.txt`;
+  const preferredName = args.sourceFilename?.trim() || args.fallbackName?.trim();
 
   return ensureManagedFileExtension({
     fileName: sanitizeManagedFileName(preferredName || "source"),
@@ -114,14 +110,14 @@ export function allocateManagedSourceFileName(
   return nextFileName;
 }
 
-function deriveTextTitle(fileName: string, content: string): string {
+function deriveTextFileStem(fileName: string, content: string): string {
   const firstLine = normalizeWhitespace(content).split("\n")[0]?.trim();
 
   if (firstLine) {
     return firstLine.replace(/^#{1,6}\s+/, "").slice(0, 160);
   }
 
-  return deriveKnowledgeSourceTitleFromFileName(fileName);
+  return basename(fileName, extname(fileName)) || "Untitled Source";
 }
 
 function decodeTextContent(bytes: Uint8Array): string {
@@ -146,24 +142,36 @@ export async function extractFileContent(args: {
   mimeType?: string;
 }) {
   const content = decodeTextContent(args.bytes);
+  const mimeType = detectKnowledgeMimeType(args.fileName, args.mimeType);
 
   return {
     content,
-    mimeType: detectKnowledgeMimeType(args.fileName, args.mimeType),
-    title: deriveTextTitle(args.fileName, content),
+    mimeType,
+    sourceFilename: buildManagedSourceFileName({
+      mimeType,
+      sourceFilename: args.fileName,
+      sourceType: "file",
+      fallbackName: deriveTextFileStem(args.fileName, content),
+    }),
   } satisfies ExtractedSourceContent;
 }
 
 export function buildTextSourceContent(args: {
   content: string;
   fileName: string;
-  title?: string;
+  sourceFilename?: string;
 }) {
   const content = normalizeWhitespace(args.content);
+  const mimeType = detectKnowledgeMimeType(args.fileName);
 
   return {
     content,
-    mimeType: detectKnowledgeMimeType(args.fileName),
-    title: args.title?.trim() || deriveTextTitle(args.fileName, content),
+    mimeType,
+    sourceFilename: buildManagedSourceFileName({
+      mimeType,
+      sourceFilename: args.sourceFilename,
+      sourceType: "text",
+      fallbackName: deriveTextFileStem(args.fileName, content),
+    }),
   } satisfies ExtractedSourceContent;
 }

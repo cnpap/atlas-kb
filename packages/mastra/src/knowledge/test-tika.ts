@@ -93,7 +93,6 @@ export function buildMockTikaExtractPayload(
     {
       "Content-Type": getMimeTypeForFileName(fileName),
       "X-TIKA:content": `${title} extracted content`,
-      "dc:title": title,
     },
   ];
 }

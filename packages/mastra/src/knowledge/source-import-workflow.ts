@@ -81,13 +81,6 @@ async function runKnowledgeSourceImport(args: {
     };
   }
 
-  if (source.source_type !== "file") {
-    return {
-      sourceId: source.id,
-      status: "skipped",
-    };
-  }
-
   const documentId = source.document_id || source.source_filename;
 
   if (!documentId) {
@@ -95,7 +88,6 @@ async function runKnowledgeSourceImport(args: {
       userId: args.userId,
       sourceId: source.id,
       documentId: source.id,
-      title: source.title,
       content: undefined,
       mimeType: source.mime_type ?? undefined,
       byteSize:
@@ -130,6 +122,7 @@ async function runKnowledgeSourceImport(args: {
       workspace,
       documentId,
     });
+    const shouldPersistContent = source.source_type !== "file";
     const indexed = await indexKnowledgeSourceContent({
       content,
       source: {
@@ -145,8 +138,7 @@ async function runKnowledgeSourceImport(args: {
       userId: args.userId,
       sourceId: source.id,
       documentId,
-      title: source.title,
-      content: undefined,
+      content: shouldPersistContent ? content : undefined,
       mimeType: source.mime_type ?? undefined,
       byteSize:
         source.byte_size === null || source.byte_size === undefined
@@ -181,8 +173,7 @@ async function runKnowledgeSourceImport(args: {
       userId: args.userId,
       sourceId: source.id,
       documentId,
-      title: source.title,
-      content: undefined,
+      content: source.source_type !== "file" ? source.content ?? undefined : undefined,
       mimeType: source.mime_type ?? undefined,
       byteSize:
         source.byte_size === null || source.byte_size === undefined

@@ -614,7 +614,7 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
         userId: user.id,
         collectionId: collection.id,
         input: {
-          title: "预算调整请示",
+          sourceFilename: "预算调整请示.txt",
           content:
             "来文单位为综合办公室，文件标题为关于预算调整的请示，需要财务部门尽快核对预算依据。",
         },
@@ -678,7 +678,7 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
         userId: user.id,
         collectionId: collection.id,
         input: {
-          title: "预算调整请示",
+          sourceFilename: "预算调整请示.txt",
           content:
             "来文单位为综合办公室，文件标题为关于预算调整的请示，需要财务部门尽快核对预算依据。",
         },
@@ -727,7 +727,7 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
       userId: user.id,
       collectionId: collection.id,
       input: {
-        title: "预算调整请示",
+        sourceFilename: "预算调整请示.txt",
         content: "关于预算调整的请示",
       },
     });

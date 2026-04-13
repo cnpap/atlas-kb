@@ -37,7 +37,6 @@ export type SourceRow = {
   source_filename: string | null;
   source_type: string;
   status: string;
-  title: string;
   updated_at: Date | string;
 };
 
@@ -86,7 +85,6 @@ export const SOURCE_COLUMNS = [
   "owner_user_id",
   "collection_id",
   "document_id",
-  "title",
   "content",
   "index_chunk_count",
   "source_type",
@@ -175,11 +173,10 @@ export function toSource(row: SourceRow): KnowledgeSource {
     id: row.id,
     documentId: row.document_id,
     collectionId: row.collection_id,
-    title: row.title,
     content: row.content ?? undefined,
     sourceType: row.source_type as KnowledgeSource["sourceType"],
     status: row.status as KnowledgeSource["status"],
-    sourceFilename: row.source_filename ?? undefined,
+    sourceFilename: row.source_filename ?? row.document_id,
     mimeType: row.mime_type ?? undefined,
     byteSize:
       row.byte_size === null || row.byte_size === undefined

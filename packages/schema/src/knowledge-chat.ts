@@ -31,10 +31,9 @@ export const ChatCitationSchema = z.object({
   sourceId: z.string().trim().min(1),
   documentId: z.string().trim().min(1),
   collectionId: z.string().trim().min(1),
-  title: z.string().trim().min(1),
+  sourceFilename: z.string().trim().min(1),
   sectionPath: z.string().trim().min(1).optional(),
   snippet: z.string().trim().min(1),
-  sourceFilename: z.string().trim().min(1).optional(),
   downloadUrl: z.string().trim().min(1).optional(),
   sourceType: KnowledgeSourceTypeSchema,
 });

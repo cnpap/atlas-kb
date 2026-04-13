@@ -58,7 +58,7 @@
   <UModal
     :open="open"
     :close="!pending"
-    :title="source ? `导出模板 · ${source.title}` : '导出模板'"
+    :title="source ? `导出模板 · ${source.sourceFilename}` : '导出模板'"
     description="选择一个模板后，会异步创建导出任务并进入右侧导出列表。"
     @update:open="updateOpen"
   >

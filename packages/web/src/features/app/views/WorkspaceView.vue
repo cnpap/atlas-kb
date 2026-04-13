@@ -58,9 +58,9 @@
   import { generateClientId } from "@/lib/ids";
 
   type PanelMode = "library" | "exports" | "settings";
-  type SourceSortMode = "created-desc" | "title-asc" | "updated-desc";
+  type SourceSortMode = "created-desc" | "filename-asc" | "updated-desc";
   const SOURCE_POLL_INTERVAL_MS = 4_000;
-  const sourceTitleCollator = new Intl.Collator("zh-CN", {
+  const sourceFilenameCollator = new Intl.Collator("zh-CN", {
     numeric: true,
     sensitivity: "base",
   });
@@ -187,8 +187,18 @@
     return rightTime - leftTime;
   }
 
-  function compareSourceTitles(left: KnowledgeSource, right: KnowledgeSource) {
-    return sourceTitleCollator.compare(left.title, right.title);
+  function getSourceSortName(source: KnowledgeSource): string {
+    return source.sourceFilename || source.documentId || source.id;
+  }
+
+  function compareSourceFilenames(
+    left: KnowledgeSource,
+    right: KnowledgeSource,
+  ) {
+    return sourceFilenameCollator.compare(
+      getSourceSortName(left),
+      getSourceSortName(right),
+    );
   }
 
   function sortSources(
@@ -203,18 +213,18 @@
           return (
             compareTimestampDesc(left.updatedAt, right.updatedAt) ||
             compareTimestampDesc(left.createdAt, right.createdAt) ||
-            compareSourceTitles(left, right)
+            compareSourceFilenames(left, right)
           );
-        case "title-asc":
+        case "filename-asc":
           return (
-            compareSourceTitles(left, right) ||
+            compareSourceFilenames(left, right) ||
             compareTimestampDesc(left.createdAt, right.createdAt)
           );
         case "created-desc":
         default:
           return (
             compareTimestampDesc(left.createdAt, right.createdAt) ||
-            compareSourceTitles(left, right)
+            compareSourceFilenames(left, right)
           );
       }
     });
@@ -226,7 +236,7 @@
     const keyword = sourceFilter.value.trim().toLowerCase();
     const matchedSources = keyword
       ? sources.value.filter((source) =>
-          source.title.toLowerCase().includes(keyword),
+          getSourceSortName(source).toLowerCase().includes(keyword),
         )
       : sources.value;
 
@@ -1095,7 +1105,7 @@
 
   async function submitTextImport(payload: {
     content: string;
-    title?: string;
+    sourceFilename?: string;
   }) {
     if (!activeCollection.value) {
       error.value = "请先选择一个资料文件夹";
@@ -1123,7 +1133,7 @@
 
   async function saveSource(payload: {
     content?: string;
-    title: string;
+    sourceFilename: string;
   }) {
     if (!editingSource.value) {
       return;
@@ -1136,7 +1146,7 @@
       await updateKnowledgeSourceRequest({
         sourceId: editingSource.value.id,
         body: {
-          title: payload.title.trim() || undefined,
+          sourceFilename: payload.sourceFilename.trim() || undefined,
           content: payload.content?.trim() || undefined,
         },
       });
@@ -1154,7 +1164,9 @@
   }
 
   async function deleteSource(source: KnowledgeSource) {
-    const accepted = window.confirm(`确认删除资料“${source.title}”？`);
+    const accepted = window.confirm(
+      `确认删除资料“${source.sourceFilename}”？`,
+    );
 
     if (!accepted) {
       return;

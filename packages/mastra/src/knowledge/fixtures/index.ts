@@ -1,5 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
-import { dirname, extname, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const DEPARTMENT_FIXTURE_SPACE = {
@@ -12,23 +12,12 @@ interface KnowledgeFixtureFile {
   content: string;
   filename: string;
   path: string;
-  title: string;
 }
 
 const FIXTURES_DIR = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "departments",
 );
-
-function resolveFixtureTitle(content: string, filename: string): string {
-  const heading = content.match(/^#\s+(.+)$/m)?.[1]?.trim();
-
-  if (heading) {
-    return heading;
-  }
-
-  return filename.replace(extname(filename), "").replace(/[-_]+/g, " ").trim();
-}
 
 export async function loadDepartmentFixtures(): Promise<
   KnowledgeFixtureFile[]
@@ -50,7 +39,6 @@ export async function loadDepartmentFixtures(): Promise<
         content,
         filename,
         path,
-        title: resolveFixtureTitle(content, filename),
       };
     }),
   );

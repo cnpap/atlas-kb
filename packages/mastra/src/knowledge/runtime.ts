@@ -35,6 +35,7 @@ import {
 } from "./embedding-throttle";
 import { wrapKnowledgeFilesystemForReading } from "./content-proxy";
 import { buildKnowledgeSourceObjectPrefix } from "./object-storage";
+import { synchronizeKnowledgeSourcePaths } from "./source-path-sync";
 
 type WorkspaceEntry = {
   indexName: string;
@@ -513,10 +514,21 @@ async function createWorkspaceEntry(
   collectionId: string,
 ): Promise<WorkspaceEntry> {
   const indexName = getWorkspaceIndexName(userId, collectionId);
-  const filesystem = createKnowledgeCollectionFilesystem({
-    userId,
-    collectionId,
-  });
+  const rawFilesystem =
+    filesystemFactoryOverride?.({
+      userId,
+      collectionId,
+    }) ??
+    createMountedS3Filesystem({
+      filesystemId: `knowledge-s3:${userId}:${collectionId}`,
+      prefix: buildKnowledgeSourceObjectPrefix({
+        userId,
+        collectionId,
+      }),
+      displayName: "知识库 S3",
+      description: "知识库 知识库资料文件存储。",
+    });
+  const filesystem = wrapKnowledgeFilesystemForReading(rawFilesystem);
   const vectorStore = createVectorStore();
   const workspace = new Workspace({
     id: `workspace:${userId}:${collectionId}`,
@@ -540,6 +552,12 @@ async function createWorkspaceEntry(
   }
 
   await workspace.init();
+  await synchronizeKnowledgeSourcePaths({
+    userId,
+    collectionId,
+    rawFilesystem,
+    workspace,
+  });
 
   return {
     indexName,

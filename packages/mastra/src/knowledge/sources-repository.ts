@@ -1,4 +1,5 @@
 import { NotFoundError } from "@atlas-kb/errors";
+import { sql } from "kysely";
 import type { KnowledgeCollection, KnowledgeSource } from "@atlas-kb/schema";
 import { ensureKnowledgeDatabase } from "./db";
 import { getKnowledgeWorkspace } from "./runtime";
@@ -15,6 +16,32 @@ import {
   requireKnowledgeCollection,
   touchCollection,
 } from "./collections-repository";
+
+let kbSourcesTitleColumnExists: boolean | undefined;
+
+async function hasLegacyKbSourcesTitleColumn(): Promise<boolean> {
+  if (kbSourcesTitleColumnExists !== undefined) {
+    return kbSourcesTitleColumnExists;
+  }
+
+  const db = await ensureKnowledgeDatabase();
+  const result = await sql<{ exists: boolean }>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'kb_sources'
+        AND column_name = 'title'
+    ) AS "exists"
+  `.execute(db);
+
+  kbSourcesTitleColumnExists = Boolean(result.rows[0]?.exists);
+  return kbSourcesTitleColumnExists;
+}
+
+export function resetKnowledgeSourceSchemaCache(): void {
+  kbSourcesTitleColumnExists = undefined;
+}
 
 async function getSourceRow(
   userId: string,
@@ -146,9 +173,8 @@ export async function createKnowledgeSourceRecord(params: {
   collectionId: string;
   documentId: string;
   sourceType: KnowledgeSource["sourceType"];
-  title: string;
   content?: string;
-  sourceFilename?: string;
+  sourceFilename: string;
   mimeType?: string;
   byteSize?: number;
   indexChunkCount?: number;
@@ -162,26 +188,31 @@ export async function createKnowledgeSourceRecord(params: {
   const content = params.content
     ? normalizeWhitespace(params.content)
     : undefined;
+  const values: Record<string, unknown> = {
+    id,
+    owner_user_id: toDbUserId(params.userId),
+    collection_id: params.collectionId,
+    document_id: params.documentId,
+    content: content ?? null,
+    source_type: params.sourceType,
+    status: params.status,
+    source_filename: params.sourceFilename.trim(),
+    mime_type: params.mimeType ?? null,
+    byte_size: params.byteSize ?? null,
+    index_chunk_count: params.indexChunkCount ?? 0,
+    failure_message: params.failureMessage ?? null,
+    created_at: now,
+    updated_at: now,
+  };
 
-  await db
-    .insertInto("kb_sources")
-    .values({
-      id,
-      owner_user_id: toDbUserId(params.userId),
-      collection_id: params.collectionId,
-      document_id: params.documentId,
-      title: params.title.trim(),
-      content: content ?? null,
-      source_type: params.sourceType,
-      status: params.status,
-      source_filename: params.sourceFilename ?? params.documentId,
-      mime_type: params.mimeType ?? null,
-      byte_size: params.byteSize ?? null,
-      index_chunk_count: params.indexChunkCount ?? 0,
-      failure_message: params.failureMessage ?? null,
-      created_at: now,
-      updated_at: now,
-    })
+  if (await hasLegacyKbSourcesTitleColumn()) {
+    values.title = params.sourceFilename.trim();
+  }
+
+  await (db.insertInto("kb_sources") as never as {
+    values(input: Record<string, unknown>): { execute(): Promise<unknown> };
+  })
+    .values(values)
     .execute();
 
   await touchCollection(params.collectionId);
@@ -192,11 +223,10 @@ export async function replaceSourceContent(params: {
   userId: string;
   sourceId: string;
   documentId: string;
-  title: string;
   content?: string;
   mimeType?: string;
   byteSize?: number;
-  sourceFilename?: string;
+  sourceFilename: string;
   indexChunkCount?: number;
   status: KnowledgeSource["status"];
   failureMessage?: string;
@@ -210,30 +240,37 @@ export async function replaceSourceContent(params: {
     ? normalizeWhitespace(params.content)
     : undefined;
   const now = nowIso();
+  const values: Record<string, unknown> = {
+    document_id: params.documentId,
+    content: content ?? null,
+    source_filename: params.sourceFilename.trim(),
+    mime_type: params.mimeType ?? current.mime_type ?? null,
+    byte_size:
+      params.byteSize ??
+      (current.byte_size === null || current.byte_size === undefined
+        ? null
+        : Number(current.byte_size)),
+    index_chunk_count:
+      params.indexChunkCount ?? Number(current.index_chunk_count ?? 0),
+    status: params.status,
+    failure_message: params.failureMessage ?? null,
+    updated_at: now,
+  };
 
-  await db
-    .updateTable("kb_sources")
-    .set({
-      document_id: params.documentId,
-      title: params.title.trim(),
-      content: content ?? null,
-      source_filename:
-        params.sourceFilename ??
-        current.source_filename ??
-        current.document_id ??
-        params.documentId,
-      mime_type: params.mimeType ?? current.mime_type ?? null,
-      byte_size:
-        params.byteSize ??
-        (current.byte_size === null || current.byte_size === undefined
-          ? null
-          : Number(current.byte_size)),
-      index_chunk_count:
-        params.indexChunkCount ?? Number(current.index_chunk_count ?? 0),
-      status: params.status,
-      failure_message: params.failureMessage ?? null,
-      updated_at: now,
-    })
+  if (await hasLegacyKbSourcesTitleColumn()) {
+    values.title = params.sourceFilename.trim();
+  }
+
+  await (db.updateTable("kb_sources") as never as {
+    set(input: Record<string, unknown>): {
+      where(column: string, op: string, value: string): {
+        where(column: string, op: string, value: string): {
+          execute(): Promise<unknown>;
+        };
+      };
+    };
+  })
+    .set(values)
     .where("owner_user_id", "=", toDbUserId(params.userId))
     .where("id", "=", params.sourceId)
     .execute();

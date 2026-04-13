@@ -1,3 +1,4 @@
+import { basename, extname } from "node:path";
 import { BadRequestError } from "@atlas-kb/errors";
 import type {
   KnowledgeBatchFileImportRequest,
@@ -9,10 +10,7 @@ import type {
   KnowledgeTextImportRequest,
 } from "@atlas-kb/schema";
 import { hasEmbeddingConfig } from "./config";
-import {
-  deriveKnowledgeSourceTitleFromFileName,
-  isKnowledgeSourceContentEditable,
-} from "./document-file-types";
+import { isKnowledgeSourceContentEditable } from "./document-file-types";
 import { getKnowledgeWorkspace } from "./runtime";
 import {
   createKnowledgeSourceRecord,
@@ -44,9 +42,7 @@ type ImportResult = {
   engine: "hybrid" | "lexical";
 };
 
-type SingleFileImportInput = {
-  title?: string;
-};
+type SingleFileImportInput = Record<string, never>;
 
 const AUTO_RETRY_FAILED_SOURCE_IMPORTS_INTERVAL_MS = 30 * 60 * 1_000;
 let failedSourceAutoRetryTimer: ReturnType<typeof setInterval> | null = null;
@@ -59,31 +55,20 @@ function getImportEngine(): ImportResult["engine"] {
   return hasEmbeddingConfig() ? "hybrid" : "lexical";
 }
 
-function deriveUploadTitle(args: {
-  fileName: string;
-  providedTitle?: string;
-}): string {
-  return (
-    args.providedTitle?.trim() ||
-    deriveKnowledgeSourceTitleFromFileName(args.fileName)
-  );
-}
-
 async function resolveManagedImportFileName(args: {
   collectionId: string;
   mimeType?: string;
   sourceFilename?: string;
   sourceId?: string;
   sourceType: KnowledgeSource["sourceType"];
-  title: string;
+  fallbackName?: string;
   userId: string;
 }) {
   const sources = await listKnowledgeSources(args.userId, args.collectionId);
   const usedNames = new Set(
     sources
       .filter((source) => source.id !== args.sourceId)
-      .map((source) => source.sourceFilename?.trim())
-      .filter((value): value is string => Boolean(value)),
+      .map((source) => source.sourceFilename.trim()),
   );
 
   return allocateManagedSourceFileName(
@@ -91,7 +76,7 @@ async function resolveManagedImportFileName(args: {
       mimeType: args.mimeType,
       sourceFilename: args.sourceFilename,
       sourceType: args.sourceType,
-      title: args.title,
+      fallbackName: args.fallbackName,
     }),
     usedNames,
   );
@@ -114,6 +99,64 @@ async function getMutableWorkspace(params: {
   };
 }
 
+function decodeWorkspaceTextContent(content: string | Uint8Array): string {
+  return typeof content === "string"
+    ? content
+    : new TextDecoder().decode(content);
+}
+
+async function readWorkspaceTextContent(args: {
+  documentId: string;
+  workspace: Awaited<ReturnType<typeof getKnowledgeWorkspace>>;
+}): Promise<string> {
+  const filesystem = args.workspace.filesystem;
+
+  if (!filesystem) {
+    throw new Error("Knowledge workspace filesystem is not available");
+  }
+
+  const fileContent = await filesystem.readFile(args.documentId, {
+    encoding: "utf8",
+  });
+  const content = decodeWorkspaceTextContent(fileContent).trim();
+
+  if (!content) {
+    throw new Error("当前文件没有可索引的文本内容");
+  }
+
+  return content;
+}
+
+function buildRenamedSourceFileName(args: {
+  currentSourceFilename: string;
+  mimeType?: string;
+  requestedSourceFilename?: string;
+  sourceType: KnowledgeSource["sourceType"];
+}) {
+  const requestedSourceFilename = args.requestedSourceFilename?.trim();
+
+  if (!requestedSourceFilename) {
+    return args.currentSourceFilename.trim();
+  }
+
+  const currentSourceFilename = args.currentSourceFilename.trim();
+  const currentExtension = extname(currentSourceFilename);
+  const requestedStem = basename(
+    requestedSourceFilename,
+    extname(requestedSourceFilename),
+  ).trim();
+
+  return buildManagedSourceFileName({
+    mimeType: args.mimeType,
+    sourceFilename:
+      currentExtension && requestedStem
+        ? `${requestedStem}${currentExtension}`
+        : requestedSourceFilename,
+    sourceType: args.sourceType,
+    fallbackName: currentSourceFilename,
+  });
+}
+
 async function createFileBackedSource(args: {
   byteSize?: number;
   collectionId: string;
@@ -123,7 +166,6 @@ async function createFileBackedSource(args: {
   sourceFilename: string;
   sourceId?: string;
   sourceType: KnowledgeSource["sourceType"];
-  title: string;
   userId: string;
 }): Promise<KnowledgeImportData> {
   await requireKnowledgeCollection(args.userId, args.collectionId);
@@ -149,7 +191,6 @@ async function createFileBackedSource(args: {
       collectionId: args.collectionId,
       documentId,
       sourceType: args.sourceType,
-      title: args.title,
       content,
       sourceFilename: args.sourceFilename,
       mimeType: args.mimeType,
@@ -174,7 +215,6 @@ async function createFileBackedSource(args: {
       userId: args.userId,
       sourceId: source.id,
       documentId,
-      title: args.title,
       content,
       mimeType: args.mimeType,
       byteSize: args.byteSize,
@@ -213,7 +253,6 @@ async function createQueuedFileSource(args: {
   fileBody: Uint8Array;
   mimeType?: string;
   sourceFilename: string;
-  title: string;
   userId: string;
 }): Promise<KnowledgeImportData> {
   await requireKnowledgeCollection(args.userId, args.collectionId);
@@ -236,7 +275,6 @@ async function createQueuedFileSource(args: {
       collectionId: args.collectionId,
       documentId,
       sourceType: "file",
-      title: args.title,
       content: undefined,
       sourceFilename: args.sourceFilename,
       mimeType: args.mimeType,
@@ -285,15 +323,10 @@ export async function importKnowledgeFile(args: {
   await requireKnowledgeCollection(args.userId, args.collectionId);
 
   const bytes = new Uint8Array(await args.file.arrayBuffer());
-  const title = deriveUploadTitle({
-    fileName: args.file.name,
-    providedTitle: args.input.title,
-  });
   const sourceFilename = await resolveManagedImportFileName({
     userId: args.userId,
     collectionId: args.collectionId,
     sourceType: "file",
-    title,
     sourceFilename: args.file.name,
     mimeType: args.file.type || undefined,
   });
@@ -305,7 +338,6 @@ export async function importKnowledgeFile(args: {
     mimeType: args.file.type || undefined,
     byteSize: args.file.size,
     sourceFilename,
-    title,
   });
 }
 
@@ -325,7 +357,6 @@ export async function importKnowledgeFiles(args: {
         collectionId: args.collectionId,
         file,
         input: {
-          title: undefined,
         },
       });
 
@@ -368,15 +399,14 @@ export async function importKnowledgeText(args: {
 
   const extracted = buildTextSourceContent({
     content: args.input.content,
-    fileName: `${args.input.title?.trim() || "Untitled Source"}.txt`,
-    title: args.input.title,
+    fileName: args.input.sourceFilename?.trim() || "Untitled Source.txt",
+    sourceFilename: args.input.sourceFilename,
   });
   const sourceFilename = await resolveManagedImportFileName({
     userId: args.userId,
     collectionId: args.collectionId,
     sourceType: "text",
-    title: extracted.title,
-    sourceFilename: `${extracted.title}.txt`,
+    sourceFilename: extracted.sourceFilename,
     mimeType: extracted.mimeType,
   });
 
@@ -389,7 +419,6 @@ export async function importKnowledgeText(args: {
     byteSize: new TextEncoder().encode(extracted.content).byteLength,
     sourceFilename,
     sourceType: "text",
-    title: extracted.title,
   });
 }
 
@@ -400,87 +429,263 @@ export async function updateKnowledgeSource(
 ): Promise<KnowledgeSource> {
   const source = await requireKnowledgeSource(userId, sourceId);
   const sourceRow = await requireKnowledgeSourceRow(userId, sourceId);
-  const requestedContent =
-    input.content !== undefined
-      ? input.content.trim()
-      : source.content?.trim() || "";
-  const nextTitle = input.title?.trim() || source.title;
-  const documentId = source.documentId;
+  const documentId = source.documentId || source.sourceFilename;
   const sourceFilename = source.sourceFilename;
 
   if (!documentId || !sourceFilename) {
     throw new BadRequestError(`资料 "${sourceId}" 缺少必要文件信息`);
   }
 
-  if (!isKnowledgeSourceContentEditable(source)) {
+  const isContentEditable = isKnowledgeSourceContentEditable(source);
+  const { filesystem, workspace } = await getMutableWorkspace({
+    userId,
+    collectionId: source.collectionId,
+  });
+  const currentContent = isContentEditable
+    ? source.content?.trim() || (await readWorkspaceTextContent({ documentId, workspace }))
+    : undefined;
+  const nextContent =
+    input.content !== undefined ? input.content.trim() : currentContent;
+  const nextSourceFilenameInput = input.sourceFilename?.trim();
+  const preferredSourceFilename = buildRenamedSourceFileName({
+    currentSourceFilename: sourceFilename,
+    mimeType: source.mimeType,
+    requestedSourceFilename: nextSourceFilenameInput,
+    sourceType: source.sourceType,
+  });
+  const nextSourceFilename = await resolveManagedImportFileName({
+    userId,
+    collectionId: source.collectionId,
+    sourceId: source.id,
+    sourceType: source.sourceType,
+    sourceFilename: preferredSourceFilename,
+    mimeType: source.mimeType,
+  });
+  const nextDocumentId = nextSourceFilename;
+  const sourceFilenameChanged = nextDocumentId !== documentId;
+  const previousChunkCount = Number(sourceRow.index_chunk_count ?? 0);
+  const previousContent = currentContent;
+  let nextFileCreated = false;
+
+  if (!isContentEditable) {
     if (
       input.content !== undefined &&
       input.content.trim() !== (source.content?.trim() || "")
     ) {
       throw new BadRequestError(
-        "当前 PDF、Word、Excel 资料只支持更新标题；如需替换正文，请重新上传文件。",
+        "当前 PDF、Word、Excel 资料不支持编辑正文；如需替换正文，请重新上传文件。",
       );
     }
-
-    return replaceSourceContent({
-      userId,
-      sourceId,
-      documentId,
-      title: nextTitle,
-      content: undefined,
-      mimeType: source.mimeType,
-      byteSize: source.byteSize ?? undefined,
-      sourceFilename,
-      indexChunkCount: Number(sourceRow.index_chunk_count ?? 0),
-      status: source.status,
-      failureMessage: source.failureMessage,
-    });
-  }
-
-  if (!requestedContent) {
+  } else if (!nextContent) {
     throw new BadRequestError("资料内容不能为空");
   }
 
-  const { filesystem, workspace } = await getMutableWorkspace({
-    userId,
-    collectionId: source.collectionId,
-  });
+  if (!sourceFilenameChanged && input.content === undefined) {
+    return source;
+  }
 
-  await filesystem.writeFile(documentId, requestedContent, {
-    mimeType: source.mimeType,
-    overwrite: true,
-  });
+  if (sourceFilenameChanged) {
+    try {
+      await removeKnowledgeSourceChunks({
+        workspace,
+        sourceId,
+        chunkCount: previousChunkCount,
+      });
 
-  await removeKnowledgeSourceChunks({
-    workspace,
-    sourceId,
-    chunkCount: Number(sourceRow.index_chunk_count ?? 0),
-  });
+      if (isContentEditable) {
+        await filesystem.writeFile(nextDocumentId, nextContent!, {
+          mimeType: source.mimeType,
+          overwrite: false,
+        });
+      } else {
+        await filesystem.copyFile(documentId, nextDocumentId);
+      }
+      nextFileCreated = true;
 
-  const indexed = await indexKnowledgeSourceContent({
-    workspace,
-    content: requestedContent,
-    source: {
-      id: source.id,
+      const processingSource = await replaceSourceContent({
+        userId,
+        sourceId,
+        documentId: nextDocumentId,
+        content: isContentEditable ? nextContent : undefined,
+        mimeType: source.mimeType,
+        byteSize: isContentEditable
+          ? new TextEncoder().encode(nextContent!).byteLength
+          : source.byteSize ?? undefined,
+        sourceFilename: nextSourceFilename,
+        indexChunkCount: 0,
+        status: "processing",
+        failureMessage: undefined,
+      });
+
+      try {
+        await enqueueKnowledgeSourceImport({
+          userId,
+          collectionId: source.collectionId,
+          sourceId: source.id,
+        });
+      } catch (error) {
+        await replaceSourceContent({
+          userId,
+          sourceId,
+          documentId,
+          content: isContentEditable ? previousContent : undefined,
+          mimeType: source.mimeType,
+          byteSize: source.byteSize ?? undefined,
+          sourceFilename,
+          indexChunkCount: previousChunkCount,
+          status: source.status,
+          failureMessage: source.failureMessage,
+        }).catch(() => undefined);
+
+        if (nextFileCreated) {
+          await filesystem
+            .deleteFile(nextDocumentId, {
+              force: true,
+            })
+            .catch(() => undefined);
+        }
+
+        if (previousChunkCount > 0) {
+          const restoreContent = isContentEditable
+            ? previousContent
+            : await readWorkspaceTextContent({
+                documentId,
+                workspace,
+              }).catch(() => undefined);
+
+          if (restoreContent?.trim()) {
+            await indexKnowledgeSourceContent({
+              workspace,
+              content: restoreContent,
+              source: {
+                id: source.id,
+                documentId,
+                mimeType: source.mimeType,
+                sourceFilename,
+              },
+            }).catch(() => undefined);
+          }
+        }
+
+        throw error;
+      }
+
+      await filesystem
+        .deleteFile(documentId, {
+          force: true,
+        })
+        .catch(() => undefined);
+
+      return processingSource;
+    } catch (error) {
+      if (nextFileCreated) {
+        await filesystem
+          .deleteFile(nextDocumentId, {
+            force: true,
+          })
+          .catch(() => undefined);
+      }
+
+      if (previousChunkCount > 0) {
+        const restoreContent = isContentEditable
+          ? previousContent
+          : await readWorkspaceTextContent({
+              documentId,
+              workspace,
+            }).catch(() => undefined);
+
+        if (restoreContent?.trim()) {
+          await indexKnowledgeSourceContent({
+            workspace,
+            content: restoreContent,
+            source: {
+              id: source.id,
+              documentId,
+              mimeType: source.mimeType,
+              sourceFilename,
+            },
+          }).catch(() => undefined);
+        }
+      }
+
+      throw error;
+    }
+  }
+
+  try {
+    await removeKnowledgeSourceChunks({
+      workspace,
+      sourceId,
+      chunkCount: previousChunkCount,
+    });
+
+    if (isContentEditable) {
+      await filesystem.writeFile(documentId, nextContent!, {
+        mimeType: source.mimeType,
+        overwrite: true,
+      });
+    }
+
+    const indexedContent = nextContent!;
+    const indexed = await indexKnowledgeSourceContent({
+      workspace,
+      content: indexedContent,
+      source: {
+        id: source.id,
+        documentId,
+        mimeType: source.mimeType,
+        sourceFilename,
+      },
+    });
+
+    const updated = await replaceSourceContent({
+      userId,
+      sourceId,
       documentId,
+      content: nextContent,
       mimeType: source.mimeType,
+      byteSize: new TextEncoder().encode(nextContent!).byteLength,
       sourceFilename,
-    },
-  });
+      indexChunkCount: indexed.chunkCount,
+      status: "ready",
+      failureMessage: undefined,
+    });
 
-  return replaceSourceContent({
-    userId,
-    sourceId,
-    documentId,
-    title: nextTitle,
-    content: requestedContent,
-    mimeType: source.mimeType,
-    byteSize: new TextEncoder().encode(requestedContent).byteLength,
-    sourceFilename,
-    indexChunkCount: indexed.chunkCount,
-    status: "ready",
-    failureMessage: undefined,
-  });
+    return updated;
+  } catch (error) {
+    if (isContentEditable && previousContent !== undefined) {
+      await filesystem
+        .writeFile(documentId, previousContent, {
+          mimeType: source.mimeType,
+          overwrite: true,
+        })
+        .catch(() => undefined);
+    }
+
+    if (previousChunkCount > 0) {
+      const restoreContent = isContentEditable
+        ? previousContent
+        : await readWorkspaceTextContent({
+            documentId,
+            workspace,
+          }).catch(() => undefined);
+
+      if (restoreContent?.trim()) {
+        await indexKnowledgeSourceContent({
+          workspace,
+          content: restoreContent,
+          source: {
+            id: source.id,
+            documentId,
+            mimeType: source.mimeType,
+            sourceFilename,
+          },
+        }).catch(() => undefined);
+      }
+    }
+
+    throw error;
+  }
 }
 
 export async function retryKnowledgeSourceImport(
@@ -519,7 +724,6 @@ export async function retryKnowledgeSourceImport(
     userId,
     sourceId: source.id,
     documentId,
-    title: source.title,
     content: undefined,
     mimeType: source.mimeType,
     byteSize: source.byteSize,
@@ -540,7 +744,6 @@ export async function retryKnowledgeSourceImport(
       userId,
       sourceId: source.id,
       documentId,
-      title: source.title,
       content: undefined,
       mimeType: source.mimeType,
       byteSize: source.byteSize,

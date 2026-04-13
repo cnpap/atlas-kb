@@ -163,7 +163,7 @@ describe.serial("knowledge ingest", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("allows metadata-only updates for binary-managed sources but rejects content replacement", async () => {
+  it("renames binary-managed sources and rebuilds their index, but rejects content replacement", async () => {
     const user = await createUser({
       username: "docling-readonly",
       password: "test-pass",
@@ -195,7 +195,6 @@ describe.serial("knowledge ingest", () => {
       collectionId: collection.id,
       documentId: "manual.pdf",
       sourceType: "file",
-      title: "Manual",
       content: undefined,
       sourceFilename: "manual.pdf",
       mimeType: "application/pdf",
@@ -207,15 +206,24 @@ describe.serial("knowledge ingest", () => {
       updateKnowledgeSource(user.id, source.id, {
         content: "new plain text body",
       }),
-    ).rejects.toThrow("只支持更新标题");
+    ).rejects.toThrow("不支持编辑正文");
 
     const updated = await updateKnowledgeSource(user.id, source.id, {
-      title: "Manual v2",
+      sourceFilename: "Manual v2",
     });
 
-    expect(updated.title).toBe("Manual v2");
+    expect(updated.status).toBe("processing");
+    expect(updated.documentId).toBe("Manual v2.pdf");
+    expect(updated.sourceFilename).toBe("Manual v2.pdf");
     expect(updated.content).toBeUndefined();
     expect(updated.mimeType).toBe("application/pdf");
+
+    await waitForPendingKnowledgeImports();
+
+    const refreshed = await requireKnowledgeSource(user.id, source.id);
+    expect(refreshed.status).toBe("ready");
+    expect(refreshed.documentId).toBe("Manual v2.pdf");
+    expect(refreshed.sourceFilename).toBe("Manual v2.pdf");
   });
 
   it("queues file uploads and completes indexing asynchronously", async () => {
@@ -332,11 +340,20 @@ describe.serial("knowledge ingest", () => {
       user.id,
       importResult.source.id,
       {
-        title: "Retry PDF",
+        sourceFilename: "Retry PDF",
       },
     );
-    expect(renamedFailedSource.status).toBe("failed");
-    expect(renamedFailedSource.failureMessage).toBeTruthy();
+    expect(renamedFailedSource.status).toBe("processing");
+    expect(renamedFailedSource.failureMessage).toBeUndefined();
+
+    await waitForPendingKnowledgeImports();
+
+    const failedRenamedSource = await requireKnowledgeSource(
+      user.id,
+      importResult.source.id,
+    );
+    expect(failedRenamedSource.status).toBe("failed");
+    expect(failedRenamedSource.failureMessage).toBeTruthy();
 
     failTikaRequest = false;
 

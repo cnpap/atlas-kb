@@ -29,13 +29,34 @@
     submit: [
       payload: {
         content?: string;
-        title: string;
+        sourceFilename: string;
       },
     ];
   }>();
 
-  const title = ref("");
+  const fileNameStem = ref("");
+  const fileNameExtension = ref("");
   const content = ref("");
+
+  function splitFileName(fileName: string): {
+    extension: string;
+    stem: string;
+  } {
+    const normalized = fileName.trim();
+    const dotIndex = normalized.lastIndexOf(".");
+
+    if (dotIndex <= 0) {
+      return {
+        extension: "",
+        stem: normalized,
+      };
+    }
+
+    return {
+      extension: normalized.slice(dotIndex),
+      stem: normalized.slice(0, dotIndex),
+    };
+  }
 
   function isBinaryManagedSource(source: KnowledgeSource | null): boolean {
     if (!source) {
@@ -69,7 +90,10 @@
         return;
       }
 
-      title.value = source?.title || "";
+      const resolvedFileName = source?.sourceFilename || source?.documentId || "";
+      const nextFileName = splitFileName(resolvedFileName);
+      fileNameStem.value = nextFileName.stem;
+      fileNameExtension.value = nextFileName.extension;
       content.value = source?.content || "";
     },
     { immediate: true },
@@ -77,7 +101,7 @@
 
   function submit() {
     emit("submit", {
-      title: title.value.trim(),
+      sourceFilename: `${fileNameStem.value.trim() || "source"}${fileNameExtension.value}`,
       content: isBinaryManagedSource(props.source)
         ? undefined
         : content.value.trim(),
@@ -95,8 +119,8 @@
     title="资料编辑器"
     :description="
       isBinaryManagedSource(source)
-        ? '当前 PDF、Word、Excel 资料不再持久化正文快照；你仍然可以更新标题。'
-        : '编辑标题和正文内容，保存后会立即更新检索。'
+        ? '当前 PDF、Word、Excel 资料不支持编辑正文；你仍然可以修改文件名，保存后会重建索引。'
+        : '编辑文件名和正文内容，保存后会立即重建检索。'
     "
     :close="!saving"
     @update:open="updateOpen"
@@ -104,8 +128,20 @@
     <template #body>
       <div v-if="source" class="space-y-5">
         <div class="space-y-2">
-          <p class="section-label">资料标题</p>
-          <input v-model="title" class="field-shell w-full text-sm font-medium">
+          <p class="section-label">文件名</p>
+          <div class="flex items-center gap-2">
+            <input
+              v-model="fileNameStem"
+              class="field-shell min-w-0 flex-1 text-sm font-medium"
+              placeholder="输入文件名"
+            >
+            <span
+              v-if="fileNameExtension"
+              class="rounded-[6px] border border-[var(--border-soft)] bg-[var(--bg-panel-muted)] px-2 py-2 text-xs text-[var(--text-dim)]"
+            >
+              {{ fileNameExtension }}
+            </span>
+          </div>
         </div>
 
         <div

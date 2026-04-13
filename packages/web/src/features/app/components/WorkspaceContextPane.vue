@@ -47,7 +47,7 @@
     savingRole?: boolean;
     sourceActionId: string;
     sourceFilter: string;
-    sourceSort: "created-desc" | "title-asc" | "updated-desc";
+    sourceSort: "created-desc" | "filename-asc" | "updated-desc";
     switchingAssistantRole?: boolean;
   }>();
 
@@ -67,7 +67,9 @@
     retrySource: [source: KnowledgeSource];
     saveCollection: [payload: { description: string; name: string }];
     selectActiveRole: [roleId: string];
-    "update:sourceSort": [value: "created-desc" | "title-asc" | "updated-desc"];
+    "update:sourceSort": [
+      value: "created-desc" | "filename-asc" | "updated-desc",
+    ];
     updateRole: [
       payload: {
         body: { name: string; stylePrompt: string };
@@ -170,12 +172,6 @@
 
     if (documentId) {
       return documentId;
-    }
-
-    const title = source.title.trim();
-
-    if (title) {
-      return title;
     }
 
     if (source.sourceType === "text") {
@@ -325,7 +321,7 @@
               :value="sourceFilter"
               class="field-shell w-full !rounded-[6px] !py-2.5 pl-9 pr-3 text-sm"
               data-testid="source-filter-input"
-              placeholder="搜索文件标题"
+              placeholder="搜索文件名"
               type="search"
               @input="emit('update:sourceFilter', ($event.target as HTMLInputElement).value)"
             >
@@ -341,14 +337,14 @@
                   'update:sourceSort',
                   ($event.target as HTMLSelectElement).value as
                     | 'created-desc'
-                    | 'title-asc'
+                    | 'filename-asc'
                     | 'updated-desc',
                 )
               "
             >
               <option value="created-desc">创建时间</option>
               <option value="updated-desc">最近变更</option>
-              <option value="title-asc">名称</option>
+              <option value="filename-asc">名称</option>
             </select>
 
             <ChevronDown
@@ -533,7 +529,7 @@
                 {{ task.templateName }}
               </p>
               <p class="mt-1 text-[12px] leading-6 text-[var(--text-muted)]">
-                {{ task.sourceTitle }}
+                {{ task.sourceFilename }}
               </p>
               <p
                 v-if="task.failureMessage"

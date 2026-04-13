@@ -41,12 +41,14 @@ import {
   getKnowledgeCollectionSourcesData,
   getKnowledgeSourceById,
   listKnowledgeSources,
+  resetKnowledgeSourceSchemaCache,
   replaceSourceContent,
   requireKnowledgeSource,
 } from "./sources-repository";
 
 export async function resetKnowledgeRepository(): Promise<void> {
   await resetKnowledgeDatabase();
+  resetKnowledgeSourceSchemaCache();
   await ensureDefaultAssistantRole();
 }
 

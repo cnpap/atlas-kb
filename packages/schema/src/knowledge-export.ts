@@ -71,7 +71,7 @@ export const KnowledgeExportTaskSchema = z.object({
   id: z.string().trim().min(1),
   ownerUserId: z.string().trim().min(1),
   sourceId: z.string().trim().min(1),
-  sourceTitle: z.string().trim().min(1),
+  sourceFilename: z.string().trim().min(1),
   taskType: z.string().trim().min(1),
   templateId: z.string().trim().min(1),
   templateName: z.string().trim().min(1),

@@ -15,7 +15,7 @@
     "submit:text": [
       payload: {
         content: string;
-        title?: string;
+        sourceFilename?: string;
       },
     ];
     "update:open": [value: boolean];
@@ -23,7 +23,7 @@
 
   const mode = ref<ImportMode>("file");
   const queuedFiles = ref<File[]>([]);
-  const textTitle = ref("");
+  const textSourceFilename = ref("");
   const textContent = ref("");
 
   const canSubmit = computed(() => {
@@ -47,7 +47,7 @@
 
       mode.value = "file";
       queuedFiles.value = [];
-      textTitle.value = "";
+      textSourceFilename.value = "";
       textContent.value = "";
     },
   );
@@ -80,7 +80,7 @@
     }
 
     emit("submit:text", {
-      title: textTitle.value.trim() || undefined,
+      sourceFilename: textSourceFilename.value.trim() || undefined,
       content: textContent.value.trim(),
     });
   }
@@ -172,11 +172,11 @@
 
         <template v-else>
           <div class="space-y-1.5">
-            <p class="section-label">资料标题</p>
+            <p class="section-label">文件名</p>
             <input
-              v-model="textTitle"
+              v-model="textSourceFilename"
               class="field-shell w-full text-sm"
-              placeholder="输入资料名称"
+              placeholder="输入文件名，可不带扩展名"
             >
           </div>
           <div class="space-y-1.5">

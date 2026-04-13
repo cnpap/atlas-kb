@@ -56,9 +56,7 @@ export async function importDepartmentFixtures(): Promise<{
       file: new File([fixture.content], fixture.filename, {
         type: "text/markdown",
       }),
-      input: {
-        title: fixture.title,
-      },
+      input: {},
     });
     imported.push(fixture.filename);
   }

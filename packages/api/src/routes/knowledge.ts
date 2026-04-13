@@ -89,14 +89,6 @@ function requireInternalSecret(headers: Record<string, string | undefined>) {
   }
 }
 
-function readOptionalFormValue(
-  formData: { get(name: string): unknown },
-  key: string,
-): string | undefined {
-  const value = formData.get(key);
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
 function requireActiveCollection(
   session: Session,
   collectionId: string,
@@ -348,15 +340,12 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
         throw new BadRequestError("请上传文件");
       }
 
-      const title = readOptionalFormValue(formData, "title");
       return success(
         await importKnowledgeFile({
           userId,
           collectionId,
           file,
-          input: {
-            title,
-          },
+          input: {},
         }),
       );
     },

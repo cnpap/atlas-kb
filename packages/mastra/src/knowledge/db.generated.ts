@@ -161,7 +161,6 @@ export interface KbSources {
   source_filename: string;
   source_type: string;
   status: string;
-  title: string;
   updated_at: Timestamp;
 }
 
@@ -188,7 +187,7 @@ export interface KbTemplateExportTasks {
   owner_user_id: Int8;
   parameters_json: Json | null;
   source_id: string;
-  source_title: string;
+  source_filename: string;
   started_at: Timestamp | null;
   status: Generated<string>;
   task_type: string;

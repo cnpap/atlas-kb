@@ -145,17 +145,17 @@ function toSearchHit(args: {
       lineRange: args.result.lineRange,
       metadata: args.result.metadata,
     }),
-    title: args.source.title,
+    sourceFilename:
+      args.source.sourceFilename || args.source.documentId || args.source.id,
     snippet: buildSearchSnippet(
       args.result.content,
       args.query,
-      args.source.title,
+      args.source.sourceFilename || args.source.documentId || args.source.id,
     ),
     sectionPath: buildSectionPath({
       lineRange: args.result.lineRange,
       metadata: args.result.metadata,
     }),
-    sourceFilename: args.source.sourceFilename,
     sourceType: args.source.sourceType,
     score: args.result.score,
     strategy:

@@ -203,7 +203,7 @@ function mockProviders() {
       ownerUserId: string;
       parameters: Record<string, string>;
       sourceId: string;
-      sourceTitle: string;
+      sourceFilename: string;
       startedAt?: string;
       status: "completed" | "failed" | "pending" | "processing";
       taskType: string;
@@ -217,7 +217,7 @@ function mockProviders() {
     id: "task-existing",
     ownerUserId: "1",
     sourceId: "source-existing",
-    sourceTitle: "既有资料",
+    sourceFilename: "既有资料.txt",
     taskType: "template",
     templateId: templateDetail.id,
     templateName: templateDetail.name,
@@ -372,7 +372,7 @@ function mockProviders() {
           id: taskId,
           ownerUserId: String(body.user_id ?? 1),
           sourceId: String(body.source_id ?? "source-1"),
-          sourceTitle: "资料一",
+          sourceFilename: "资料一.txt",
           taskType: "template",
           templateId: String(body.template_id ?? templateDetail.id),
           templateName: templateDetail.name,
@@ -563,14 +563,9 @@ async function uploadFileThroughDirectObjectFlow(params: {
   token: string;
   collectionId: string;
   file: File;
-  title?: string;
 }) {
   const formData = new FormData();
   formData.set("file", params.file);
-
-  if (params.title?.trim()) {
-    formData.set("title", params.title.trim());
-  }
 
   const response = await params.app.handle(
     new Request(
@@ -774,7 +769,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              title: "Alpha API Doc",
+              sourceFilename: "Alpha API Doc.txt",
               content: "alpha api keyword appears in this source.",
             }),
           },
@@ -805,13 +800,13 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
       const searchData = await readJson<{
         hits: Array<{
           sourceId: string;
-          title: string;
+          sourceFilename: string;
         }>;
         total: number;
       }>(searchResponse);
 
       expect(searchData.total).toBe(1);
-      expect(searchData.hits[0]?.title).toBe("Alpha API Doc");
+      expect(searchData.hits[0]?.sourceFilename).toBe("Alpha API Doc.txt");
     },
   );
 
@@ -1877,7 +1872,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              title: "Manual Source",
+              sourceFilename: "Manual Source.txt",
               content: "first manual text body",
             }),
           },
@@ -1972,7 +1967,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              title: "公文标题",
+              sourceFilename: "公文标题.txt",
               content: "来文单位为综合办公室，文件标题为关于预算调整的请示。",
             }),
           },
@@ -2138,7 +2133,7 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            title: "Private Alpha Doc",
+            sourceFilename: "Private Alpha Doc.txt",
             content: "private alpha token",
           }),
         },

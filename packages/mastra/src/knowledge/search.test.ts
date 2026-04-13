@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { MastraDBMessage } from "@mastra/core/agent";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import postgres from "postgres";
@@ -27,6 +27,7 @@ import {
   waitForPendingKnowledgeImports,
 } from "./index";
 import { importKnowledgeFiles } from "./ingest";
+import { createKnowledgeSourceRecord } from "./repository";
 import { buildMockQdrantResponse } from "./test-qdrant";
 import { TestS3LocalFilesystem } from "./test-s3-filesystem";
 import { buildMockTikaExtractPayload } from "./test-tika";
@@ -804,7 +805,7 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
         userId: alpha.id,
         collectionId: alphaCollection.id,
         input: {
-          title: "Alpha Doc",
+          sourceFilename: "Alpha Doc.txt",
           content: "alpha unique keyword is only visible to alpha user.",
         },
       });
@@ -812,7 +813,7 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
         userId: beta.id,
         collectionId: betaCollection.id,
         input: {
-          title: "Beta Doc",
+          sourceFilename: "Beta Doc.txt",
           content: "beta unique keyword is only visible to beta user.",
         },
       });
@@ -828,7 +829,7 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
       );
 
       expect(alphaResult.total).toBe(1);
-      expect(alphaResult.hits[0]?.title).toBe("Alpha Doc");
+      expect(alphaResult.hits[0]?.sourceFilename).toBe("Alpha Doc.txt");
       expect(alphaResult.hits[0]?.collectionId).toBe(alphaCollection.id);
     },
   );
@@ -848,7 +849,7 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
       userId: user.id,
       collectionId: collection.id,
       input: {
-        title: "制度说明",
+        sourceFilename: "制度说明.txt",
         content:
           "Leave requests are reviewed by the department manager and finally recorded by human resources.",
       },
@@ -886,7 +887,7 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
         userId: user.id,
         collectionId: collection.id,
         input: {
-          title: "部门职责",
+          sourceFilename: "部门职责.txt",
           content:
             "Malware incidents on office devices are handled by the infosec team.",
         },
@@ -937,7 +938,7 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
         userId: user.id,
         collectionId: collection.id,
         input: {
-          title: "部门职责",
+          sourceFilename: "部门职责.txt",
           content:
             "Malware incidents on office devices are handled by the infosec team.",
         },
@@ -1038,7 +1039,7 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
         userId: user.id,
         collectionId: collection.id,
         input: {
-          title: "通知说明",
+          sourceFilename: "通知说明.txt",
           content: "Budget adjustments should be reviewed by the finance team.",
         },
       });
@@ -1227,7 +1228,7 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
         userId: user.id,
         collectionId: collection.id,
         input: {
-          title: "请示通知",
+          sourceFilename: "请示通知.txt",
           content: "first document body",
         },
       });
@@ -1283,7 +1284,7 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
       userId: user.id,
       collectionId: collection.id,
       input: {
-        title: "部门职责",
+        sourceFilename: "部门职责.txt",
         content: "Supplier contract clause review is owned by the legal team.",
       },
     });
@@ -1328,7 +1329,7 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
         userId: user.id,
         collectionId: collection.id,
         input: {
-          title: "请示通知",
+          sourceFilename: "请示通知.txt",
           content: "first document body",
         },
       });
@@ -1336,7 +1337,7 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
         userId: user.id,
         collectionId: collection.id,
         input: {
-          title: "会议纪要",
+          sourceFilename: "会议纪要.txt",
           content: "second document body",
         },
       });
@@ -1355,6 +1356,61 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
 
       expect(reply.assistantMessage.content).toContain("请示通知.txt");
       expect(reply.assistantMessage.content).toContain("会议纪要.txt");
+    },
+  );
+
+  it.serial(
+    "lists source filenames instead of legacy document ids in workspace tools",
+    async () => {
+      const user = await ensureDefaultUser();
+      const collection = await createKnowledgeCollection({
+        userId: user.id,
+        input: {
+          id: "legacy-catalog-space",
+          name: "Legacy Catalog Space",
+          description: "legacy catalog tests",
+        },
+      });
+      const legacyDocumentId = "0b8352b2-5bee-4af3-a3a8-26f3b5038081.pdf";
+      const sourceFilename = "预算调整请示.pdf";
+      const workspaceRoot = join(workspaceFilesDir, user.id, collection.id);
+
+      await mkdir(workspaceRoot, {
+        recursive: true,
+      });
+      await writeFile(
+        join(workspaceRoot, legacyDocumentId),
+        new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+      );
+      await createKnowledgeSourceRecord({
+        userId: user.id,
+        collectionId: collection.id,
+        documentId: legacyDocumentId,
+        sourceType: "file",
+        sourceFilename,
+        mimeType: "application/pdf",
+        byteSize: 4,
+        indexChunkCount: 0,
+        status: "ready",
+      });
+
+      const session = await createChatSession({
+        userId: user.id,
+        collectionId: collection.id,
+      });
+      const reply = await createChatReply({
+        userId: user.id,
+        sessionId: session.id,
+        input: {
+          query: "当前我们有哪些文件？",
+        },
+      });
+      const workspaceEntries = await readdir(workspaceRoot);
+
+      expect(reply.assistantMessage.content).toContain(sourceFilename);
+      expect(reply.assistantMessage.content).not.toContain(legacyDocumentId);
+      expect(workspaceEntries).toContain(sourceFilename);
+      expect(workspaceEntries).not.toContain(legacyDocumentId);
     },
   );
 });

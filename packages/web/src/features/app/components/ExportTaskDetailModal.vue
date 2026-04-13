@@ -79,7 +79,7 @@
   <UModal
     :open="open"
     :close="!pending"
-    :title="task ? `${task.templateName} · ${task.sourceTitle}` : '导出任务详情'"
+    :title="task ? `${task.templateName} · ${task.sourceFilename}` : '导出任务详情'"
     description="在这里修改字段并重新保存。"
     @update:open="updateOpen"
   >

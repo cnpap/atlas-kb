@@ -581,14 +581,9 @@ export async function sendChatFeedbackRequest(params: {
 export async function uploadKnowledgeFileRequest(params: {
   collectionId: string;
   file: File;
-  title?: string;
 }): Promise<KnowledgeImportData> {
   const formData = new FormData();
   formData.set("file", params.file);
-
-  if (params.title?.trim()) {
-    formData.set("title", params.title.trim());
-  }
 
   return requestFormData<KnowledgeImportData>(
     `/api/kb/collections/${encodeURIComponent(params.collectionId)}/uploads`,
