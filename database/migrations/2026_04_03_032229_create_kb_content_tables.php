@@ -37,9 +37,7 @@ return new class extends Migration
             $table->text('collection_id');
             $table->text('document_id');
             $table->text('title');
-            $table->text('summary');
             $table->text('content');
-            $table->jsonb('tags_json');
             $table->text('source_type');
             $table->text('status');
             $table->text('source_filename');

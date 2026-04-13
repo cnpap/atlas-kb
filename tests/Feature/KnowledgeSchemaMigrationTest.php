@@ -114,7 +114,6 @@ test('knowledge base tables are created with the expected contract', function ()
         'kb_sources' => [
             'columns' => [
                 'owner_user_id' => ['data_type' => 'bigint', 'is_nullable' => 'NO'],
-                'tags_json' => ['data_type' => 'jsonb', 'is_nullable' => 'NO'],
                 'byte_size' => ['data_type' => 'bigint', 'is_nullable' => 'YES'],
                 'source_filename' => ['data_type' => 'text', 'is_nullable' => 'NO'],
                 'failure_message' => ['data_type' => 'text', 'is_nullable' => 'YES'],

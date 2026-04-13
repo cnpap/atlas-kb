@@ -16,7 +16,7 @@ class AtlasKbAgentClient
     ) {}
 
     /**
-     * @return array{summary:string, parameters:array<string,string>, citations:array<int, array<string, mixed>>}
+     * @return array{parameters:array<string,string>, citations:array<int, array<string, mixed>>}
      */
     public function generateExportPayload(
         KnowledgeTemplateExportTask $task,
@@ -71,7 +71,6 @@ class AtlasKbAgentClient
         }
 
         return [
-            'summary' => (string) ($data['summary'] ?? ''),
             'parameters' => collect($data['parameters'])
                 ->map(fn (mixed $value): string => is_scalar($value) || $value === null ? (string) $value : '')
                 ->all(),
