@@ -47,6 +47,7 @@ export {
 } from "./ingest";
 export {
   createKnowledgeCollection,
+  createKnowledgeSourceRecord,
   deleteKnowledgeCollection,
   deleteKnowledgeSource,
   ensureDefaultKnowledgeCollection,
@@ -64,14 +65,19 @@ export {
 } from "./repository";
 export {
   createKnowledgeCollectionFilesystem,
+  createKnowledgeSearchWorkspaceConfig,
   createKnowledgeStoragePrefixFilesystem,
+  deleteKnowledgeSearchIndex,
   LocalFilesystem,
   resetKnowledgeRuntimeCache,
   setKnowledgeFilesystemFactoryForTests,
   setKnowledgeStoragePrefixFilesystemFactoryForTests,
 } from "./runtime";
 export { searchKnowledge } from "./search";
-export { generateKnowledgeTemplateExportPayload } from "./template-exports";
+export {
+  buildTemplateExportChunkId,
+  generateKnowledgeTemplateExportPayload,
+} from "./template-exports";
 export {
   authenticateUser,
   createUser,

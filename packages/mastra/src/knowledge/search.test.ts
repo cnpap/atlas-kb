@@ -39,6 +39,8 @@ const originalRuntimeProvider = process.env.RUNTIME_PROVIDER;
 const originalRuntimeModel = process.env.RUNTIME_MODEL;
 const originalChatTitleModel = process.env.ATLAS_KB_CHAT_TITLE_MODEL;
 const originalEmbeddingApiKey = process.env.EMBEDDING_API_KEY;
+const originalEmbeddingBaseUrl = process.env.EMBEDDING_BASE_URL;
+const originalEmbeddingModel = process.env.EMBEDDING_MODEL;
 const originalEmbeddingMinIntervalMs = process.env.EMBEDDING_MIN_INTERVAL_MS;
 const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
 const originalQdrantUrl = process.env.QDRANT_URL;
@@ -657,6 +659,8 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
     process.env.RUNTIME_PROVIDER = "openai";
     delete process.env.RUNTIME_MODEL;
     process.env.EMBEDDING_API_KEY = "test-embedding-key";
+    process.env.EMBEDDING_BASE_URL = "https://dashscope.test/v1";
+    process.env.EMBEDDING_MODEL = "text-embedding-v4";
     process.env.EMBEDDING_MIN_INTERVAL_MS = "1";
     process.env.ATLAS_KB_S3_ENDPOINT = "http://127.0.0.1:9000";
     process.env.ATLAS_KB_S3_REGION = "us-east-1";
@@ -726,6 +730,18 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
       delete process.env.EMBEDDING_API_KEY;
     } else {
       process.env.EMBEDDING_API_KEY = originalEmbeddingApiKey;
+    }
+
+    if (originalEmbeddingBaseUrl === undefined) {
+      delete process.env.EMBEDDING_BASE_URL;
+    } else {
+      process.env.EMBEDDING_BASE_URL = originalEmbeddingBaseUrl;
+    }
+
+    if (originalEmbeddingModel === undefined) {
+      delete process.env.EMBEDDING_MODEL;
+    } else {
+      process.env.EMBEDDING_MODEL = originalEmbeddingModel;
     }
 
     if (originalEmbeddingMinIntervalMs === undefined) {

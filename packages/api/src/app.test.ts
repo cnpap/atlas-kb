@@ -20,6 +20,8 @@ const originalFetch = globalThis.fetch;
 const originalApiKey = process.env.OPENAI_API_KEY;
 const originalOpenAIBaseUrl = process.env.OPENAI_BASE_URL;
 const originalEmbeddingApiKey = process.env.EMBEDDING_API_KEY;
+const originalEmbeddingBaseUrl = process.env.EMBEDDING_BASE_URL;
+const originalEmbeddingModel = process.env.EMBEDDING_MODEL;
 const originalEmbeddingDimensions = process.env.EMBEDDING_DIMENSIONS;
 const originalEmbeddingMinIntervalMs = process.env.EMBEDDING_MIN_INTERVAL_MS;
 const originalQdrantApiKey = process.env.QDRANT_API_KEY;
@@ -593,11 +595,13 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
     knowledgeDataDir = await mkdtemp(join(tmpdir(), "atlas-kb-api-test-"));
     workspaceFilesDir = join(knowledgeDataDir, "workspace-files");
     process.env.ATLAS_KB_DATA_DIR = knowledgeDataDir;
-    delete process.env.OPENAI_API_KEY;
-    delete process.env.OPENAI_BASE_URL;
-    delete process.env.QDRANT_URL;
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENAI_BASE_URL = "https://api.openai.test/v1";
+    process.env.QDRANT_URL = "http://127.0.0.1:6333";
     delete process.env.QDRANT_API_KEY;
-    delete process.env.EMBEDDING_API_KEY;
+    process.env.EMBEDDING_API_KEY = "test-embedding-key";
+    process.env.EMBEDDING_BASE_URL = "https://dashscope.test/v1";
+    process.env.EMBEDDING_MODEL = "text-embedding-v4";
     delete process.env.EMBEDDING_DIMENSIONS;
     process.env.EMBEDDING_MIN_INTERVAL_MS = "1";
     process.env.ATLAS_KB_S3_ENDPOINT = "http://127.0.0.1:9000";
@@ -654,6 +658,18 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
       delete process.env.EMBEDDING_API_KEY;
     } else {
       process.env.EMBEDDING_API_KEY = originalEmbeddingApiKey;
+    }
+
+    if (originalEmbeddingBaseUrl === undefined) {
+      delete process.env.EMBEDDING_BASE_URL;
+    } else {
+      process.env.EMBEDDING_BASE_URL = originalEmbeddingBaseUrl;
+    }
+
+    if (originalEmbeddingModel === undefined) {
+      delete process.env.EMBEDDING_MODEL;
+    } else {
+      process.env.EMBEDDING_MODEL = originalEmbeddingModel;
     }
 
     if (originalEmbeddingDimensions === undefined) {
@@ -726,6 +742,15 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
     globalThis.fetch = originalFetch;
     setKnowledgeFilesystemFactoryForTests();
     await rm(knowledgeDataDir, { force: true, recursive: true });
+  });
+
+  it("fails to create the app when hybrid retrieval config is missing", () => {
+    delete process.env.EMBEDDING_API_KEY;
+    resetKnowledgeRuntimeCache();
+
+    expect(() => createApp()).toThrow(
+      "Atlas KB requires hybrid retrieval configuration",
+    );
   });
 
   it.serial(
@@ -978,6 +1003,26 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
           }
 
           return jsonResponse(buildMockTikaExtractPayload(init));
+        }
+
+        if (url.includes("/embeddings")) {
+          return jsonResponse({
+            data: [
+              {
+                embedding: [0.11, 0.22, 0.33],
+                index: 0,
+              },
+            ],
+          });
+        }
+
+        if (url.includes(":6333")) {
+          return jsonResponse({
+            result: {
+              points: [],
+              status: "ok",
+            },
+          });
         }
 
         return jsonResponse({

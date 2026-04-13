@@ -25,7 +25,6 @@ import {
   getQdrantApiKey,
   getQdrantCollectionPrefix,
   getQdrantUrl,
-  hasEmbeddingConfig,
   resetKnowledgeConfigCache,
   validateKnowledgeStorageConfig,
 } from "./config";
@@ -39,7 +38,7 @@ import { synchronizeKnowledgeSourcePaths } from "./source-path-sync";
 
 type WorkspaceEntry = {
   indexName: string;
-  vectorStore?: QdrantVector;
+  vectorStore: QdrantVector;
   workspace: Workspace<WorkspaceFilesystem>;
 };
 
@@ -74,10 +73,7 @@ function summarizeProviderError(payload: string): string | undefined {
 }
 
 const workspaceCache = new Map<string, Promise<WorkspaceEntry>>();
-const embeddingDimensionPromises = new Map<
-  string,
-  Promise<number | undefined>
->();
+const embeddingDimensionPromises = new Map<string, Promise<number>>();
 let filesystemFactoryOverride: KnowledgeFilesystemFactory | undefined;
 let storagePrefixFilesystemFactoryOverride:
   | KnowledgeStoragePrefixFilesystemFactory
@@ -398,15 +394,11 @@ export async function fetchKnowledgeEmbeddingVector(
 
 async function resolveEmbeddingDimension(
   userId: string,
-): Promise<number | undefined> {
+): Promise<number> {
   const configured = getEmbeddingDimensions();
 
   if (configured) {
     return configured;
-  }
-
-  if (!hasEmbeddingConfig()) {
-    return undefined;
   }
 
   if (!embeddingDimensionPromises.has(userId)) {
@@ -426,11 +418,7 @@ async function resolveEmbeddingDimension(
   return embeddingDimensionPromises.get(userId)!;
 }
 
-function createVectorStore(): QdrantVector | undefined {
-  if (!hasEmbeddingConfig()) {
-    return undefined;
-  }
-
+function createVectorStore(): QdrantVector {
   return new QdrantVector({
     id: "workspace-qdrant",
     url: getQdrantUrl(),
@@ -509,6 +497,38 @@ export function createKnowledgeStoragePrefixFilesystem(args: {
   return wrapKnowledgeFilesystemForReading(rawFilesystem);
 }
 
+export async function createKnowledgeSearchWorkspaceConfig(args: {
+  indexName: string;
+  userId: string;
+}): Promise<{
+  bm25: true;
+  embedder: (text: string) => Promise<number[]>;
+  searchIndexName: string;
+  vectorStore: QdrantVector;
+}> {
+  const vectorStore = createVectorStore();
+
+  await ensureVectorIndex(vectorStore, args.indexName, args.userId);
+
+  return {
+    bm25: true,
+    vectorStore,
+    embedder: (text: string) =>
+      fetchKnowledgeEmbeddingVector(text, {
+        userId: args.userId,
+      }),
+    searchIndexName: args.indexName,
+  };
+}
+
+export async function deleteKnowledgeSearchIndex(indexName: string) {
+  await createVectorStore()
+    .deleteIndex({
+      indexName,
+    })
+    .catch(() => undefined);
+}
+
 async function createWorkspaceEntry(
   userId: string,
   collectionId: string,
@@ -529,27 +549,16 @@ async function createWorkspaceEntry(
       description: "知识库 知识库资料文件存储。",
     });
   const filesystem = wrapKnowledgeFilesystemForReading(rawFilesystem);
-  const vectorStore = createVectorStore();
+  const searchConfig = await createKnowledgeSearchWorkspaceConfig({
+    userId,
+    indexName,
+  });
   const workspace = new Workspace({
     id: `workspace:${userId}:${collectionId}`,
     name: `${collectionId} Workspace`,
     filesystem,
-    bm25: true,
-    ...(vectorStore
-      ? {
-          vectorStore,
-          embedder: (text: string) =>
-            fetchKnowledgeEmbeddingVector(text, {
-              userId,
-            }),
-          searchIndexName: indexName,
-        }
-      : {}),
+    ...searchConfig,
   });
-
-  if (vectorStore) {
-    await ensureVectorIndex(vectorStore, indexName, userId);
-  }
 
   await workspace.init();
   await synchronizeKnowledgeSourcePaths({
@@ -562,7 +571,7 @@ async function createWorkspaceEntry(
   return {
     indexName,
     workspace,
-    vectorStore,
+    vectorStore: searchConfig.vectorStore,
   };
 }
 

@@ -161,14 +161,18 @@ export function buildKnowledgeTemplateExportStructuredOutputSchema(
   const shape: Record<string, z.ZodString> = {};
 
   for (const field of fields) {
-    const description = [
+    const descriptionParts = [
       `字段名：${field.name}。`,
       `字段标签：${field.label}。`,
-      field.description ? `字段说明：${field.description}。` : "字段说明为空。",
-      "必须返回字符串；无法确认时返回空字符串。",
-    ].join("");
+    ];
 
-    shape[field.name] = z.string().describe(description);
+    if (field.description) {
+      descriptionParts.push(`字段说明：${field.description}。`);
+    }
+
+    descriptionParts.push("必须返回字符串；无法确认时返回空字符串。");
+
+    shape[field.name] = z.string().describe(descriptionParts.join(""));
   }
 
   return z.object(shape);

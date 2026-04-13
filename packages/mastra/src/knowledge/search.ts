@@ -118,15 +118,11 @@ function buildChunkId(result: {
 function toSearchEngine(
   workspace: Awaited<ReturnType<typeof getKnowledgeWorkspace>>,
 ) {
-  if (workspace.canHybrid) {
-    return "hybrid" as const;
+  if (!workspace.canHybrid) {
+    throw new Error("Knowledge workspace must support hybrid retrieval");
   }
 
-  if (workspace.canVector) {
-    return "vector" as const;
-  }
-
-  return "lexical" as const;
+  return "hybrid" as const;
 }
 
 function toSearchHit(args: {
@@ -158,19 +154,9 @@ function toSearchHit(args: {
     }),
     sourceType: args.source.sourceType,
     score: args.result.score,
-    strategy:
-      args.engine === "hybrid"
-        ? "fusion"
-        : args.engine === "vector"
-          ? "vector"
-          : "lexical",
+    strategy: "fusion",
     usedInAnswer: false,
-    recallPaths:
-      args.engine === "hybrid"
-        ? ["关键词召回", "语义召回"]
-        : args.engine === "vector"
-          ? ["语义召回"]
-          : ["关键词召回"],
+    recallPaths: ["关键词召回", "语义召回"],
   };
 }
 
@@ -210,8 +196,7 @@ export async function searchKnowledge(
   const engine = toSearchEngine(workspace);
   const results = (await workspace.search(parsedInput.query, {
     topK: limit,
-    mode:
-      engine === "hybrid" ? "hybrid" : engine === "vector" ? "vector" : "bm25",
+    mode: "hybrid",
   })) as WorkspaceSearchResult[];
   const hits = results
     .map((result) => {

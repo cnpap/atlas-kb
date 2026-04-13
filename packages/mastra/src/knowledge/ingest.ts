@@ -9,7 +9,6 @@ import type {
   KnowledgeSourceUpdateRequest,
   KnowledgeTextImportRequest,
 } from "@atlas-kb/schema";
-import { hasEmbeddingConfig } from "./config";
 import { isKnowledgeSourceContentEditable } from "./document-file-types";
 import { getKnowledgeWorkspace } from "./runtime";
 import {
@@ -39,7 +38,7 @@ import { requireKnowledgeCollection } from "./repository";
 type ImportResult = {
   collection: KnowledgeCollection;
   source: KnowledgeSource;
-  engine: "hybrid" | "lexical";
+  engine: "hybrid";
 };
 
 type SingleFileImportInput = Record<string, never>;
@@ -52,7 +51,7 @@ let failedSourceAutoRetryRun: Promise<{
 }> | null = null;
 
 function getImportEngine(): ImportResult["engine"] {
-  return hasEmbeddingConfig() ? "hybrid" : "lexical";
+  return "hybrid";
 }
 
 async function resolveManagedImportFileName(args: {

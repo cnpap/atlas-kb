@@ -12,6 +12,7 @@ const DEFAULT_TIKA_BASE_URL = "http://127.0.0.1:9998";
 const DEFAULT_ADMIN_API_BASE_URL = "http://127.0.0.1:8000";
 const DEFAULT_DATABASE_URL =
   "postgresql://ops_agent_kit:OpsAgentKit_TSDB_2026!x7Q2mP9r@127.0.0.1:15432/ops_agent_kit";
+const DEFAULT_TEMPLATE_EXPORT_TIMEOUT_MS = 900_000;
 
 function trimEnvValue(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -250,8 +251,15 @@ export function getInternalSecret(): string | undefined {
   return trimEnvValue(process.env.ATLAS_KB_INTERNAL_SECRET);
 }
 
+export function getTemplateExportTimeoutMs(): number {
+  return parsePositiveIntegerEnv(
+    process.env.ATLAS_KB_TEMPLATE_EXPORT_TIMEOUT_MS,
+    DEFAULT_TEMPLATE_EXPORT_TIMEOUT_MS,
+  );
+}
+
 export function validateKnowledgeStorageConfig(): void {
-  const missing = [
+  const missingStorage = [
     ["ATLAS_KB_S3_ENDPOINT", getKnowledgeS3Endpoint()],
     ["ATLAS_KB_S3_REGION", getKnowledgeS3Region()],
     ["ATLAS_KB_S3_BUCKET", getKnowledgeS3Bucket()],
@@ -262,13 +270,29 @@ export function validateKnowledgeStorageConfig(): void {
     .filter(([, value]) => !value)
     .map(([name]) => name);
 
-  if (missing.length > 0) {
-    throw new Error(`Missing required S3 configuration: ${missing.join(", ")}`);
+  if (missingStorage.length > 0) {
+    throw new Error(
+      `Missing required S3 configuration: ${missingStorage.join(", ")}`,
+    );
   }
 
   if (!getInternalSecret()) {
     throw new Error(
       "Missing required internal configuration: ATLAS_KB_INTERNAL_SECRET",
+    );
+  }
+
+  const missingHybrid = [
+    ["QDRANT_URL", trimEnvValue(process.env.QDRANT_URL)],
+    ["EMBEDDING_API_KEY", trimEnvValue(process.env.EMBEDDING_API_KEY)],
+    ["EMBEDDING_MODEL", trimEnvValue(process.env.EMBEDDING_MODEL)],
+  ]
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+
+  if (missingHybrid.length > 0) {
+    throw new Error(
+      `Atlas KB requires hybrid retrieval configuration: ${missingHybrid.join(", ")}`,
     );
   }
 }

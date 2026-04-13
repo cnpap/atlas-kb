@@ -1,10 +1,9 @@
 import { createApp } from "./app";
-import { getApiHost, getApiPort } from "./env";
+import { getApiHost, getApiIdleTimeoutSeconds, getApiPort } from "./env";
 import { startFailedKnowledgeSourceAutoRetryScheduler } from "@atlas-kb/mastra/knowledge";
 
 const host = getApiHost();
 const port = getApiPort();
-const API_IDLE_TIMEOUT_SECONDS = 120;
 const app = createApp();
 
 startFailedKnowledgeSourceAutoRetryScheduler();
@@ -12,7 +11,7 @@ startFailedKnowledgeSourceAutoRetryScheduler();
 app.listen({
   hostname: host,
   port,
-  idleTimeout: API_IDLE_TIMEOUT_SECONDS,
+  idleTimeout: getApiIdleTimeoutSeconds(),
 });
 
 console.log(`[api] listening on http://localhost:${port} (bind: ${host})`);

@@ -1,5 +1,7 @@
 const DEFAULT_API_PORT = 6112;
 const DEFAULT_API_HOST = "0.0.0.0";
+const DEFAULT_API_IDLE_TIMEOUT_SECONDS = 255;
+const MAX_API_IDLE_TIMEOUT_SECONDS = 255;
 const DEFAULT_WEB_ALLOWED_HOSTS = [
   "localhost",
   "127.0.0.1",
@@ -36,6 +38,19 @@ export function getApiHost(): string {
   }
 
   return host;
+}
+
+export function getApiIdleTimeoutSeconds(): number {
+  const timeout = Number(
+    process.env.ATLAS_KB_API_IDLE_TIMEOUT_SECONDS ??
+      DEFAULT_API_IDLE_TIMEOUT_SECONDS,
+  );
+
+  if (!Number.isInteger(timeout) || timeout <= 0) {
+    return DEFAULT_API_IDLE_TIMEOUT_SECONDS;
+  }
+
+  return Math.min(timeout, MAX_API_IDLE_TIMEOUT_SECONDS);
 }
 
 export function getAllowedWebOrigins(): RegExp[] {

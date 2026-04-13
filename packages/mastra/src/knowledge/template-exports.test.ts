@@ -4,9 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { KnowledgeTemplateDetail } from "@atlas-kb/schema";
 import {
+  buildTemplateExportChunkId,
   createKnowledgeCollection,
+  createKnowledgeSourceRecord,
   ensureDefaultUser,
   generateKnowledgeTemplateExportPayload,
+  importKnowledgeFile,
   importKnowledgeText,
   resetKnowledgeRepository,
   resetKnowledgeRuntimeCache,
@@ -23,6 +26,8 @@ const originalApiKey = process.env.OPENAI_API_KEY;
 const originalOpenAIModel = process.env.OPENAI_MODEL;
 const originalRuntimeProvider = process.env.RUNTIME_PROVIDER;
 const originalEmbeddingApiKey = process.env.EMBEDDING_API_KEY;
+const originalEmbeddingBaseUrl = process.env.EMBEDDING_BASE_URL;
+const originalEmbeddingModel = process.env.EMBEDDING_MODEL;
 const originalEmbeddingMinIntervalMs = process.env.EMBEDDING_MIN_INTERVAL_MS;
 const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
 const originalQdrantUrl = process.env.QDRANT_URL;
@@ -200,6 +205,8 @@ function mockTemplateExportProviders(args: {
   invalidStructuredOutput?: boolean;
   promptBucket: string[];
   sourcePath: string;
+  toolPayloadBucket: string[];
+  libraryPath: string;
 }) {
   let chatStep = 0;
   let responseStep = 0;
@@ -241,32 +248,35 @@ function mockTemplateExportProviders(args: {
 
       if (!hasResponseFunctionOutput(body.input)) {
         return buildResponsesToolCall({
-          toolCallId: "call_list_source",
-          toolName: "mastra_workspace_list_files",
+          toolCallId: "call_search_context",
+          toolName: "mastra_workspace_search",
           toolArguments: {
-            path: "/source",
+            query: "预算调整 财务 核对 拟办意见",
+            topK: 5,
+            mode: "hybrid",
           },
         });
       }
 
+      args.toolPayloadBucket.push(JSON.stringify(body.input));
       responseStep += 1;
 
       if (responseStep === 1) {
         return buildResponsesToolCall({
-          toolCallId: "call_read_reference",
+          toolCallId: "call_read_source",
           toolName: "mastra_workspace_read_file",
           toolArguments: {
-            path: "/ops/manuals/guide.md",
+            path: args.sourcePath,
           },
         });
       }
 
       if (responseStep === 2) {
         return buildResponsesToolCall({
-          toolCallId: "call_read_source",
+          toolCallId: "call_read_reference",
           toolName: "mastra_workspace_read_file",
           toolArguments: {
-            path: args.sourcePath,
+            path: args.libraryPath,
           },
         });
       }
@@ -319,32 +329,35 @@ function mockTemplateExportProviders(args: {
 
       if (!hasToolReply) {
         return buildToolCallResponse({
-          toolCallId: "call_list_source",
-          toolName: "mastra_workspace_list_files",
+          toolCallId: "call_search_context",
+          toolName: "mastra_workspace_search",
           toolArguments: {
-            path: "/source",
+            query: "预算调整 财务 核对 拟办意见",
+            topK: 5,
+            mode: "hybrid",
           },
         });
       }
 
+      args.toolPayloadBucket.push(JSON.stringify(messages));
       chatStep += 1;
 
       if (chatStep === 1) {
         return buildToolCallResponse({
-          toolCallId: "call_read_reference",
+          toolCallId: "call_read_source",
           toolName: "mastra_workspace_read_file",
           toolArguments: {
-            path: "/ops/manuals/guide.md",
+            path: args.sourcePath,
           },
         });
       }
 
       if (chatStep === 2) {
         return buildToolCallResponse({
-          toolCallId: "call_read_source",
+          toolCallId: "call_read_reference",
           toolName: "mastra_workspace_read_file",
           toolArguments: {
-            path: args.sourcePath,
+            path: args.libraryPath,
           },
         });
       }
@@ -474,6 +487,8 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
     process.env.OPENAI_MODEL = "gpt-5.4";
     process.env.RUNTIME_PROVIDER = "openai";
     process.env.EMBEDDING_API_KEY = "test-embedding-key";
+    process.env.EMBEDDING_BASE_URL = "https://dashscope.test/v1";
+    process.env.EMBEDDING_MODEL = "text-embedding-v4";
     process.env.EMBEDDING_MIN_INTERVAL_MS = "1";
     process.env.ATLAS_KB_S3_ENDPOINT = "http://127.0.0.1:9000";
     process.env.ATLAS_KB_S3_REGION = "us-east-1";
@@ -543,6 +558,18 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
       process.env.EMBEDDING_API_KEY = originalEmbeddingApiKey;
     }
 
+    if (originalEmbeddingBaseUrl === undefined) {
+      delete process.env.EMBEDDING_BASE_URL;
+    } else {
+      process.env.EMBEDDING_BASE_URL = originalEmbeddingBaseUrl;
+    }
+
+    if (originalEmbeddingModel === undefined) {
+      delete process.env.EMBEDDING_MODEL;
+    } else {
+      process.env.EMBEDDING_MODEL = originalEmbeddingModel;
+    }
+
     if (originalEmbeddingMinIntervalMs === undefined) {
       delete process.env.EMBEDDING_MIN_INTERVAL_MS;
     } else {
@@ -598,9 +625,34 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
   });
 
   it.serial(
-    "mounts source and reference libraries, then returns structured values with real field names",
+    "uses UUID point ids for template export search indexing",
+    async () => {
+      const sourceChunkId = buildTemplateExportChunkId({
+        scope: "source",
+        filePath: "/source/预算调整请示.pdf",
+        ordinal: 0,
+      });
+      const referenceChunkId = buildTemplateExportChunkId({
+        scope: "reference",
+        filePath: "/references/nbyj/history.md",
+        ordinal: 3,
+      });
+
+      expect(sourceChunkId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+      expect(referenceChunkId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+      expect(sourceChunkId).not.toBe(referenceChunkId);
+    },
+  );
+
+  it.serial(
+    "learns source and reference libraries into template export context before extraction",
     async () => {
       const promptBucket: string[] = [];
+      const toolPayloadBucket: string[] = [];
       const user = await ensureDefaultUser();
       const collection = await createKnowledgeCollection({
         userId: user.id,
@@ -610,22 +662,36 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
           description: "source docs for template export",
         },
       });
-      const importResult = await importKnowledgeText({
+      const importResult = await importKnowledgeFile({
         userId: user.id,
         collectionId: collection.id,
-        input: {
-          sourceFilename: "预算调整请示.txt",
-          content:
-            "来文单位为综合办公室，文件标题为关于预算调整的请示，需要财务部门尽快核对预算依据。",
-        },
+        file: new File(
+          [new Uint8Array([0x25, 0x50, 0x44, 0x46])],
+          "预算调整请示.pdf",
+          {
+            type: "application/pdf",
+          },
+        ),
+        input: {},
       });
+      await waitForPendingKnowledgeImports();
       const sourceDocumentId = importResult.source.documentId;
 
       if (!sourceDocumentId) {
         throw new Error("expected imported source documentId");
       }
 
-      const sourcePath = `/source/${sourceDocumentId}`;
+      await importKnowledgeText({
+        userId: user.id,
+        collectionId: collection.id,
+        input: {
+          sourceFilename: "其他资料.txt",
+          content: "这份资料不应被挂到 /source 里。",
+        },
+      });
+
+      const sourcePath = "/source/预算调整请示.pdf";
+      const libraryPath = "/references/ops/manuals/guide.md";
 
       await mkdir(join(storagePrefixDir, "ops", "manuals"), {
         recursive: true,
@@ -637,7 +703,9 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
 
       mockTemplateExportProviders({
         promptBucket,
+        toolPayloadBucket,
         sourcePath,
+        libraryPath,
       });
 
       const result = await generateKnowledgeTemplateExportPayload({
@@ -650,14 +718,109 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
         document_title: "关于预算调整的请示",
         opinion: "建议财务部门核对预算依据后办理。",
       });
-      expect(promptBucket.join("\n")).toContain("/source");
-      expect(promptBucket.join("\n")).toContain("资料库名称：办公室手册");
-      expect(promptBucket.join("\n")).toContain("挂载前缀：/ops/manuals");
-      expect(promptBucket.join("\n")).toContain(
-        "请结合资料内容和参考资料库生成拟办意见。",
+      const prompt = promptBucket.join("\n");
+
+      expect(prompt).toContain("/source 是本次导出工作的事实依据目录");
+      expect(prompt).toContain("/source 之外的其他挂载目录都是参考资料目录");
+      expect(prompt).toContain(
+        "当前已挂载的参考资料目录：/references/ops/manuals",
       );
-      expect(promptBucket.join("\n")).toContain("document_title");
-      expect(promptBucket.join("\n")).toContain("字段标签=文件标题");
+      expect(prompt).toContain("参考资料根目录：/references");
+      expect(prompt).toContain("参考资料挂载目录：");
+      expect(prompt).toContain(
+        "/references/ops/manuals：资料库名称=办公室手册；仅供参考",
+      );
+      expect(prompt).toContain("/source 目录文件：/source/预算调整请示.pdf");
+      expect(prompt).not.toContain("/source/其他资料.txt");
+      expect(prompt).toContain("请结合资料内容和参考资料库生成拟办意见。");
+      expect(prompt).toContain(
+        "模板信息：\n- 模板名称：拟办意见\n- 模板系统提示词：\n请结合资料内容和参考资料库生成拟办意见。",
+      );
+      expect(prompt).toContain("字段说明：");
+      expect(prompt).toContain(
+        "document_title：字段标签=文件标题；字段说明=提取当前公文标题",
+      );
+      expect(prompt).toContain(
+        "opinion：字段标签=拟办意见；字段说明=给出拟办建议",
+      );
+      expect(prompt).not.toContain("/__template_export__");
+      const toolPayload = toolPayloadBucket.join("\n");
+
+      expect(toolPayload).toContain("mastra_workspace_search");
+      expect(toolPayload).toContain("hybrid search");
+      expect(toolPayload).toContain(sourcePath);
+      expect(toolPayload).toContain(libraryPath);
+      expect(toolPayload).toContain("预算调整请示 extracted content");
+    },
+  );
+
+  it.serial(
+    "exports from a processing source when the selected file is already available",
+    async () => {
+      const promptBucket: string[] = [];
+      const toolPayloadBucket: string[] = [];
+      const user = await ensureDefaultUser();
+      const collection = await createKnowledgeCollection({
+        userId: user.id,
+        input: {
+          id: "template-export-processing-source",
+          name: "Processing Source",
+          description: "processing source export",
+        },
+      });
+      const sourceFilename = "待处理请示.pdf";
+      const sourceBasePath = join(workspaceFilesDir, user.id, collection.id);
+
+      await mkdir(sourceBasePath, {
+        recursive: true,
+      });
+      await writeFile(
+        join(sourceBasePath, sourceFilename),
+        new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+      );
+
+      const source = await createKnowledgeSourceRecord({
+        userId: user.id,
+        collectionId: collection.id,
+        documentId: sourceFilename,
+        sourceFilename,
+        sourceType: "file",
+        mimeType: "application/pdf",
+        byteSize: 4,
+        status: "processing",
+      });
+
+      await mkdir(join(storagePrefixDir, "ops", "manuals"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(storagePrefixDir, "ops", "manuals", "guide.md"),
+        "模板手册中的拟办意见范例：建议财务部门核对预算依据后办理。",
+      );
+
+      mockTemplateExportProviders({
+        promptBucket,
+        toolPayloadBucket,
+        sourcePath: "/source/待处理请示.pdf",
+        libraryPath: "/references/ops/manuals/guide.md",
+      });
+
+      const result = await generateKnowledgeTemplateExportPayload({
+        userId: user.id,
+        sourceId: source.id,
+        template: createTemplateDetail(),
+      });
+
+      expect(result.parameters).toEqual({
+        document_title: "关于预算调整的请示",
+        opinion: "建议财务部门核对预算依据后办理。",
+      });
+      expect(promptBucket.join("\n")).toContain(
+        "/source 目录文件：/source/待处理请示.pdf",
+      );
+      expect(toolPayloadBucket.join("\n")).toContain(
+        "待处理请示 extracted content",
+      );
     },
   );
 
@@ -665,6 +828,7 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
     "fails strictly when the model does not return valid JSON",
     async () => {
       const promptBucket: string[] = [];
+      const toolPayloadBucket: string[] = [];
       const user = await ensureDefaultUser();
       const collection = await createKnowledgeCollection({
         userId: user.id,
@@ -699,7 +863,9 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
 
       mockTemplateExportProviders({
         promptBucket,
-        sourcePath: `/source/${sourceDocumentId}`,
+        toolPayloadBucket,
+        sourcePath: "/source/预算调整请示.txt",
+        libraryPath: "/references/ops/manuals/guide.md",
         invalidStructuredOutput: true,
       });
 
@@ -713,12 +879,47 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
     },
   );
 
+  it.serial(
+    "fails when a reference library is mounted but has no learned files",
+    async () => {
+      const user = await ensureDefaultUser();
+      const collection = await createKnowledgeCollection({
+        userId: user.id,
+        input: {
+          id: "template-export-empty-library",
+          name: "Empty Library Source",
+          description: "empty library test",
+        },
+      });
+      const importResult = await importKnowledgeText({
+        userId: user.id,
+        collectionId: collection.id,
+        input: {
+          sourceFilename: "预算调整请示.txt",
+          content: "关于预算调整的请示",
+        },
+      });
+
+      await mkdir(join(storagePrefixDir, "ops", "manuals"), {
+        recursive: true,
+      });
+
+      await expect(
+        generateKnowledgeTemplateExportPayload({
+          userId: user.id,
+          sourceId: importResult.source.id,
+          template: createTemplateDetail(),
+        }),
+      ).rejects.toThrow("挂载后没有任何可学习文件");
+    },
+  );
+
   it.serial("rejects reference library mount path conflicts", async () => {
     const user = await ensureDefaultUser();
     const collection = await createKnowledgeCollection({
       userId: user.id,
       input: {
-        id: "template-export-mount-conflict",
+        id: "tpl-export-mount-conflict",
         name: "Mount Conflict Source",
         description: "mount conflict test",
       },
@@ -734,9 +935,15 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
     const template = createTemplateDetail();
     template.referenceLibraries = [
       {
-        id: "lib-conflict",
-        name: "冲突资料库",
-        storagePrefix: "/source",
+        id: "lib-conflict-1",
+        name: "冲突资料库一",
+        storagePrefix: "ops/manuals",
+        fileCount: 1,
+      },
+      {
+        id: "lib-conflict-2",
+        name: "冲突资料库二",
+        storagePrefix: "ops/manuals/child",
         fileCount: 1,
       },
     ];

@@ -3,6 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createKnowledgeSourceRecord } from "./repository";
+import { buildMockQdrantResponse } from "./test-qdrant";
 import { getKnowledgeWorkspace } from "./runtime";
 import {
   createKnowledgeCollection,
@@ -25,6 +26,8 @@ const originalDataDir = process.env.ATLAS_KB_DATA_DIR;
 const originalOpenAIApiKey = process.env.OPENAI_API_KEY;
 const originalOpenAIBaseUrl = process.env.OPENAI_BASE_URL;
 const originalEmbeddingApiKey = process.env.EMBEDDING_API_KEY;
+const originalEmbeddingBaseUrl = process.env.EMBEDDING_BASE_URL;
+const originalEmbeddingModel = process.env.EMBEDDING_MODEL;
 const originalEmbeddingDimensions = process.env.EMBEDDING_DIMENSIONS;
 const originalQdrantUrl = process.env.QDRANT_URL;
 const originalQdrantApiKey = process.env.QDRANT_API_KEY;
@@ -50,11 +53,13 @@ describe.serial("knowledge ingest", () => {
     knowledgeDataDir = await mkdtemp(join(tmpdir(), "atlas-kb-ingest-test-"));
     workspaceFilesDir = join(knowledgeDataDir, "workspace-files");
     process.env.ATLAS_KB_DATA_DIR = knowledgeDataDir;
-    delete process.env.OPENAI_API_KEY;
-    delete process.env.OPENAI_BASE_URL;
-    delete process.env.EMBEDDING_API_KEY;
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENAI_BASE_URL = "https://api.openai.test/v1";
+    process.env.EMBEDDING_API_KEY = "test-embedding-key";
+    process.env.EMBEDDING_BASE_URL = "https://dashscope.test/v1";
+    process.env.EMBEDDING_MODEL = "text-embedding-v4";
     delete process.env.EMBEDDING_DIMENSIONS;
-    delete process.env.QDRANT_URL;
+    process.env.QDRANT_URL = "http://127.0.0.1:6333";
     delete process.env.QDRANT_API_KEY;
     process.env.ATLAS_KB_TIKA_BASE_URL = "http://tika.local";
     delete process.env.VISION_BASE_URL;
@@ -81,6 +86,20 @@ describe.serial("knowledge ingest", () => {
 
       if (url.includes("/rmeta/text")) {
         return jsonResponse(buildMockTikaExtractPayload(init));
+      }
+
+      if (url.includes("/embeddings")) {
+        return jsonResponse({
+          data: [
+            {
+              embedding: [0.11, 0.22, 0.33],
+            },
+          ],
+        });
+      }
+
+      if (url.includes(":6333")) {
+        return jsonResponse(buildMockQdrantResponse(url, init?.method || "GET"));
       }
 
       return jsonResponse({
@@ -116,6 +135,18 @@ describe.serial("knowledge ingest", () => {
       delete process.env.EMBEDDING_API_KEY;
     } else {
       process.env.EMBEDDING_API_KEY = originalEmbeddingApiKey;
+    }
+
+    if (originalEmbeddingBaseUrl === undefined) {
+      delete process.env.EMBEDDING_BASE_URL;
+    } else {
+      process.env.EMBEDDING_BASE_URL = originalEmbeddingBaseUrl;
+    }
+
+    if (originalEmbeddingModel === undefined) {
+      delete process.env.EMBEDDING_MODEL;
+    } else {
+      process.env.EMBEDDING_MODEL = originalEmbeddingModel;
     }
 
     if (originalEmbeddingDimensions === undefined) {
@@ -300,6 +331,20 @@ describe.serial("knowledge ingest", () => {
         return jsonResponse(buildMockTikaExtractPayload(init));
       }
 
+      if (url.includes("/embeddings")) {
+        return jsonResponse({
+          data: [
+            {
+              embedding: [0.11, 0.22, 0.33],
+            },
+          ],
+        });
+      }
+
+      if (url.includes(":6333")) {
+        return jsonResponse(buildMockQdrantResponse(url, init?.method || "GET"));
+      }
+
       return jsonResponse({
         ok: true,
       });
@@ -398,6 +443,20 @@ describe.serial("knowledge ingest", () => {
         }
 
         return jsonResponse(buildMockTikaExtractPayload(init));
+      }
+
+      if (url.includes("/embeddings")) {
+        return jsonResponse({
+          data: [
+            {
+              embedding: [0.11, 0.22, 0.33],
+            },
+          ],
+        });
+      }
+
+      if (url.includes(":6333")) {
+        return jsonResponse(buildMockQdrantResponse(url, init?.method || "GET"));
       }
 
       return jsonResponse({
