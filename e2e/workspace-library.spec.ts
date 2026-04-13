@@ -1,4 +1,19 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+
+async function openSourceMenu(sourceCard: Locator) {
+  const menuButton = sourceCard.getByTestId("source-menu-button");
+  await menuButton.click();
+  await expect(sourceCard.getByTestId("source-menu")).toBeVisible();
+}
+
+async function expectActiveCollection(page: Page, name: string) {
+  await expect(page.getByTestId("collection-switcher-trigger")).toContainText(
+    name,
+    {
+      timeout: 60_000,
+    },
+  );
+}
 
 test("上传文件后右栏布局正常，并且对话能列出当前文件", async ({ page }) => {
   test.setTimeout(120_000);
@@ -19,17 +34,16 @@ test("上传文件后右栏布局正常，并且对话能列出当前文件", as
     .getByTestId("create-collection-description")
     .fill("用于验证上传后列文件问答链路。");
   await page.getByTestId("create-collection-submit").click();
-
-  const collectionItem = page
-    .getByTestId("collection-item")
-    .filter({ hasText: collectionName });
-  await expect(collectionItem).toBeVisible();
-  await collectionItem.click();
+  await expectActiveCollection(page, collectionName);
 
   const contextPane = page.getByTestId("workspace-context-pane");
   const sourceFilterInput = page.getByTestId("source-filter-input");
   await expect(contextPane).toBeVisible();
   await expect(sourceFilterInput).toBeVisible();
+  await expect(sourceFilterInput).toHaveAttribute(
+    "placeholder",
+    "搜索文件标题",
+  );
 
   const paneBox = await contextPane.boundingBox();
   const filterBox = await sourceFilterInput.boundingBox();
@@ -65,13 +79,23 @@ test("上传文件后右栏布局正常，并且对话能列出当前文件", as
   const sourceCard = page.getByTestId("source-card").first();
   await expect(sourceCard).toBeVisible({ timeout: 60_000 });
 
+  const sourceIcon = sourceCard.getByTestId("source-file-icon");
   const sourceTitle = sourceCard.getByTestId("source-card-title");
   const sourceActions = sourceCard.getByTestId("source-card-actions");
+  await expect(sourceIcon).toBeVisible();
+  await expect(sourceTitle).toContainText(fileName);
   const titleBox = await sourceTitle.boundingBox();
+  const iconBox = await sourceIcon.boundingBox();
   const actionsBox = await sourceActions.boundingBox();
   expect(titleBox).not.toBeNull();
+  expect(iconBox).not.toBeNull();
   expect(actionsBox).not.toBeNull();
-  expect(actionsBox!.y).toBeGreaterThan(titleBox!.y + titleBox!.height);
+  expect(iconBox!.x).toBeLessThan(titleBox!.x);
+  expect(actionsBox!.x).toBeGreaterThan(titleBox!.x + titleBox!.width - 20);
+  await expect(sourceCard.locator(".status-pill")).toHaveCount(0);
+  await expect(sourceCard.getByTestId("source-card-meta")).toHaveCount(0);
+  await expect(sourceCard).not.toContainText(/(刚刚|分钟前|小时前|天前)/);
+  await expect(sourceCard.getByText("未填写摘要")).toHaveCount(0);
 
   await page.getByTestId("chat-composer").fill("我们现在有哪些文件？");
   await page.getByTestId("chat-submit").click();
@@ -101,12 +125,7 @@ test("资料编辑不会污染路由，也不会让聊天请求携带 sourceId",
     .getByTestId("create-collection-description")
     .fill("用于验证资料编辑与聊天请求解耦。");
   await page.getByTestId("create-collection-submit").click();
-
-  const collectionItem = page
-    .getByTestId("collection-item")
-    .filter({ hasText: collectionName });
-  await expect(collectionItem).toBeVisible();
-  await collectionItem.click();
+  await expectActiveCollection(page, collectionName);
 
   await page.getByTestId("open-import-button").click();
   await page.getByTestId("import-file-input").setInputFiles({
@@ -131,11 +150,15 @@ test("资料编辑不会污染路由，也不会让聊天请求携带 sourceId",
 
   const sourceCard = page.getByTestId("source-card").first();
   await expect(sourceCard).toBeVisible({ timeout: 60_000 });
-  await sourceCard.getByTestId("source-edit-button").click();
+  await openSourceMenu(sourceCard);
+  await sourceCard.getByTestId("source-menu-edit").click();
 
   const editorDialog = page.getByRole("dialog", { name: "资料编辑器" });
   await expect(editorDialog).toBeVisible({ timeout: 60_000 });
   await expect(page).not.toHaveURL(/source=/);
+  await editorDialog
+    .getByPlaceholder("编辑当前资料正文")
+    .fill("这是一份用于验证编辑解耦的测试文件。\n已更新正文内容。");
 
   await Promise.all([
     page.waitForResponse(
@@ -174,6 +197,7 @@ test("导出任务支持选择模板、查看详情并保存修改", async ({ pa
   const suffix = Date.now().toString(36);
   const collectionName = `E2E 导出 ${suffix}`;
   const fileName = `export-${suffix}.txt`;
+  const sourceTitle = fileName.replace(/\.txt$/, "");
 
   await page.goto("/login");
   await page.locator("#username").fill("admin");
@@ -187,12 +211,7 @@ test("导出任务支持选择模板、查看详情并保存修改", async ({ pa
     .getByTestId("create-collection-description")
     .fill("用于验证导出任务链路。");
   await page.getByTestId("create-collection-submit").click();
-
-  const collectionItem = page
-    .getByTestId("collection-item")
-    .filter({ hasText: collectionName });
-  await expect(collectionItem).toBeVisible();
-  await collectionItem.click();
+  await expectActiveCollection(page, collectionName);
 
   await page.getByTestId("open-import-button").click();
   await page.getByTestId("import-file-input").setInputFiles({
@@ -217,7 +236,8 @@ test("导出任务支持选择模板、查看详情并保存修改", async ({ pa
 
   const sourceCard = page.getByTestId("source-card").first();
   await expect(sourceCard).toBeVisible({ timeout: 60_000 });
-  await sourceCard.getByTestId("source-export-button").click();
+  await openSourceMenu(sourceCard);
+  await sourceCard.getByTestId("source-menu-export").click();
 
   const templateSubmitButton = page.getByTestId("export-template-submit");
   await expect(templateSubmitButton).toBeVisible({ timeout: 60_000 });
@@ -235,26 +255,26 @@ test("导出任务支持选择模板、查看详情并保存修改", async ({ pa
       timeout: 60_000,
     },
   );
-  const exportItem = page.getByText("拟办意见").first();
-  await expect(exportItem).toBeVisible({ timeout: 60_000 });
-
-  await page
-    .getByTestId(/^export-task-detail-/)
-    .first()
-    .click();
+  const exportTaskCard = page.locator("article").filter({
+    has: page.getByText(sourceTitle, { exact: false }),
+  });
+  await expect(exportTaskCard).toBeVisible({ timeout: 60_000 });
+  await exportTaskCard.getByRole("button", { name: "查看详情" }).click();
   const detailSaveButton = page.getByTestId("export-task-save");
   await expect(detailSaveButton).toBeVisible({ timeout: 60_000 });
 
   const opinionField = page
-    .getByTestId("export-task-field-拟办意见")
+    .getByTestId("export-task-field-opinion")
     .locator("textarea");
+  const saveRequest = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/kb/export-tasks/") &&
+      response.request().method() === "PATCH",
+  );
   await opinionField.fill("这是更新后的导出意见。");
-  await detailSaveButton.click();
+  await Promise.all([saveRequest, detailSaveButton.click()]);
 
   await expect(opinionField).toHaveValue("这是更新后的导出意见。", {
-    timeout: 60_000,
-  });
-  await expect(page.getByTestId("export-task-result")).toBeVisible({
     timeout: 60_000,
   });
 });
@@ -265,6 +285,7 @@ test("刷新页面后会恢复当前资料与导出任务状态", async ({ page 
   const suffix = Date.now().toString(36);
   const collectionName = `E2E 刷新 ${suffix}`;
   const fileName = `refresh-${suffix}.txt`;
+  const sourceTitle = fileName.replace(/\.txt$/, "");
 
   await page.goto("/login");
   await page.locator("#username").fill("admin");
@@ -278,12 +299,7 @@ test("刷新页面后会恢复当前资料与导出任务状态", async ({ page 
     .getByTestId("create-collection-description")
     .fill("用于验证刷新恢复链路。");
   await page.getByTestId("create-collection-submit").click();
-
-  const collectionItem = page
-    .getByTestId("collection-item")
-    .filter({ hasText: collectionName });
-  await expect(collectionItem).toBeVisible();
-  await collectionItem.click();
+  await expectActiveCollection(page, collectionName);
 
   await page.getByTestId("open-import-button").click();
   await page.getByTestId("import-file-input").setInputFiles({
@@ -308,7 +324,8 @@ test("刷新页面后会恢复当前资料与导出任务状态", async ({ page 
 
   const sourceCard = page.getByTestId("source-card").first();
   await expect(sourceCard).toBeVisible({ timeout: 60_000 });
-  await sourceCard.getByTestId("source-export-button").click();
+  await openSourceMenu(sourceCard);
+  await sourceCard.getByTestId("source-menu-export").click();
 
   const templateSubmitButton = page.getByTestId("export-template-submit");
   await expect(templateSubmitButton).toBeVisible({ timeout: 60_000 });
@@ -326,10 +343,17 @@ test("刷新页面后会恢复当前资料与导出任务状态", async ({ page 
       timeout: 60_000,
     },
   );
+  await expect(
+    page.locator("article").filter({
+      has: page.getByText(sourceTitle, { exact: false }),
+    }),
+  ).toBeVisible({
+    timeout: 60_000,
+  });
 
   await page.reload();
   await expect(page).toHaveURL(/\/app/);
-  await expect(collectionItem).toBeVisible({ timeout: 60_000 });
+  await expectActiveCollection(page, collectionName);
   await expect(page.getByTestId("context-panel-exports-tab")).toHaveClass(
     /primary/,
     {
@@ -337,7 +361,9 @@ test("刷新页面后会恢复当前资料与导出任务状态", async ({ page 
     },
   );
   await expect(
-    page.getByText("拟办意见", { exact: false }).first(),
+    page.locator("article").filter({
+      has: page.getByText(sourceTitle, { exact: false }),
+    }),
   ).toBeVisible({
     timeout: 60_000,
   });

@@ -161,8 +161,6 @@ export interface KbSources {
   source_filename: string;
   source_type: string;
   status: string;
-  summary: string | null;
-  tags_json: Json;
   title: string;
   updated_at: Timestamp;
 }

@@ -11,7 +11,6 @@ export const SearchKnowledgeRequestSchema = z.object({
   collectionId: z.string().trim().min(1),
   limit: z.number().int().min(1).max(20).optional(),
   sourceTypes: z.array(KnowledgeSourceTypeSchema).max(4).optional(),
-  tags: z.array(z.string().trim().min(1).max(64)).max(20).optional(),
   includeArchived: z.boolean().optional(),
 });
 
@@ -21,13 +20,11 @@ export const SearchKnowledgeHitSchema = z.object({
   collectionId: z.string().trim().min(1),
   chunkId: z.string().trim().min(1),
   title: z.string().trim().min(1),
-  summary: z.string().trim().min(1),
   snippet: z.string().trim().min(1),
   sectionPath: z.string().trim().min(1).optional(),
   sourceFilename: z.string().trim().min(1).optional(),
   downloadUrl: z.string().trim().min(1).optional(),
   sourceType: KnowledgeSourceTypeSchema,
-  tags: z.array(z.string().trim().min(1)),
   score: z.number(),
   strategy: z.enum(["lexical", "vector", "fusion", "rerank"]),
   usedInAnswer: z.boolean(),

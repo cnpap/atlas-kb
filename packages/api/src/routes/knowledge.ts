@@ -76,10 +76,6 @@ import {
 import { Elysia } from "elysia";
 import { requireAuthenticatedSession } from "../auth";
 
-function parseTags(tags?: string[]): string[] {
-  return [...new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean))];
-}
-
 function requireInternalSecret(headers: Record<string, string | undefined>) {
   const configuredSecret = getInternalSecret();
   const providedSecret = headers["x-atlas-kb-internal-secret"]?.trim();
@@ -99,19 +95,6 @@ function readOptionalFormValue(
 ): string | undefined {
   const value = formData.get(key);
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function parseTagInput(value?: string): string[] | undefined {
-  if (!value?.trim()) {
-    return undefined;
-  }
-
-  return parseTags(
-    value
-      .split(/[,\n]/)
-      .map((item) => item.trim())
-      .filter(Boolean),
-  );
 }
 
 function requireActiveCollection(
@@ -366,8 +349,6 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
       }
 
       const title = readOptionalFormValue(formData, "title");
-      const summary = readOptionalFormValue(formData, "summary");
-      const tags = parseTagInput(readOptionalFormValue(formData, "tags"));
       return success(
         await importKnowledgeFile({
           userId,
@@ -375,8 +356,6 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
           file,
           input: {
             title,
-            summary,
-            tags,
           },
         }),
       );

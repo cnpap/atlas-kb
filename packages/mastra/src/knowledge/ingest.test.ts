@@ -195,9 +195,7 @@ describe.serial("knowledge ingest", () => {
       documentId: "manual.pdf",
       sourceType: "file",
       title: "Manual",
-      summary: "Original summary",
       content: undefined,
-      tags: ["ops"],
       sourceFilename: "manual.pdf",
       mimeType: "application/pdf",
       byteSize: 32,
@@ -208,17 +206,13 @@ describe.serial("knowledge ingest", () => {
       updateKnowledgeSource(user.id, source.id, {
         content: "new plain text body",
       }),
-    ).rejects.toThrow("只支持更新标题、摘要和标签");
+    ).rejects.toThrow("只支持更新标题");
 
     const updated = await updateKnowledgeSource(user.id, source.id, {
       title: "Manual v2",
-      summary: "Updated summary",
-      tags: ["ops", "security"],
     });
 
     expect(updated.title).toBe("Manual v2");
-    expect(updated.summary).toBe("Updated summary");
-    expect(updated.tags).toEqual(["ops", "security"]);
     expect(updated.content).toBeUndefined();
     expect(updated.mimeType).toBe("application/pdf");
   });
@@ -338,7 +332,6 @@ describe.serial("knowledge ingest", () => {
       importResult.source.id,
       {
         title: "Retry PDF",
-        summary: "retry summary",
       },
     );
     expect(renamedFailedSource.status).toBe("failed");

@@ -104,7 +104,6 @@ export const KnowledgeExportTaskGenerateRequestSchema = z.object({
 });
 
 export const KnowledgeExportTaskGenerateResultSchema = z.object({
-  summary: z.string(),
   parameters: z.record(z.string(), z.string()),
   citations: z.array(ChatCitationSchema),
 });

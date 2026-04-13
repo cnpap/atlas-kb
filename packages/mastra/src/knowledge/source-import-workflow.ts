@@ -96,13 +96,7 @@ async function runKnowledgeSourceImport(args: {
       sourceId: source.id,
       documentId: source.id,
       title: source.title,
-      summary: source.summary ?? undefined,
       content: undefined,
-      tags: Array.isArray(source.tags_json)
-        ? source.tags_json.filter(
-            (value): value is string => typeof value === "string",
-          )
-        : [],
       mimeType: source.mime_type ?? undefined,
       byteSize:
         source.byte_size === null || source.byte_size === undefined
@@ -152,13 +146,7 @@ async function runKnowledgeSourceImport(args: {
       sourceId: source.id,
       documentId,
       title: source.title,
-      summary: source.summary ?? undefined,
       content: undefined,
-      tags: Array.isArray(source.tags_json)
-        ? source.tags_json.filter(
-            (value): value is string => typeof value === "string",
-          )
-        : [],
       mimeType: source.mime_type ?? undefined,
       byteSize:
         source.byte_size === null || source.byte_size === undefined
@@ -194,13 +182,7 @@ async function runKnowledgeSourceImport(args: {
       sourceId: source.id,
       documentId,
       title: source.title,
-      summary: source.summary ?? undefined,
       content: undefined,
-      tags: Array.isArray(source.tags_json)
-        ? source.tags_json.filter(
-            (value): value is string => typeof value === "string",
-          )
-        : [],
       mimeType: source.mime_type ?? undefined,
       byteSize:
         source.byte_size === null || source.byte_size === undefined

@@ -11,14 +11,10 @@
   }>();
 
   const emit = defineEmits<{
-    "submit:file": [
-      payload: { files: File[]; summary?: string; tags?: string[] },
-    ];
+    "submit:file": [payload: { files: File[] }];
     "submit:text": [
       payload: {
         content: string;
-        summary?: string;
-        tags?: string[];
         title?: string;
       },
     ];
@@ -27,11 +23,7 @@
 
   const mode = ref<ImportMode>("file");
   const queuedFiles = ref<File[]>([]);
-  const summary = ref("");
-  const tags = ref("");
   const textTitle = ref("");
-  const textSummary = ref("");
-  const textTags = ref("");
   const textContent = ref("");
 
   const canSubmit = computed(() => {
@@ -55,23 +47,10 @@
 
       mode.value = "file";
       queuedFiles.value = [];
-      summary.value = "";
-      tags.value = "";
       textTitle.value = "";
-      textSummary.value = "";
-      textTags.value = "";
       textContent.value = "";
     },
   );
-
-  function parseTags(input: string): string[] | undefined {
-    const values = input
-      .split(/[,\n]/)
-      .map((item) => item.trim())
-      .filter(Boolean);
-
-    return values.length > 0 ? [...new Set(values)] : undefined;
-  }
 
   function handleFileChange(event: Event) {
     const input = event.target as HTMLInputElement | null;
@@ -96,16 +75,12 @@
     if (mode.value === "file") {
       emit("submit:file", {
         files: queuedFiles.value,
-        summary: summary.value.trim() || undefined,
-        tags: parseTags(tags.value),
       });
       return;
     }
 
     emit("submit:text", {
       title: textTitle.value.trim() || undefined,
-      summary: textSummary.value.trim() || undefined,
-      tags: parseTags(textTags.value),
       content: textContent.value.trim(),
     });
   }
@@ -193,22 +168,6 @@
               </div>
             </div>
           </div>
-
-          <div class="space-y-1.5">
-            <p class="section-label">统一摘要 (可选)</p>
-            <textarea
-              v-model="summary"
-              class="field-shell w-full text-sm !min-h-[80px]"
-            />
-          </div>
-          <div class="space-y-1.5">
-            <p class="section-label">统一标签 (用逗号分隔)</p>
-            <input
-              v-model="tags"
-              class="field-shell w-full text-sm"
-              placeholder="例如：研究, 会议纪要"
-            >
-          </div>
         </template>
 
         <template v-else>
@@ -221,27 +180,12 @@
             >
           </div>
           <div class="space-y-1.5">
-            <p class="section-label">摘要 (可选)</p>
-            <textarea
-              v-model="textSummary"
-              class="field-shell w-full text-sm !min-h-[80px]"
-            />
-          </div>
-          <div class="space-y-1.5">
             <p class="section-label">正文内容</p>
             <textarea
               v-model="textContent"
               class="field-shell w-full text-sm !min-h-[180px]"
               placeholder="在这里粘贴或输入资料正文..."
             />
-          </div>
-          <div class="space-y-1.5">
-            <p class="section-label">标签 (用逗号分隔)</p>
-            <input
-              v-model="textTags"
-              class="field-shell w-full text-sm"
-              placeholder="标签1, 标签2..."
-            >
           </div>
         </template>
       </div>

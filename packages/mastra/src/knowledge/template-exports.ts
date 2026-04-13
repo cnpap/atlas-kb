@@ -368,7 +368,6 @@ export async function generateKnowledgeTemplateExportPayload(args: {
       template: args.template,
       userId: args.userId,
     }),
-    summary: source.summary?.trim() || "",
     citations: [],
   };
 }

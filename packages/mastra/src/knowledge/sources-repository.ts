@@ -2,7 +2,7 @@ import { NotFoundError } from "@atlas-kb/errors";
 import type { KnowledgeCollection, KnowledgeSource } from "@atlas-kb/schema";
 import { ensureKnowledgeDatabase } from "./db";
 import { getKnowledgeWorkspace } from "./runtime";
-import { buildSummary, normalizeWhitespace } from "./search-utils";
+import { normalizeWhitespace } from "./search-utils";
 import { removeKnowledgeSourceChunks } from "./source-indexing";
 import {
   nowIso,
@@ -111,9 +111,7 @@ export async function createKnowledgeSourceRecord(params: {
   documentId: string;
   sourceType: KnowledgeSource["sourceType"];
   title: string;
-  summary?: string;
   content?: string;
-  tags: string[];
   sourceFilename?: string;
   mimeType?: string;
   byteSize?: number;
@@ -128,8 +126,6 @@ export async function createKnowledgeSourceRecord(params: {
   const content = params.content
     ? normalizeWhitespace(params.content)
     : undefined;
-  const summary =
-    params.summary?.trim() || (content ? buildSummary(content) : undefined);
 
   await db
     .insertInto("kb_sources")
@@ -139,9 +135,7 @@ export async function createKnowledgeSourceRecord(params: {
       collection_id: params.collectionId,
       document_id: params.documentId,
       title: params.title.trim(),
-      summary: summary ?? null,
       content: content ?? null,
-      tags_json: params.tags,
       source_type: params.sourceType,
       status: params.status,
       source_filename: params.sourceFilename ?? params.documentId,
@@ -163,9 +157,7 @@ export async function replaceSourceContent(params: {
   sourceId: string;
   documentId: string;
   title: string;
-  summary?: string;
   content?: string;
-  tags: string[];
   mimeType?: string;
   byteSize?: number;
   sourceFilename?: string;
@@ -181,8 +173,6 @@ export async function replaceSourceContent(params: {
   const content = params.content
     ? normalizeWhitespace(params.content)
     : undefined;
-  const summary =
-    params.summary?.trim() || (content ? buildSummary(content) : undefined);
   const now = nowIso();
 
   await db
@@ -190,9 +180,7 @@ export async function replaceSourceContent(params: {
     .set({
       document_id: params.documentId,
       title: params.title.trim(),
-      summary: summary ?? null,
       content: content ?? null,
-      tags_json: params.tags,
       source_filename:
         params.sourceFilename ??
         current.source_filename ??

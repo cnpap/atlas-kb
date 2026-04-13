@@ -170,9 +170,7 @@
     }
 
     return sources.value.filter((source) =>
-      `${source.title}\n${source.summary || ""}\n${source.tags.join(" ")}`
-        .toLowerCase()
-        .includes(keyword),
+      source.title.toLowerCase().includes(keyword),
     );
   });
   const editingSource = computed(
@@ -258,15 +256,6 @@
           }
         : message,
     );
-  }
-
-  function parseTags(input: string): string[] | undefined {
-    const tags = input
-      .split(/[,\n]/)
-      .map((item) => item.trim())
-      .filter(Boolean);
-
-    return tags.length > 0 ? [...new Set(tags)] : undefined;
   }
 
   const {
@@ -1007,8 +996,6 @@
 
   async function submitFileImport(payload: {
     files: File[];
-    summary?: string;
-    tags?: string[];
   }) {
     if (!activeCollection.value) {
       error.value = "请先选择一个资料文件夹";
@@ -1027,8 +1014,6 @@
         const result = await uploadKnowledgeFileRequest({
           collectionId,
           file,
-          summary: payload.summary,
-          tags: payload.tags,
         });
 
         acceptedCount += 1;
@@ -1057,8 +1042,6 @@
 
   async function submitTextImport(payload: {
     content: string;
-    summary?: string;
-    tags?: string[];
     title?: string;
   }) {
     if (!activeCollection.value) {
@@ -1087,8 +1070,6 @@
 
   async function saveSource(payload: {
     content?: string;
-    summary: string;
-    tags: string;
     title: string;
   }) {
     if (!editingSource.value) {
@@ -1103,8 +1084,6 @@
         sourceId: editingSource.value.id,
         body: {
           title: payload.title.trim() || undefined,
-          summary: payload.summary.trim() || undefined,
-          tags: parseTags(payload.tags),
           content: payload.content?.trim() || undefined,
         },
       });

@@ -14,7 +14,6 @@ import {
   isKnowledgeSourceContentEditable,
 } from "./document-file-types";
 import { getKnowledgeWorkspace } from "./runtime";
-import { buildSummary } from "./search-utils";
 import {
   createKnowledgeSourceRecord,
   deleteKnowledgeSource,
@@ -45,17 +44,11 @@ type ImportResult = {
 };
 
 type SingleFileImportInput = {
-  summary?: string;
-  tags?: string[];
   title?: string;
 };
 
 function getImportEngine(): ImportResult["engine"] {
   return hasEmbeddingConfig() ? "hybrid" : "lexical";
-}
-
-function parseTags(tags?: string[]): string[] {
-  return [...new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean))];
 }
 
 function deriveUploadTitle(args: {
@@ -122,8 +115,6 @@ async function createFileBackedSource(args: {
   sourceFilename: string;
   sourceId?: string;
   sourceType: KnowledgeSource["sourceType"];
-  summary?: string;
-  tags: string[];
   title: string;
   userId: string;
 }): Promise<KnowledgeImportData> {
@@ -134,9 +125,7 @@ async function createFileBackedSource(args: {
     collectionId: args.collectionId,
   });
   const documentId = args.sourceFilename;
-  const normalizedTags = parseTags(args.tags);
   const content = args.content.trim();
-  const summary = args.summary?.trim() || buildSummary(content, 160);
 
   await filesystem.writeFile(documentId, args.fileBody, {
     mimeType: args.mimeType,
@@ -153,9 +142,7 @@ async function createFileBackedSource(args: {
       documentId,
       sourceType: args.sourceType,
       title: args.title,
-      summary,
       content,
-      tags: normalizedTags,
       sourceFilename: args.sourceFilename,
       mimeType: args.mimeType,
       byteSize: args.byteSize,
@@ -180,9 +167,7 @@ async function createFileBackedSource(args: {
       sourceId: source.id,
       documentId,
       title: args.title,
-      summary,
       content,
-      tags: normalizedTags,
       mimeType: args.mimeType,
       byteSize: args.byteSize,
       sourceFilename: args.sourceFilename,
@@ -220,8 +205,6 @@ async function createQueuedFileSource(args: {
   fileBody: Uint8Array;
   mimeType?: string;
   sourceFilename: string;
-  summary?: string;
-  tags: string[];
   title: string;
   userId: string;
 }): Promise<KnowledgeImportData> {
@@ -232,7 +215,6 @@ async function createQueuedFileSource(args: {
     collectionId: args.collectionId,
   });
   const documentId = args.sourceFilename;
-  const normalizedTags = parseTags(args.tags);
   let createdSourceId: string | undefined;
 
   await filesystem.writeFile(documentId, args.fileBody, {
@@ -247,9 +229,7 @@ async function createQueuedFileSource(args: {
       documentId,
       sourceType: "file",
       title: args.title,
-      summary: args.summary?.trim(),
       content: undefined,
-      tags: normalizedTags,
       sourceFilename: args.sourceFilename,
       mimeType: args.mimeType,
       byteSize: args.byteSize,
@@ -317,8 +297,6 @@ export async function importKnowledgeFile(args: {
     mimeType: args.file.type || undefined,
     byteSize: args.file.size,
     sourceFilename,
-    summary: args.input.summary?.trim(),
-    tags: parseTags(args.input.tags),
     title,
   });
 }
@@ -339,8 +317,6 @@ export async function importKnowledgeFiles(args: {
         collectionId: args.collectionId,
         file,
         input: {
-          summary: args.input.summary,
-          tags: args.input.tags,
           title: undefined,
         },
       });
@@ -405,8 +381,6 @@ export async function importKnowledgeText(args: {
     byteSize: new TextEncoder().encode(extracted.content).byteLength,
     sourceFilename,
     sourceType: "text",
-    summary: args.input.summary?.trim() || buildSummary(extracted.content, 160),
-    tags: parseTags(args.input.tags),
     title: extracted.title,
   });
 }
@@ -423,8 +397,6 @@ export async function updateKnowledgeSource(
       ? input.content.trim()
       : source.content?.trim() || "";
   const nextTitle = input.title?.trim() || source.title;
-  const nextSummary = input.summary?.trim() || source.summary?.trim();
-  const nextTags = parseTags(input.tags ?? source.tags);
   const documentId = source.documentId;
   const sourceFilename = source.sourceFilename;
 
@@ -438,7 +410,7 @@ export async function updateKnowledgeSource(
       input.content.trim() !== (source.content?.trim() || "")
     ) {
       throw new BadRequestError(
-        "当前 PDF、Word、Excel 资料只支持更新标题、摘要和标签；如需替换正文，请重新上传文件。",
+        "当前 PDF、Word、Excel 资料只支持更新标题；如需替换正文，请重新上传文件。",
       );
     }
 
@@ -447,9 +419,7 @@ export async function updateKnowledgeSource(
       sourceId,
       documentId,
       title: nextTitle,
-      summary: nextSummary,
       content: undefined,
-      tags: nextTags,
       mimeType: source.mimeType,
       byteSize: source.byteSize ?? undefined,
       sourceFilename,
@@ -495,9 +465,7 @@ export async function updateKnowledgeSource(
     sourceId,
     documentId,
     title: nextTitle,
-    summary: nextSummary,
     content: requestedContent,
-    tags: nextTags,
     mimeType: source.mimeType,
     byteSize: new TextEncoder().encode(requestedContent).byteLength,
     sourceFilename,
@@ -544,9 +512,7 @@ export async function retryKnowledgeSourceImport(
     sourceId: source.id,
     documentId,
     title: source.title,
-    summary: source.summary,
     content: undefined,
-    tags: source.tags,
     mimeType: source.mimeType,
     byteSize: source.byteSize,
     sourceFilename: source.sourceFilename ?? documentId,
@@ -567,9 +533,7 @@ export async function retryKnowledgeSourceImport(
       sourceId: source.id,
       documentId,
       title: source.title,
-      summary: source.summary,
       content: undefined,
-      tags: source.tags,
       mimeType: source.mimeType,
       byteSize: source.byteSize,
       sourceFilename: source.sourceFilename ?? documentId,

@@ -31,16 +31,12 @@
     submit: [
       payload: {
         content?: string;
-        summary: string;
-        tags: string;
         title: string;
       },
     ];
   }>();
 
   const title = ref("");
-  const summary = ref("");
-  const tags = ref("");
   const content = ref("");
 
   function isBinaryManagedSource(source: KnowledgeSource | null): boolean {
@@ -76,8 +72,6 @@
       }
 
       title.value = source?.title || "";
-      summary.value = source?.summary || "";
-      tags.value = source?.tags.join(", ") || "";
       content.value = source?.content || "";
     },
     { immediate: true },
@@ -86,8 +80,6 @@
   function submit() {
     emit("submit", {
       title: title.value.trim(),
-      summary: summary.value.trim(),
-      tags: tags.value,
       content: isBinaryManagedSource(props.source)
         ? undefined
         : content.value.trim(),
@@ -105,8 +97,8 @@
     title="资料编辑器"
     :description="
       isBinaryManagedSource(source)
-        ? '当前 PDF、Word、Excel 资料不再持久化正文快照；你仍然可以更新标题、摘要和标签。'
-        : '编辑标题、摘要、标签和正文内容，保存后会立即更新检索。'
+        ? '当前 PDF、Word、Excel 资料不再持久化正文快照；你仍然可以更新标题。'
+        : '编辑标题和正文内容，保存后会立即更新检索。'
     "
     :close="!saving"
     @update:open="updateOpen"
@@ -124,23 +116,6 @@
             </span>
           </div>
           <input v-model="title" class="field-shell w-full text-sm font-medium">
-        </div>
-
-        <div class="space-y-1.5">
-          <p class="section-label">摘要</p>
-          <textarea
-            v-model="summary"
-            class="field-shell w-full text-sm !min-h-[80px]"
-          />
-        </div>
-
-        <div class="space-y-1.5">
-          <p class="section-label">标签</p>
-          <input
-            v-model="tags"
-            class="field-shell w-full text-sm"
-            placeholder="标签1, 标签2"
-          >
         </div>
 
         <div

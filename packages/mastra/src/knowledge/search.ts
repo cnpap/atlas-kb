@@ -52,13 +52,6 @@ function filterSources(
       return false;
     }
 
-    if (
-      input.tags?.length &&
-      !input.tags.every((tag) => source.tags.includes(tag))
-    ) {
-      return false;
-    }
-
     return true;
   });
 }
@@ -142,8 +135,6 @@ function toSearchHit(args: {
   result: WorkspaceSearchResult;
   source: Awaited<ReturnType<typeof listKnowledgeSources>>[number];
 }): SearchKnowledgeHit {
-  const summary = args.source.summary || args.source.title;
-
   return {
     sourceId: args.source.id,
     documentId: args.source.documentId || args.source.id,
@@ -155,15 +146,17 @@ function toSearchHit(args: {
       metadata: args.result.metadata,
     }),
     title: args.source.title,
-    summary,
-    snippet: buildSearchSnippet(args.result.content, args.query, summary),
+    snippet: buildSearchSnippet(
+      args.result.content,
+      args.query,
+      args.source.title,
+    ),
     sectionPath: buildSectionPath({
       lineRange: args.result.lineRange,
       metadata: args.result.metadata,
     }),
     sourceFilename: args.source.sourceFilename,
     sourceType: args.source.sourceType,
-    tags: [...args.source.tags],
     score: args.result.score,
     strategy:
       args.engine === "hybrid"

@@ -563,20 +563,10 @@ async function uploadFileThroughDirectObjectFlow(params: {
   token: string;
   collectionId: string;
   file: File;
-  summary?: string;
-  tags?: string[];
   title?: string;
 }) {
   const formData = new FormData();
   formData.set("file", params.file);
-
-  if (params.summary?.trim()) {
-    formData.set("summary", params.summary.trim());
-  }
-
-  if (params.tags?.length) {
-    formData.set("tags", params.tags.join(", "));
-  }
 
   if (params.title?.trim()) {
     formData.set("title", params.title.trim());
@@ -1983,7 +1973,6 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
             },
             body: JSON.stringify({
               title: "公文标题",
-              summary: "导出测试摘要",
               content: "来文单位为综合办公室，文件标题为关于预算调整的请示。",
             }),
           },

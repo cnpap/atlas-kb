@@ -5,26 +5,30 @@
     KnowledgeExportTask,
     KnowledgeSource,
   } from "@atlas-kb/schema";
+  import excelIcon from "@/assets/icon/excel.png";
+  import pdfIcon from "@/assets/icon/pdf.png";
+  import pptIcon from "@/assets/icon/ppt.png";
+  import txtIcon from "@/assets/icon/txt.png";
+  import wordIcon from "@/assets/icon/word.png";
   import {
+    EllipsisVertical,
     FileCog,
     FolderPlus,
     Info,
-    RotateCcw,
     Search,
     Upload,
   } from "lucide-vue-next";
+  import { onBeforeUnmount, onMounted, ref, watch } from "vue";
   import WorkspaceSettingsPane from "@/features/app/components/WorkspaceSettingsPane.vue";
   import {
     formatRelativeTime,
     getExportTaskStatusLabel,
     getExportTaskStatusTone,
-    getSourceStatusLabel,
-    getSourceStatusTone,
     getSourceTaskMessage,
     shouldShowSourceTaskMessage,
   } from "@/lib/knowledge-ui";
 
-  defineProps<{
+  const props = defineProps<{
     activeAssistantRoleId: string;
     activeCollection: KnowledgeCollection | null;
     assistantRoles: AssistantRole[];
@@ -45,7 +49,7 @@
     switchingAssistantRole?: boolean;
   }>();
 
-  defineEmits<{
+  const emit = defineEmits<{
     createRole: [payload: { name: string; stylePrompt: string }];
     deleteCollection: [];
     deleteRole: [roleId: string];
@@ -69,6 +73,185 @@
     ];
     "update:sourceFilter": [value: string];
   }>();
+
+  type SourceFileKind =
+    | "default"
+    | "pdf"
+    | "presentation"
+    | "spreadsheet"
+    | "text"
+    | "word";
+
+  const sourceMenuId = ref("");
+
+  const SOURCE_ICON_BY_KIND: Record<SourceFileKind, string> = {
+    default: txtIcon,
+    pdf: pdfIcon,
+    presentation: pptIcon,
+    spreadsheet: excelIcon,
+    text: txtIcon,
+    word: wordIcon,
+  };
+
+  function normalizeMimeType(value?: string): string {
+    return value?.split(";", 1)[0]?.trim().toLowerCase() || "";
+  }
+
+  function getSourceExtension(source: KnowledgeSource): string {
+    const fileName = source.sourceFilename || source.documentId || "";
+    const match = /\.([a-z0-9]+)$/i.exec(fileName);
+    return match?.[1]?.toLowerCase() || "";
+  }
+
+  function getSourceFileKind(source: KnowledgeSource): SourceFileKind {
+    const extension = getSourceExtension(source);
+    const mimeType = normalizeMimeType(source.mimeType);
+
+    if (extension === "pdf" || mimeType === "application/pdf") {
+      return "pdf";
+    }
+
+    if (
+      ["ppt", "pptx"].includes(extension) ||
+      [
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      ].includes(mimeType)
+    ) {
+      return "presentation";
+    }
+
+    if (
+      ["xls", "xlsx", "csv"].includes(extension) ||
+      [
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/csv",
+      ].includes(mimeType)
+    ) {
+      return "spreadsheet";
+    }
+
+    if (
+      ["doc", "docx"].includes(extension) ||
+      [
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ].includes(mimeType)
+    ) {
+      return "word";
+    }
+
+    if (
+      ["txt", "md", "json", "xml", "yaml", "yml"].includes(extension) ||
+      mimeType.startsWith("text/")
+    ) {
+      return "text";
+    }
+
+    return "default";
+  }
+
+  function getSourceIcon(source: KnowledgeSource): string {
+    return SOURCE_ICON_BY_KIND[getSourceFileKind(source)];
+  }
+
+  function getSourceDisplayName(source: KnowledgeSource): string {
+    const fileName = source.sourceFilename?.trim();
+
+    if (fileName) {
+      return fileName;
+    }
+
+    const documentId = source.documentId?.trim();
+
+    if (documentId) {
+      return documentId;
+    }
+
+    const title = source.title.trim();
+
+    if (title) {
+      return title;
+    }
+
+    if (source.sourceType === "text") {
+      return "文本录入";
+    }
+
+    if (source.sourceType === "seed") {
+      return "系统资料";
+    }
+
+    return "文件资料";
+  }
+
+  function closeSourceMenu(): void {
+    sourceMenuId.value = "";
+  }
+
+  function toggleSourceMenu(sourceId: string): void {
+    sourceMenuId.value = sourceMenuId.value === sourceId ? "" : sourceId;
+  }
+
+  function handleDocumentClick(): void {
+    closeSourceMenu();
+  }
+
+  function handleDocumentKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape") {
+      closeSourceMenu();
+    }
+  }
+
+  function handleSourceAction(
+    action:
+      | "deleteSource"
+      | "downloadSource"
+      | "editSource"
+      | "openExportModal"
+      | "retrySource",
+    source: KnowledgeSource,
+  ): void {
+    closeSourceMenu();
+
+    switch (action) {
+      case "deleteSource":
+        emit("deleteSource", source);
+        return;
+      case "downloadSource":
+        emit("downloadSource", source);
+        return;
+      case "editSource":
+        emit("editSource", source);
+        return;
+      case "openExportModal":
+        emit("openExportModal", source);
+        return;
+      case "retrySource":
+        emit("retrySource", source);
+        return;
+      default:
+        return;
+    }
+  }
+
+  onMounted(() => {
+    document.addEventListener("click", handleDocumentClick);
+    document.addEventListener("keydown", handleDocumentKeydown);
+  });
+
+  onBeforeUnmount(() => {
+    document.removeEventListener("click", handleDocumentClick);
+    document.removeEventListener("keydown", handleDocumentKeydown);
+  });
+
+  watch(
+    () => [props.panel, props.sourceActionId, props.filteredSources.length],
+    () => {
+      closeSourceMenu();
+    },
+  );
 </script>
 
 <template>
@@ -138,9 +321,9 @@
             :value="sourceFilter"
             class="field-shell w-full !rounded-[6px] !py-2.5 pl-9 pr-3 text-sm"
             data-testid="source-filter-input"
-            placeholder="搜索文件标题、摘要或标签"
+            placeholder="搜索文件标题"
             type="search"
-            @input="$emit('update:sourceFilter', ($event.target as HTMLInputElement).value)"
+            @input="emit('update:sourceFilter', ($event.target as HTMLInputElement).value)"
           >
         </div>
 
@@ -165,98 +348,109 @@
           <article
             v-for="source in filteredSources"
             :key="source.id"
-            class="stack-item !rounded-[8px] !p-3 shadow-none"
+            class="stack-item !rounded-[8px] !px-2.5 !py-2 shadow-none"
             data-testid="source-card"
           >
-            <div class="flex flex-col gap-3">
-              <div class="flex flex-wrap items-center gap-2">
-                <span
-                  class="status-pill"
-                  :class="getSourceStatusTone(source.status)"
+            <div class="flex flex-col gap-1.5">
+              <div class="flex items-center gap-2.5">
+                <img
+                  :src="getSourceIcon(source)"
+                  alt=""
+                  aria-hidden="true"
+                  class="h-8 w-8 shrink-0 object-contain"
+                  data-testid="source-file-icon"
                 >
-                  {{ getSourceStatusLabel(source.status) }}
-                </span>
-                <span class="text-[10px] text-[var(--text-dim)]">
-                  {{ formatRelativeTime(source.updatedAt) }}
-                </span>
-              </div>
-
-              <div class="min-w-0">
                 <p
-                  class="truncate text-sm font-semibold text-[var(--text-strong)]"
+                  class="min-w-0 flex-1 truncate text-sm font-medium text-[var(--text-strong)]"
                   data-testid="source-card-title"
                 >
-                  {{ source.title }}
+                  {{ getSourceDisplayName(source) }}
                 </p>
-                <p
-                  class="mt-1 line-clamp-3 text-[12px] leading-6 text-[var(--text-muted)]"
+
+                <div
+                  class="relative shrink-0"
+                  data-testid="source-card-actions"
                 >
-                  {{ source.summary || "未填写摘要" }}
-                </p>
+                  <button
+                    class="soft-button !rounded-[6px] !p-1.5"
+                    data-testid="source-menu-button"
+                    type="button"
+                    :disabled="sourceActionId === source.id"
+                    @click.stop="toggleSourceMenu(source.id)"
+                  >
+                    <EllipsisVertical class="size-4" />
+                  </button>
+
+                  <div
+                    v-if="sourceMenuId === source.id"
+                    class="absolute right-0 top-full z-20 mt-2 flex min-w-[132px] flex-col rounded-[10px] border border-[var(--border-soft)] bg-[var(--bg-panel-strong)] p-1.5 shadow-[var(--shadow-floating)]"
+                    data-testid="source-menu"
+                    @click.stop
+                  >
+                    <button
+                      class="rounded-[8px] px-3 py-2 text-left text-xs font-medium text-[var(--text-strong)] transition hover:bg-[rgba(93,72,34,0.08)]"
+                      data-testid="source-menu-export"
+                      type="button"
+                      @click="handleSourceAction('openExportModal', source)"
+                    >
+                      导出
+                    </button>
+                    <button
+                      class="rounded-[8px] px-3 py-2 text-left text-xs font-medium text-[var(--text-strong)] transition hover:bg-[rgba(93,72,34,0.08)]"
+                      data-testid="source-menu-edit"
+                      type="button"
+                      :disabled="sourceActionId === source.id"
+                      @click="handleSourceAction('editSource', source)"
+                    >
+                      编辑
+                    </button>
+                    <button
+                      class="rounded-[8px] px-3 py-2 text-left text-xs font-medium text-[var(--text-strong)] transition hover:bg-[rgba(93,72,34,0.08)]"
+                      data-testid="source-menu-download"
+                      type="button"
+                      :disabled="sourceActionId === source.id"
+                      @click="handleSourceAction('downloadSource', source)"
+                    >
+                      下载
+                    </button>
+                    <button
+                      v-if="source.sourceType === 'file' && source.status === 'failed'"
+                      class="rounded-[8px] px-3 py-2 text-left text-xs font-medium text-[var(--text-strong)] transition hover:bg-[rgba(93,72,34,0.08)]"
+                      data-testid="source-menu-retry"
+                      type="button"
+                      :disabled="sourceActionId === source.id"
+                      @click="handleSourceAction('retrySource', source)"
+                    >
+                      重试
+                    </button>
+                    <button
+                      class="rounded-[8px] px-3 py-2 text-left text-xs font-medium text-[var(--rose)] transition hover:bg-[rgba(154,52,18,0.08)]"
+                      data-testid="source-menu-delete"
+                      type="button"
+                      :disabled="sourceActionId === source.id"
+                      @click="handleSourceAction('deleteSource', source)"
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <div
                 v-if="shouldShowSourceTaskMessage(source)"
-                class="rounded-[6px] border border-[rgba(93,72,34,0.08)] bg-[rgba(255,250,240,0.65)] px-3 py-2"
+                class="pl-[42px]"
               >
-                <p class="text-[11px] font-medium text-[var(--text-strong)]">
-                  {{ source.status === "failed" ? "处理失败" : "后台处理中" }}
-                </p>
-                <p class="mt-1 text-[11px] leading-5 text-[var(--text-muted)]">
-                  {{ getSourceTaskMessage(source) }}
-                </p>
-              </div>
-
-              <div
-                class="flex items-center justify-end gap-1 border-t border-[rgba(93,72,34,0.08)] pt-3"
-                data-testid="source-card-actions"
-              >
-                <button
-                  v-if="source.sourceType === 'file' && source.status === 'failed'"
-                  class="soft-button !rounded-[6px] !px-2.5 !py-2 text-xs"
-                  data-testid="source-retry-button"
-                  type="button"
-                  :disabled="sourceActionId === source.id"
-                  @click="$emit('retrySource', source)"
+                <div
+                  class="rounded-[6px] border border-[rgba(93,72,34,0.08)] bg-[rgba(255,250,240,0.65)] px-3 py-2"
+                  data-testid="source-card-task-message"
                 >
-                  <RotateCcw class="size-3.5" />
-                  重试
-                </button>
-                <button
-                  class="soft-button !rounded-[6px] !px-2.5 !py-2 text-xs"
-                  data-testid="source-export-button"
-                  type="button"
-                  @click="$emit('openExportModal', source)"
-                >
-                  导出
-                </button>
-                <button
-                  class="soft-button !rounded-[6px] !px-2.5 !py-2 text-xs"
-                  data-testid="source-edit-button"
-                  type="button"
-                  :disabled="sourceActionId === source.id"
-                  @click="$emit('editSource', source)"
-                >
-                  编辑
-                </button>
-                <button
-                  class="soft-button !rounded-[6px] !px-2.5 !py-2 text-xs"
-                  data-testid="source-download-button"
-                  type="button"
-                  :disabled="sourceActionId === source.id"
-                  @click="$emit('downloadSource', source)"
-                >
-                  下载
-                </button>
-                <button
-                  class="soft-button warn !rounded-[6px] !px-2.5 !py-2 text-xs"
-                  data-testid="source-delete-button"
-                  type="button"
-                  :disabled="sourceActionId === source.id"
-                  @click="$emit('deleteSource', source)"
-                >
-                  删除
-                </button>
+                  <p class="text-[11px] leading-5 text-[var(--text-muted)]">
+                    <span class="font-medium text-[var(--text-strong)]">
+                      {{ source.status === "failed" ? "处理失败：" : "后台处理中：" }}
+                    </span>
+                    {{ getSourceTaskMessage(source) }}
+                  </p>
+                </div>
               </div>
             </div>
           </article>

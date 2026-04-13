@@ -582,22 +582,12 @@ export async function uploadKnowledgeFileRequest(params: {
   collectionId: string;
   file: File;
   title?: string;
-  summary?: string;
-  tags?: string[];
 }): Promise<KnowledgeImportData> {
   const formData = new FormData();
   formData.set("file", params.file);
 
   if (params.title?.trim()) {
     formData.set("title", params.title.trim());
-  }
-
-  if (params.summary?.trim()) {
-    formData.set("summary", params.summary.trim());
-  }
-
-  if (params.tags?.length) {
-    formData.set("tags", params.tags.join(", "));
   }
 
   return requestFormData<KnowledgeImportData>(

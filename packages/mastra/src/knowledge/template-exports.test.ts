@@ -615,7 +615,6 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
         collectionId: collection.id,
         input: {
           title: "预算调整请示",
-          summary: "预算调整导出摘要",
           content:
             "来文单位为综合办公室，文件标题为关于预算调整的请示，需要财务部门尽快核对预算依据。",
         },
@@ -651,7 +650,6 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
         document_title: "关于预算调整的请示",
         opinion: "建议财务部门核对预算依据后办理。",
       });
-      expect(result.summary).toBe("预算调整导出摘要");
       expect(promptBucket.join("\n")).toContain("/source");
       expect(promptBucket.join("\n")).toContain("资料库名称：办公室手册");
       expect(promptBucket.join("\n")).toContain("挂载前缀：/ops/manuals");

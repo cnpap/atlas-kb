@@ -37,8 +37,6 @@ export type SourceRow = {
   source_filename: string | null;
   source_type: string;
   status: string;
-  summary: string | null;
-  tags_json: unknown;
   title: string;
   updated_at: Date | string;
 };
@@ -89,10 +87,8 @@ export const SOURCE_COLUMNS = [
   "collection_id",
   "document_id",
   "title",
-  "summary",
   "content",
   "index_chunk_count",
-  "tags_json",
   "source_type",
   "status",
   "source_filename",
@@ -140,25 +136,6 @@ function toIsoTimestamp(value: string | Date): string {
   return value instanceof Date ? value.toISOString() : value;
 }
 
-function parseJsonArray(raw: unknown): string[] {
-  if (Array.isArray(raw)) {
-    return raw.filter((value): value is string => typeof value === "string");
-  }
-
-  if (typeof raw === "string") {
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      return Array.isArray(parsed)
-        ? parsed.filter((value): value is string => typeof value === "string")
-        : [];
-    } catch {
-      return [];
-    }
-  }
-
-  return [];
-}
-
 function parseOptionalJson<T>(raw: unknown): T | undefined {
   if (!raw) {
     return undefined;
@@ -199,9 +176,7 @@ export function toSource(row: SourceRow): KnowledgeSource {
     documentId: row.document_id,
     collectionId: row.collection_id,
     title: row.title,
-    summary: row.summary ?? undefined,
     content: row.content ?? undefined,
-    tags: parseJsonArray(row.tags_json),
     sourceType: row.source_type as KnowledgeSource["sourceType"],
     status: row.status as KnowledgeSource["status"],
     sourceFilename: row.source_filename ?? undefined,

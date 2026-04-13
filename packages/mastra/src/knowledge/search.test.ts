@@ -849,7 +849,6 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
       collectionId: collection.id,
       input: {
         title: "制度说明",
-        summary: "请假流程说明",
         content:
           "Leave requests are reviewed by the department manager and finally recorded by human resources.",
       },

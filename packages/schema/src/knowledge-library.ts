@@ -45,9 +45,7 @@ export const KnowledgeSourceSchema = z.object({
   documentId: z.string().trim().min(1).optional(),
   collectionId: z.string().trim().min(1),
   title: z.string().trim().min(1),
-  summary: z.string().trim().min(1).optional(),
   content: z.string().trim().min(1).optional(),
-  tags: z.array(z.string().trim().min(1)),
   sourceType: KnowledgeSourceTypeSchema,
   status: KnowledgeSourceStatusSchema,
   sourceFilename: z.string().trim().min(1).optional(),
@@ -82,20 +80,11 @@ export const KnowledgeCollectionUpdateRequestSchema = z.object({
   isPinned: z.boolean().optional(),
 });
 
-export const KnowledgeSourceTagListSchema = z
-  .array(z.string().trim().min(1).max(64))
-  .max(24);
-
 export const KnowledgeSourceInputSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
-  summary: z.string().trim().min(1).max(400).optional(),
-  tags: KnowledgeSourceTagListSchema.optional(),
 });
 
-const KnowledgeBatchFileImportRequestSchema = KnowledgeSourceInputSchema.pick({
-  summary: true,
-  tags: true,
-});
+const KnowledgeBatchFileImportRequestSchema = z.object({});
 
 export const KnowledgeTextImportRequestSchema =
   KnowledgeSourceInputSchema.extend({
