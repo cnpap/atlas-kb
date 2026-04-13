@@ -36,7 +36,6 @@ return new class extends Migration
             $table->foreignId('owner_user_id');
             $table->text('collection_id');
             $table->text('document_id');
-            $table->text('title');
             $table->text('content');
             $table->text('source_type');
             $table->text('status');

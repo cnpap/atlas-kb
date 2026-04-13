@@ -135,7 +135,6 @@ test('internal export task list returns atlas-kb contract with utc z timestamps'
         'owner_user_id' => $knowledgeUser->getKey(),
         'collection_id' => 'collection-1',
         'document_id' => 'source-1.txt',
-        'title' => '资料一',
         'content' => '资料正文',
         'source_type' => 'text',
         'status' => 'ready',
@@ -157,7 +156,7 @@ test('internal export task list returns atlas-kb contract with utc z timestamps'
     $task = KnowledgeTemplateExportTask::query()->create([
         'owner_user_id' => $knowledgeUser->getKey(),
         'source_id' => 'source-1',
-        'source_title' => '资料一',
+        'source_filename' => 'source-1.txt',
         'task_type' => 'template',
         'template_id' => $template->getKey(),
         'template_name' => $template->name,
@@ -179,6 +178,7 @@ test('internal export task list returns atlas-kb contract with utc z timestamps'
         ->assertJsonPath('data.0.id', $task->getKey())
         ->assertJsonPath('data.0.ownerUserId', (string) $knowledgeUser->getKey())
         ->assertJsonPath('data.0.sourceId', 'source-1')
+        ->assertJsonPath('data.0.sourceFilename', 'source-1.txt')
         ->assertJsonPath('data.0.templateName', '拟办模板')
         ->assertJsonPath('data.0.createdAt', '2026-04-07T15:11:00.000Z')
         ->assertJsonPath('data.0.completedAt', '2026-04-07T15:13:00.000Z')
@@ -229,7 +229,6 @@ test('internal export task detail returns template fields and parameters', funct
         'owner_user_id' => $knowledgeUser->getKey(),
         'collection_id' => 'collection-show',
         'document_id' => 'source-show.txt',
-        'title' => '资料一',
         'content' => '资料正文',
         'source_type' => 'text',
         'status' => 'ready',
@@ -244,7 +243,7 @@ test('internal export task detail returns template fields and parameters', funct
     $task = KnowledgeTemplateExportTask::query()->create([
         'owner_user_id' => $knowledgeUser->getKey(),
         'source_id' => 'source-show',
-        'source_title' => '资料一',
+        'source_filename' => 'source-show.txt',
         'task_type' => 'template',
         'template_id' => $template->getKey(),
         'template_name' => $template->name,
@@ -264,6 +263,7 @@ test('internal export task detail returns template fields and parameters', funct
 
     $response->assertSuccessful()
         ->assertJsonPath('data.id', $task->getKey())
+        ->assertJsonPath('data.sourceFilename', 'source-show.txt')
         ->assertJsonPath('data.template.id', $template->getKey())
         ->assertJsonPath('data.template.fields.0.name', 'document_title')
         ->assertJsonPath('data.parameters.document_title', '关于预算调整的请示')
@@ -317,7 +317,6 @@ test('internal export task update rewrites parameters and returns refreshed expo
         'owner_user_id' => $knowledgeUser->getKey(),
         'collection_id' => 'collection-update',
         'document_id' => 'source-update.txt',
-        'title' => '资料二',
         'content' => '资料正文',
         'source_type' => 'text',
         'status' => 'ready',
@@ -332,7 +331,7 @@ test('internal export task update rewrites parameters and returns refreshed expo
     $task = KnowledgeTemplateExportTask::query()->create([
         'owner_user_id' => $knowledgeUser->getKey(),
         'source_id' => 'source-update',
-        'source_title' => '资料二',
+        'source_filename' => 'source-update.txt',
         'task_type' => 'template',
         'template_id' => $template->getKey(),
         'template_name' => $template->name,
@@ -381,6 +380,7 @@ test('internal export task update rewrites parameters and returns refreshed expo
         ]);
 
     $response->assertSuccessful()
+        ->assertJsonPath('data.sourceFilename', 'source-update.txt')
         ->assertJsonPath('data.parameters.document_title', '新标题')
         ->assertJsonPath('data.parameters.opinion', '新拟办意见')
         ->assertJsonPath('data.exportFile.templateId', $template->getKey())

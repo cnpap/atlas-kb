@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -66,6 +67,7 @@ test('development migrations are consolidated around feature boundaries', functi
         '2026_04_03_074812_create_kb_template_domain_tables.php',
         '2026_04_10_061150_create_kb_workspace_index_runtime_tables.php',
         '2026_04_12_000000_streamline_kb_source_indexing_runtime.php',
+        '2026_04_13_000000_drop_legacy_kb_sources_title_column.php',
     ];
 
     $obsoleteMigrationFiles = [
@@ -292,6 +294,7 @@ test('knowledge base tables are created with the expected contract', function ()
             'columns' => [
                 'owner_user_id' => ['data_type' => 'bigint', 'is_nullable' => 'NO'],
                 'source_id' => ['data_type' => 'text', 'is_nullable' => 'NO'],
+                'source_filename' => ['data_type' => 'text', 'is_nullable' => 'NO'],
                 'task_type' => ['data_type' => 'text', 'is_nullable' => 'NO'],
                 'template_id' => ['data_type' => 'text', 'is_nullable' => 'NO'],
                 'status' => ['data_type' => 'text', 'is_nullable' => 'NO', 'column_default' => 'pending'],
@@ -387,6 +390,10 @@ test('knowledge base tables are created with the expected contract', function ()
             expect($columns)->not->toHaveKey('description');
         }
 
+        if ($table === 'kb_sources') {
+            expect($columns)->not->toHaveKey('title');
+        }
+
         foreach ($expectations['columns'] as $column => $columnExpectations) {
             expect($columns)->toHaveKey($column);
             expect($columns[$column]['data_type'])->toBe($columnExpectations['data_type']);
@@ -413,6 +420,21 @@ test('knowledge base tables are created with the expected contract', function ()
 
     expect(Schema::hasTable('kb_import_jobs'))->toBeFalse();
     expect(Schema::hasTable('kb_workspace_index_checkpoints'))->toBeFalse();
+});
+
+test('legacy kb_sources title column is dropped by the upgrade migration', function () {
+    expect(Schema::hasColumn('kb_sources', 'title'))->toBeFalse();
+
+    Schema::table('kb_sources', function (Blueprint $table): void {
+        $table->text('title')->nullable();
+    });
+
+    expect(Schema::hasColumn('kb_sources', 'title'))->toBeTrue();
+
+    $migration = require database_path('migrations/2026_04_13_000000_drop_legacy_kb_sources_title_column.php');
+    $migration->up();
+
+    expect(Schema::hasColumn('kb_sources', 'title'))->toBeFalse();
 });
 
 test('knowledge base users are unified into the users table', function () {

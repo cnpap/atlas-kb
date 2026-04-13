@@ -125,7 +125,6 @@ test('deleting a knowledge user cascades through dependent kb tables', function 
         'owner_user_id' => $knowledgeUser->getKey(),
         'collection_id' => $collectionId,
         'document_id' => 'doc-1',
-        'title' => 'Runbook',
         'content' => 'Content',
         'source_type' => 'text',
         'status' => 'ready',

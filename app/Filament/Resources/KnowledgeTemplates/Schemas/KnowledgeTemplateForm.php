@@ -131,7 +131,7 @@ class KnowledgeTemplateForm
                         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                     ])
-                    ->maxSize(25 * 1024)
+                    ->maxSize((int) config('knowledge-templates.template_uploads.max_upload_kb'))
                     ->storeFiles(false)
                     ->previewable(false)
                     ->columnSpanFull(),

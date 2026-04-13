@@ -13,7 +13,7 @@ return new class extends Migration
             $table->uuid('id');
             $table->unsignedBigInteger('owner_user_id');
             $table->text('source_id');
-            $table->text('source_title');
+            $table->text('source_filename');
             $table->text('task_type');
             $table->text('template_id');
             $table->text('template_name');

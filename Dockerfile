@@ -35,6 +35,8 @@ RUN apt-get update \
 
 WORKDIR /app
 
+COPY docker/php/upload-limits.ini /usr/local/etc/php/conf.d/zz-atlas-upload-limits.ini
+
 FROM php-base AS vendor
 
 ENV APP_ENV=production

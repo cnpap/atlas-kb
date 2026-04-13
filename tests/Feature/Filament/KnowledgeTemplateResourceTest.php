@@ -88,9 +88,11 @@ test('knowledge template form schema uses markdown editor for the system prompt'
         ->and($source)->toContain("'lg' => 3")
         ->and($source)->toContain("'lg' => 1")
         ->and($source)->toContain('->columnSpanFull()')
+        ->and($source)->toContain("->maxSize((int) config('knowledge-templates.template_uploads.max_upload_kb'))")
         ->and($source)->not->toContain("CodeEditor::make('system_prompt')")
         ->and($source)->not->toContain("Textarea::make('system_prompt')")
-        ->and($source)->not->toContain('Flex::make([');
+        ->and($source)->not->toContain('Flex::make([')
+        ->and($source)->not->toContain('->maxSize(25 * 1024)');
 });
 
 test('knowledge template edit page is rendered with the workspace layout', function () {

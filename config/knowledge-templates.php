@@ -4,6 +4,9 @@ return [
     'storage_disk' => env('KB_TEMPLATE_STORAGE_DISK', 'kb_templates'),
     'storage_directory' => env('KB_TEMPLATE_STORAGE_DIRECTORY', 'kb/templates'),
     'parser_version' => env('KB_TEMPLATE_PARSER_VERSION', 'ooxml-v1'),
+    'template_uploads' => [
+        'max_upload_kb' => (int) env('KB_TEMPLATE_MAX_UPLOAD_KB', 102400),
+    ],
     'exports' => [
         'disk' => env('KB_TEMPLATE_EXPORT_STORAGE_DISK', env('KB_TEMPLATE_STORAGE_DISK', 'kb_templates')),
         'directory' => env('KB_TEMPLATE_EXPORT_STORAGE_DIRECTORY', 'kb/template-exports'),

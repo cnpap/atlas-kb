@@ -17,7 +17,7 @@ class KnowledgeTemplateExportTaskResource extends JsonResource
             'id' => $this->id,
             'owner_user_id' => $this->owner_user_id,
             'source_id' => $this->source_id,
-            'source_title' => $this->source_title,
+            'source_filename' => $this->source_filename,
             'task_type' => $this->task_type,
             'template_id' => $this->template_id,
             'template_name' => $this->template_name,

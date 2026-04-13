@@ -29,13 +29,24 @@ class TemplateFileManager
         $mimeType = $this->mimeTypeForType($templateType);
         $disk = (string) config('knowledge-templates.storage_disk');
         $directory = trim((string) config('knowledge-templates.storage_directory'), '/');
-        $contents = file_get_contents($file->getRealPath());
+        $realPath = $file->getRealPath();
 
-        if (! is_string($contents) || $contents === '') {
+        if (! is_string($realPath) || $realPath === '' || ! is_file($realPath)) {
             throw new RuntimeException('无法读取上传的模板文件。');
         }
 
-        $checksum = hash('sha256', $contents);
+        $byteSize = filesize($realPath);
+
+        if ($byteSize === false || $byteSize <= 0) {
+            throw new RuntimeException('无法读取上传的模板文件。');
+        }
+
+        $checksum = hash_file('sha256', $realPath);
+
+        if (! is_string($checksum)) {
+            throw new RuntimeException('无法读取上传的模板文件。');
+        }
+
         $extension = strtolower(pathinfo($sourceFilename, PATHINFO_EXTENSION));
         $sourcePath = implode('/', array_filter([
             $directory,
@@ -43,10 +54,20 @@ class TemplateFileManager
             Str::uuid().'.'.$extension,
         ]));
 
-        $stored = Storage::disk($disk)->put($sourcePath, $contents, [
-            'visibility' => 'private',
-            'ContentType' => $mimeType,
-        ]);
+        $stream = fopen($realPath, 'rb');
+
+        if ($stream === false) {
+            throw new RuntimeException('无法读取上传的模板文件。');
+        }
+
+        try {
+            $stored = Storage::disk($disk)->put($sourcePath, $stream, [
+                'visibility' => 'private',
+                'ContentType' => $mimeType,
+            ]);
+        } finally {
+            fclose($stream);
+        }
 
         if (! $stored) {
             throw new RuntimeException('模板文件上传到对象存储失败。');
@@ -58,7 +79,7 @@ class TemplateFileManager
             'source_path' => $sourcePath,
             'source_filename' => $sourceFilename,
             'mime_type' => $mimeType,
-            'byte_size' => strlen($contents),
+            'byte_size' => $byteSize,
             'checksum_sha256' => $checksum,
         ];
     }

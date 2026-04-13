@@ -19,7 +19,7 @@ class KnowledgeTemplateExportTaskStoreController extends Controller
         $user = KnowledgeUser::query()->findOrFail($request->userId());
 
         $source = DB::table('kb_sources')
-            ->select(['id', 'title'])
+            ->select(['id', 'source_filename'])
             ->where('id', $request->sourceId())
             ->where('owner_user_id', $user->getKey())
             ->first();
@@ -49,7 +49,7 @@ class KnowledgeTemplateExportTaskStoreController extends Controller
         $task = KnowledgeTemplateExportTask::query()->create([
             'owner_user_id' => $user->getKey(),
             'source_id' => $request->sourceId(),
-            'source_title' => (string) $source->title,
+            'source_filename' => (string) $source->source_filename,
             'task_type' => 'template',
             'template_id' => $template->getKey(),
             'template_name' => $template->name,

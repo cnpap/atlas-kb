@@ -13,7 +13,7 @@ use Illuminate\Support\Str;
 #[Fillable([
     'owner_user_id',
     'source_id',
-    'source_title',
+    'source_filename',
     'task_type',
     'template_id',
     'template_name',

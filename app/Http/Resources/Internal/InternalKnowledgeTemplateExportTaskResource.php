@@ -19,7 +19,7 @@ class InternalKnowledgeTemplateExportTaskResource extends JsonResource
             'id' => $this->id,
             'ownerUserId' => (string) $this->owner_user_id,
             'sourceId' => $this->source_id,
-            'sourceTitle' => $this->source_title,
+            'sourceFilename' => $this->source_filename,
             'taskType' => $this->task_type,
             'templateId' => $this->template_id,
             'templateName' => $this->template_name,

@@ -23,9 +23,16 @@ class TemplateLibraryFileManager
      */
     public function storeUpload(TemporaryUploadedFile $file, KnowledgeTemplateLibrary $library): array
     {
-        $contents = file_get_contents($file->getRealPath());
+        $realPath = $file->getRealPath();
 
-        if ($contents === false) {
+        if (! is_string($realPath) || $realPath === '' || ! is_file($realPath)) {
+            throw new RuntimeException('无法读取上传的资料文件。');
+        }
+
+        $byteSize = filesize($realPath);
+        $checksum = hash_file('sha256', $realPath);
+
+        if ($byteSize === false || ! is_string($checksum)) {
             throw new RuntimeException('无法读取上传的资料文件。');
         }
 
@@ -38,10 +45,20 @@ class TemplateLibraryFileManager
             Str::uuid().'-'.$sourceFilename,
         ]));
 
-        $stored = Storage::disk($sourceDisk)->put($sourcePath, $contents, [
-            'visibility' => 'private',
-            'ContentType' => $mimeType,
-        ]);
+        $stream = fopen($realPath, 'rb');
+
+        if ($stream === false) {
+            throw new RuntimeException('无法读取上传的资料文件。');
+        }
+
+        try {
+            $stored = Storage::disk($sourceDisk)->put($sourcePath, $stream, [
+                'visibility' => 'private',
+                'ContentType' => $mimeType,
+            ]);
+        } finally {
+            fclose($stream);
+        }
 
         if (! $stored) {
             throw new RuntimeException('资料文件上传到对象存储失败。');
@@ -52,8 +69,8 @@ class TemplateLibraryFileManager
             'source_path' => $sourcePath,
             'source_filename' => $sourceFilename,
             'mime_type' => $mimeType,
-            'byte_size' => strlen($contents),
-            'checksum_sha256' => hash('sha256', $contents),
+            'byte_size' => $byteSize,
+            'checksum_sha256' => $checksum,
         ];
     }
 
