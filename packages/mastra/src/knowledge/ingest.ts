@@ -17,6 +17,7 @@ import { getKnowledgeWorkspace } from "./runtime";
 import {
   createKnowledgeSourceRecord,
   deleteKnowledgeSource,
+  listAutoRetryableFailedKnowledgeSources,
   listKnowledgeSources,
   replaceSourceContent,
   requireKnowledgeSource,
@@ -46,6 +47,13 @@ type ImportResult = {
 type SingleFileImportInput = {
   title?: string;
 };
+
+const AUTO_RETRY_FAILED_SOURCE_IMPORTS_INTERVAL_MS = 30 * 60 * 1_000;
+let failedSourceAutoRetryTimer: ReturnType<typeof setInterval> | null = null;
+let failedSourceAutoRetryRun: Promise<{
+  attemptedCount: number;
+  queuedCount: number;
+}> | null = null;
 
 function getImportEngine(): ImportResult["engine"] {
   return hasEmbeddingConfig() ? "hybrid" : "lexical";
@@ -546,6 +554,86 @@ export async function retryKnowledgeSourceImport(
   }
 
   return retriedSource;
+}
+
+export function getFailedSourceAutoRetryIntervalMs(): number {
+  return AUTO_RETRY_FAILED_SOURCE_IMPORTS_INTERVAL_MS;
+}
+
+export function stopFailedKnowledgeSourceAutoRetryScheduler(): void {
+  if (!failedSourceAutoRetryTimer) {
+    return;
+  }
+
+  clearInterval(failedSourceAutoRetryTimer);
+  failedSourceAutoRetryTimer = null;
+}
+
+export function startFailedKnowledgeSourceAutoRetryScheduler(): void {
+  if (failedSourceAutoRetryTimer) {
+    return;
+  }
+
+  void retryFailedKnowledgeSourceImports();
+  failedSourceAutoRetryTimer = setInterval(() => {
+    void retryFailedKnowledgeSourceImports();
+  }, AUTO_RETRY_FAILED_SOURCE_IMPORTS_INTERVAL_MS);
+}
+
+export async function retryFailedKnowledgeSourceImports(args?: {
+  limit?: number;
+  now?: Date;
+  retryAfterMs?: number;
+}): Promise<{
+  attemptedCount: number;
+  queuedCount: number;
+}> {
+  if (failedSourceAutoRetryRun) {
+    return failedSourceAutoRetryRun;
+  }
+
+  const run = (async () => {
+    const now = args?.now ?? new Date();
+    const retryAfterMs =
+      args?.retryAfterMs ?? AUTO_RETRY_FAILED_SOURCE_IMPORTS_INTERVAL_MS;
+    const retryBefore = new Date(now.getTime() - retryAfterMs);
+    const candidates = await listAutoRetryableFailedKnowledgeSources({
+      limit: args?.limit,
+      retryBefore,
+    });
+    let queuedCount = 0;
+
+    for (const candidate of candidates) {
+      try {
+        await retryKnowledgeSourceImport(candidate.userId, candidate.sourceId);
+        queuedCount += 1;
+      } catch (error) {
+        console.error("[knowledge:import] automatic source retry failed", {
+          error: error instanceof Error ? error.message : String(error),
+          sourceId: candidate.sourceId,
+          userId: candidate.userId,
+        });
+      }
+    }
+
+    if (queuedCount > 0) {
+      console.info("[knowledge:import] automatic source retries queued", {
+        attemptedCount: candidates.length,
+        queuedCount,
+      });
+    }
+
+    return {
+      attemptedCount: candidates.length,
+      queuedCount,
+    };
+  })();
+
+  failedSourceAutoRetryRun = run.finally(() => {
+    failedSourceAutoRetryRun = null;
+  });
+
+  return failedSourceAutoRetryRun;
 }
 
 export { waitForPendingKnowledgeImports };

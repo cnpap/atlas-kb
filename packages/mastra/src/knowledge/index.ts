@@ -35,9 +35,13 @@ export {
 } from "./config";
 export { getKnowledgeSourceDownloadUrl } from "./download";
 export {
+  getFailedSourceAutoRetryIntervalMs,
   importKnowledgeFile,
   importKnowledgeText,
+  retryFailedKnowledgeSourceImports,
   retryKnowledgeSourceImport,
+  startFailedKnowledgeSourceAutoRetryScheduler,
+  stopFailedKnowledgeSourceAutoRetryScheduler,
   updateKnowledgeSource,
   waitForPendingKnowledgeImports,
 } from "./ingest";

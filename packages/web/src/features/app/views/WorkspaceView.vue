@@ -1007,28 +1007,22 @@
 
     const collectionId = activeCollection.value.id;
     let acceptedCount = 0;
-    let queuedForProcessingCount = 0;
 
     try {
       for (const file of payload.files) {
-        const result = await uploadKnowledgeFileRequest({
+        await uploadKnowledgeFileRequest({
           collectionId,
           file,
         });
 
         acceptedCount += 1;
-        if (result.source.status === "processing") {
-          queuedForProcessingCount += 1;
-        }
       }
 
       await loadCollections();
       await loadSources(collectionId);
       showImportModal.value = false;
 
-      if (queuedForProcessingCount > 0) {
-        showToast("文件已上传，正在后台解析与建立索引", "info");
-      } else if (acceptedCount > 0) {
+      if (acceptedCount > 0) {
         showToast("文件已加入知识库");
       } else {
         showToast("没有成功导入的文件", "warning");

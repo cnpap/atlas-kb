@@ -446,7 +446,7 @@
                 >
                   <p class="text-[11px] leading-5 text-[var(--text-muted)]">
                     <span class="font-medium text-[var(--text-strong)]">
-                      {{ source.status === "failed" ? "处理失败：" : "后台处理中：" }}
+                      处理失败：
                     </span>
                     {{ getSourceTaskMessage(source) }}
                   </p>

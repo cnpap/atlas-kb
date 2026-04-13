@@ -84,7 +84,7 @@ export function shouldShowSourceTaskMessage(source: {
     return true;
   }
 
-  return source.status === "processing" || source.status === "failed";
+  return source.status === "failed";
 }
 
 export function getSourceTaskMessage(source: {
@@ -93,10 +93,6 @@ export function getSourceTaskMessage(source: {
 }): string | undefined {
   if (source.failureMessage) {
     return source.failureMessage;
-  }
-
-  if (source.status === "processing") {
-    return "文件已上传，后台处理中。";
   }
 
   if (source.status === "failed") {

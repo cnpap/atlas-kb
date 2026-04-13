@@ -8,6 +8,7 @@ import {
   createKnowledgeCollection,
   createUser,
   importKnowledgeFile,
+  retryFailedKnowledgeSourceImports,
   retryKnowledgeSourceImport,
   requireKnowledgeSource,
   resetKnowledgeRepository,
@@ -345,6 +346,92 @@ describe.serial("knowledge ingest", () => {
     );
     expect(retriedSource.status).toBe("processing");
     expect(retriedSource.failureMessage).toBeUndefined();
+
+    await waitForPendingKnowledgeImports();
+
+    const completedSource = await requireKnowledgeSource(
+      user.id,
+      importResult.source.id,
+    );
+    expect(completedSource.status).toBe("ready");
+    expect(completedSource.failureMessage).toBeUndefined();
+  });
+
+  it("automatically retries failed file imports every 30 minutes", async () => {
+    let failTikaRequest = true;
+    globalThis.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url.includes("/rmeta/text")) {
+        if (failTikaRequest) {
+          return jsonResponse(
+            {
+              detail: "Gateway Timeout",
+            },
+            504,
+          );
+        }
+
+        return jsonResponse(buildMockTikaExtractPayload(init));
+      }
+
+      return jsonResponse({
+        ok: true,
+      });
+    }) as typeof fetch;
+
+    const user = await createUser({
+      username: "auto-retry-upload",
+      password: "test-pass",
+    });
+    const collection = await createKnowledgeCollection({
+      userId: user.id,
+      input: {
+        id: "auto-retry-upload",
+        name: "Auto Retry Upload",
+        description: "auto retry upload",
+      },
+    });
+
+    const importResult = await importKnowledgeFile({
+      userId: user.id,
+      collectionId: collection.id,
+      file: new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], "auto.pdf", {
+        type: "application/pdf",
+      }),
+      input: {},
+    });
+
+    await waitForPendingKnowledgeImports();
+
+    const failedSource = await requireKnowledgeSource(
+      user.id,
+      importResult.source.id,
+    );
+    expect(failedSource.status).toBe("failed");
+    expect(failedSource.updatedAt).toBeTruthy();
+
+    failTikaRequest = false;
+
+    const earlyRetry = await retryFailedKnowledgeSourceImports({
+      now: new Date(Date.parse(failedSource.updatedAt) + 29 * 60 * 1_000),
+    });
+    expect(earlyRetry.attemptedCount).toBe(0);
+    expect(earlyRetry.queuedCount).toBe(0);
+
+    const scheduledRetry = await retryFailedKnowledgeSourceImports({
+      now: new Date(Date.parse(failedSource.updatedAt) + 30 * 60 * 1_000),
+    });
+    expect(scheduledRetry.attemptedCount).toBe(1);
+    expect(scheduledRetry.queuedCount).toBe(1);
 
     await waitForPendingKnowledgeImports();
 

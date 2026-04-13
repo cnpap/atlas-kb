@@ -63,6 +63,39 @@ export async function listKnowledgeSources(
   return rows.map((row) => toSource(row));
 }
 
+export async function listAutoRetryableFailedKnowledgeSources(args?: {
+  limit?: number;
+  retryBefore?: Date;
+}): Promise<
+  Array<{
+    sourceId: string;
+    userId: string;
+  }>
+> {
+  const db = await ensureKnowledgeDatabase();
+  const retryBefore = args?.retryBefore;
+  const limit = args?.limit && args.limit > 0 ? Math.floor(args.limit) : 50;
+  let query = db
+    .selectFrom("kb_sources")
+    .select(["id", "owner_user_id"])
+    .where("source_type", "=", "file")
+    .where("status", "=", "failed");
+
+  if (retryBefore) {
+    query = query.where("updated_at", "<=", retryBefore);
+  }
+
+  const rows = await query
+    .orderBy("updated_at", "asc")
+    .limit(limit)
+    .execute();
+
+  return rows.map((row) => ({
+    sourceId: row.id,
+    userId: String(row.owner_user_id),
+  }));
+}
+
 export async function getKnowledgeCollectionSourcesData(
   userId: string,
   collectionId: string,

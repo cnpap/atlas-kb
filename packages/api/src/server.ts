@@ -1,10 +1,13 @@
 import { createApp } from "./app";
 import { getApiHost, getApiPort } from "./env";
+import { startFailedKnowledgeSourceAutoRetryScheduler } from "@atlas-kb/mastra/knowledge";
 
 const host = getApiHost();
 const port = getApiPort();
 const API_IDLE_TIMEOUT_SECONDS = 120;
 const app = createApp();
+
+startFailedKnowledgeSourceAutoRetryScheduler();
 
 app.listen({
   hostname: host,

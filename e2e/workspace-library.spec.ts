@@ -94,6 +94,8 @@ test("上传文件后右栏布局正常，并且对话能列出当前文件", as
   expect(actionsBox!.x).toBeGreaterThan(titleBox!.x + titleBox!.width - 20);
   await expect(sourceCard.locator(".status-pill")).toHaveCount(0);
   await expect(sourceCard.getByTestId("source-card-meta")).toHaveCount(0);
+  await expect(sourceCard.getByTestId("source-card-task-message")).toHaveCount(0);
+  await expect(sourceCard).not.toContainText("后台处理中");
   await expect(sourceCard).not.toContainText(/(刚刚|分钟前|小时前|天前)/);
   await expect(sourceCard.getByText("未填写摘要")).toHaveCount(0);
 

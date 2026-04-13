@@ -10,8 +10,6 @@
   } from "lucide-vue-next";
   import {
     formatDateTime,
-    getSourceStatusLabel,
-    getSourceStatusTone,
     getSourceTaskMessage,
     shouldShowSourceTaskMessage,
   } from "@/lib/knowledge-ui";
@@ -106,15 +104,7 @@
     <template #body>
       <div v-if="source" class="space-y-5">
         <div class="space-y-2">
-          <div class="flex items-center justify-between">
-            <p class="section-label">资料标题</p>
-            <span
-              class="status-pill scale-75 origin-right"
-              :class="getSourceStatusTone(source.status)"
-            >
-              {{ getSourceStatusLabel(source.status) }}
-            </span>
-          </div>
+          <p class="section-label">资料标题</p>
           <input v-model="title" class="field-shell w-full text-sm font-medium">
         </div>
 
@@ -125,7 +115,7 @@
           <div class="flex items-center justify-between gap-3">
             <p class="section-label">后台状态</p>
             <span class="text-[11px] font-medium text-[var(--text-strong)]">
-              {{ source.status === "failed" ? "处理失败" : "后台处理中" }}
+              处理失败
             </span>
           </div>
           <div
