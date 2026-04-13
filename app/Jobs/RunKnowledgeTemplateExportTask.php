@@ -12,6 +12,8 @@ class RunKnowledgeTemplateExportTask implements ShouldQueue
 {
     use Queueable;
 
+    public int $timeout = 900;
+
     public function __construct(
         public string $taskId,
     ) {}
