@@ -31,7 +31,9 @@ function normalizePath(value?: string | null): string | undefined {
   return normalized || undefined;
 }
 
-function toByteSize(value: number | string | null | undefined): number | undefined {
+function toByteSize(
+  value: number | string | null | undefined,
+): number | undefined {
   if (value === null || value === undefined) {
     return undefined;
   }
@@ -84,7 +86,8 @@ async function restorePreviousChunks(args: {
     sourceFilename: args.sourceFilename,
     mimeType: args.row.mime_type ?? undefined,
   })
-    ? args.row.content?.trim() || (await readIndexableSourceContent({
+    ? args.row.content?.trim() ||
+      (await readIndexableSourceContent({
         documentId: args.documentId,
         workspace: args.workspace,
       }).catch(() => ""))
@@ -118,25 +121,32 @@ async function synchronizeSourcePath(args: {
   const currentDocumentId = normalizePath(args.row.document_id);
   const sourceFilename = normalizePath(args.row.source_filename);
 
-  if (!currentDocumentId || !sourceFilename || currentDocumentId === sourceFilename) {
+  if (
+    !currentDocumentId ||
+    !sourceFilename ||
+    currentDocumentId === sourceFilename
+  ) {
     return;
   }
 
-  const oldExists = await args.rawFilesystem.exists(currentDocumentId).catch(
-    () => false,
-  );
-  const nextExists = await args.rawFilesystem.exists(sourceFilename).catch(
-    () => false,
-  );
+  const oldExists = await args.rawFilesystem
+    .exists(currentDocumentId)
+    .catch(() => false);
+  const nextExists = await args.rawFilesystem
+    .exists(sourceFilename)
+    .catch(() => false);
 
   if (!oldExists && !nextExists) {
-    console.error("[knowledge:path-sync] missing source file for rename repair", {
-      collectionId: args.row.collection_id,
-      currentDocumentId,
-      sourceFilename,
-      sourceId: args.row.id,
-      userId: args.userId,
-    });
+    console.error(
+      "[knowledge:path-sync] missing source file for rename repair",
+      {
+        collectionId: args.row.collection_id,
+        currentDocumentId,
+        sourceFilename,
+        sourceId: args.row.id,
+        userId: args.userId,
+      },
+    );
     return;
   }
 
@@ -161,7 +171,8 @@ async function synchronizeSourcePath(args: {
       sourceFilename,
       mimeType: args.row.mime_type ?? undefined,
     })
-      ? args.row.content?.trim() || (await readIndexableSourceContent({
+      ? args.row.content?.trim() ||
+        (await readIndexableSourceContent({
           documentId: sourceFilename,
           workspace: args.workspace,
         }))

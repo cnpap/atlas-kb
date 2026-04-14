@@ -392,9 +392,7 @@ export async function fetchKnowledgeEmbeddingVector(
   }
 }
 
-async function resolveEmbeddingDimension(
-  userId: string,
-): Promise<number> {
+async function resolveEmbeddingDimension(userId: string): Promise<number> {
   const configured = getEmbeddingDimensions();
 
   if (configured) {

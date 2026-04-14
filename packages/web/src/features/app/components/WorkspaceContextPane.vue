@@ -463,10 +463,7 @@
                 </div>
               </div>
 
-              <div
-                v-if="shouldShowSourceTaskMessage(source)"
-                class="pl-[42px]"
-              >
+              <div v-if="shouldShowSourceTaskMessage(source)" class="pl-[42px]">
                 <div
                   class="rounded-[6px] border border-[rgba(93,72,34,0.08)] bg-[rgba(255,250,240,0.65)] px-3 py-2"
                   data-testid="source-card-task-message"

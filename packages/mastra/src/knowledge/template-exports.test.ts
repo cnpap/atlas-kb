@@ -6,6 +6,7 @@ import type { KnowledgeTemplateDetail } from "@atlas-kb/schema";
 import {
   buildTemplateExportChunkId,
   createKnowledgeCollection,
+  createKnowledgeCollectionFilesystem,
   createKnowledgeSourceRecord,
   ensureDefaultUser,
   generateKnowledgeTemplateExportPayload,
@@ -202,11 +203,13 @@ function normalizePathSegments(path: string): string[] {
 }
 
 function mockTemplateExportProviders(args: {
+  emptyTikaExtractedTitles?: string[];
   invalidStructuredOutput?: boolean;
   promptBucket: string[];
   sourcePath: string;
+  tikaExtractedTitlesBucket?: string[];
   toolPayloadBucket: string[];
-  libraryPath: string;
+  libraryPath?: string;
 }) {
   let chatStep = 0;
   let responseStep = 0;
@@ -240,7 +243,27 @@ function mockTemplateExportProviders(args: {
     }
 
     if (url.includes("/rmeta/text")) {
-      return jsonResponse(buildMockTikaExtractPayload(init));
+      const payload = buildMockTikaExtractPayload(init);
+      const extractedText = payload[0]?.["X-TIKA:content"];
+      const tikaContentSuffix = " extracted content";
+      const extractedTitle =
+        typeof extractedText === "string" &&
+        extractedText.endsWith(tikaContentSuffix)
+          ? extractedText.slice(0, -tikaContentSuffix.length)
+          : undefined;
+
+      if (extractedTitle) {
+        args.tikaExtractedTitlesBucket?.push(extractedTitle);
+      }
+
+      if (
+        extractedTitle &&
+        args.emptyTikaExtractedTitles?.some((title) => extractedTitle === title)
+      ) {
+        payload[0]!["X-TIKA:content"] = " \n ";
+      }
+
+      return jsonResponse(payload);
     }
 
     if (url.includes("/responses")) {
@@ -271,7 +294,7 @@ function mockTemplateExportProviders(args: {
         });
       }
 
-      if (responseStep === 2) {
+      if (responseStep === 2 && args.libraryPath) {
         return buildResponsesToolCall({
           toolCallId: "call_read_reference",
           toolName: "mastra_workspace_read_file",
@@ -352,7 +375,7 @@ function mockTemplateExportProviders(args: {
         });
       }
 
-      if (chatStep === 2) {
+      if (chatStep === 2 && args.libraryPath) {
         return buildToolCallResponse({
           toolCallId: "call_read_reference",
           toolName: "mastra_workspace_read_file",
@@ -434,7 +457,16 @@ function mockKnowledgeProviders() {
   }) as typeof fetch;
 }
 
-function createTemplateDetail(): KnowledgeTemplateDetail {
+function createTemplateDetail(
+  args: {
+    referenceLibraryFiles?: Array<{
+      byteSize?: number;
+      mimeType?: string;
+      sourceFilename: string;
+      sourcePath: string;
+    }>;
+  } = {},
+): KnowledgeTemplateDetail {
   return {
     id: "template-export-1",
     name: "拟办意见",
@@ -466,7 +498,15 @@ function createTemplateDetail(): KnowledgeTemplateDetail {
         id: "lib-1",
         name: "办公室手册",
         storagePrefix: "ops/manuals",
-        fileCount: 1,
+        fileCount: args.referenceLibraryFiles?.length ?? 1,
+        files: args.referenceLibraryFiles ?? [
+          {
+            sourcePath: "ops/manuals/guide.md",
+            sourceFilename: "guide.md",
+            mimeType: "text/markdown",
+            byteSize: 84,
+          },
+        ],
       },
     ],
   };
@@ -755,6 +795,144 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
   );
 
   it.serial(
+    "skips reference files with no extractable text during template export",
+    async () => {
+      const promptBucket: string[] = [];
+      const tikaExtractedTitlesBucket: string[] = [];
+      const toolPayloadBucket: string[] = [];
+      const user = await ensureDefaultUser();
+      const collection = await createKnowledgeCollection({
+        userId: user.id,
+        input: {
+          id: "template-export-empty-reference-file",
+          name: "Template Export Empty Reference File",
+          description: "empty reference file test",
+        },
+      });
+      const importResult = await importKnowledgeText({
+        userId: user.id,
+        collectionId: collection.id,
+        input: {
+          sourceFilename: "预算调整请示.txt",
+          content:
+            "来文单位为综合办公室，文件标题为关于预算调整的请示，需要财务部门尽快核对预算依据。",
+        },
+      });
+
+      await mkdir(join(storagePrefixDir, "ops", "manuals"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(storagePrefixDir, "ops", "manuals", "empty-reference.pdf"),
+        new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+      );
+      await writeFile(
+        join(storagePrefixDir, "ops", "manuals", "stale-reference.pdf"),
+        new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+      );
+
+      mockTemplateExportProviders({
+        emptyTikaExtractedTitles: ["empty-reference"],
+        promptBucket,
+        tikaExtractedTitlesBucket,
+        toolPayloadBucket,
+        sourcePath: "/source/预算调整请示.txt",
+        libraryPath: "/references/ops/manuals/empty-reference.pdf",
+      });
+
+      const result = await generateKnowledgeTemplateExportPayload({
+        userId: user.id,
+        sourceId: importResult.source.id,
+        template: createTemplateDetail({
+          referenceLibraryFiles: [
+            {
+              sourcePath: "ops/manuals/empty-reference.pdf",
+              sourceFilename: "empty-reference.pdf",
+              mimeType: "application/pdf",
+              byteSize: 4,
+            },
+          ],
+        }),
+      });
+
+      expect(result.parameters).toEqual({
+        document_title: "关于预算调整的请示",
+        opinion: "建议财务部门核对预算依据后办理。",
+      });
+
+      const prompt = promptBucket.join("\n");
+      const toolPayload = toolPayloadBucket.join("\n");
+
+      expect(prompt).toContain(
+        "当前已挂载的参考资料目录：/references/ops/manuals",
+      );
+      expect(toolPayload).toContain(
+        "/references/ops/manuals/empty-reference.pdf",
+      );
+      expect(toolPayload).not.toContain("empty-reference extracted content");
+      expect(tikaExtractedTitlesBucket).toContain("empty-reference");
+      expect(tikaExtractedTitlesBucket).not.toContain("stale-reference");
+    },
+  );
+
+  it.serial(
+    "fails strictly when the source file has no extractable text",
+    async () => {
+      const promptBucket: string[] = [];
+      const toolPayloadBucket: string[] = [];
+      const user = await ensureDefaultUser();
+      const collection = await createKnowledgeCollection({
+        userId: user.id,
+        input: {
+          id: "template-export-empty-source-file",
+          name: "Template Export Empty Source File",
+          description: "empty source file test",
+        },
+      });
+      const sourceFilename = "empty-source.pdf";
+      const source = await createKnowledgeSourceRecord({
+        userId: user.id,
+        collectionId: collection.id,
+        documentId: sourceFilename,
+        sourceFilename,
+        sourceType: "file",
+        mimeType: "application/pdf",
+        byteSize: 4,
+        status: "processing",
+      });
+      const filesystem = createKnowledgeCollectionFilesystem({
+        userId: user.id,
+        collectionId: collection.id,
+      });
+
+      await filesystem.writeFile(
+        sourceFilename,
+        new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+      );
+
+      mockTemplateExportProviders({
+        emptyTikaExtractedTitles: ["empty-source"],
+        promptBucket,
+        toolPayloadBucket,
+        sourcePath: "/source/empty-source.pdf",
+        libraryPath: "/references/ops/manuals/guide.md",
+      });
+
+      await expect(
+        generateKnowledgeTemplateExportPayload({
+          userId: user.id,
+          sourceId: source.id,
+          template: createTemplateDetail({
+            referenceLibraryFiles: [],
+          }),
+        }),
+      ).rejects.toThrow(
+        "当前待导出主资料 文件 /source/empty-source.pdf 读取失败：当前文件没有可索引的文本内容",
+      );
+    },
+  );
+
+  it.serial(
     "exports from a processing source when the selected file is already available",
     async () => {
       const promptBucket: string[] = [];
@@ -880,8 +1058,11 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
   );
 
   it.serial(
-    "fails when a reference library is mounted but has no learned files",
+    "does not scan storage prefix objects outside the reference file list",
     async () => {
+      const promptBucket: string[] = [];
+      const tikaExtractedTitlesBucket: string[] = [];
+      const toolPayloadBucket: string[] = [];
       const user = await ensureDefaultUser();
       const collection = await createKnowledgeCollection({
         userId: user.id,
@@ -903,14 +1084,35 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
       await mkdir(join(storagePrefixDir, "ops", "manuals"), {
         recursive: true,
       });
+      await writeFile(
+        join(storagePrefixDir, "ops", "manuals", "deleted-reference.pdf"),
+        new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+      );
 
-      await expect(
-        generateKnowledgeTemplateExportPayload({
-          userId: user.id,
-          sourceId: importResult.source.id,
-          template: createTemplateDetail(),
+      mockTemplateExportProviders({
+        promptBucket,
+        tikaExtractedTitlesBucket,
+        toolPayloadBucket,
+        sourcePath: "/source/预算调整请示.txt",
+      });
+
+      const result = await generateKnowledgeTemplateExportPayload({
+        userId: user.id,
+        sourceId: importResult.source.id,
+        template: createTemplateDetail({
+          referenceLibraryFiles: [],
         }),
-      ).rejects.toThrow("挂载后没有任何可学习文件");
+      });
+
+      expect(result.parameters).toEqual({
+        document_title: "关于预算调整的请示",
+        opinion: "建议财务部门核对预算依据后办理。",
+      });
+      expect(promptBucket.join("\n")).toContain("当前已挂载的参考资料目录：无");
+      expect(toolPayloadBucket.join("\n")).not.toContain(
+        "deleted-reference.pdf",
+      );
+      expect(tikaExtractedTitlesBucket).not.toContain("deleted-reference");
     },
   );
 
@@ -939,12 +1141,28 @@ describe.serial("@atlas-kb/mastra template export flow", () => {
         name: "冲突资料库一",
         storagePrefix: "ops/manuals",
         fileCount: 1,
+        files: [
+          {
+            sourcePath: "ops/manuals/guide.md",
+            sourceFilename: "guide.md",
+            mimeType: "text/markdown",
+            byteSize: 84,
+          },
+        ],
       },
       {
         id: "lib-conflict-2",
         name: "冲突资料库二",
         storagePrefix: "ops/manuals/child",
         fileCount: 1,
+        files: [
+          {
+            sourcePath: "ops/manuals/child/guide.md",
+            sourceFilename: "guide.md",
+            mimeType: "text/markdown",
+            byteSize: 84,
+          },
+        ],
       },
     ];
 

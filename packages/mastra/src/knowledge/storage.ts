@@ -80,7 +80,8 @@ export function buildManagedSourceFileName(args: {
   sourceType: KnowledgeSource["sourceType"];
   fallbackName?: string;
 }) {
-  const preferredName = args.sourceFilename?.trim() || args.fallbackName?.trim();
+  const preferredName =
+    args.sourceFilename?.trim() || args.fallbackName?.trim();
 
   return ensureManagedFileExtension({
     fileName: sanitizeManagedFileName(preferredName || "source"),

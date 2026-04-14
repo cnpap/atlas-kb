@@ -35,6 +35,17 @@ export const KnowledgeTemplateLibrarySchema = z.object({
   name: z.string().trim().min(1),
   storagePrefix: z.string().trim().min(1),
   fileCount: z.number().int().nonnegative(),
+  files: z
+    .array(
+      z.object({
+        sourcePath: z.string().trim().min(1),
+        sourceFilename: z.string().trim().min(1),
+        mimeType: z.string().trim().min(1).optional(),
+        byteSize: z.number().int().nonnegative().optional(),
+      }),
+    )
+    .optional()
+    .default([]),
 });
 
 export const KnowledgeTemplateDetailSchema =

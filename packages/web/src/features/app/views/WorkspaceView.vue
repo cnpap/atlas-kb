@@ -208,25 +208,25 @@
     const nextItems = [...items];
 
     nextItems.sort((left, right) => {
-      switch (mode) {
-        case "updated-desc":
-          return (
-            compareTimestampDesc(left.updatedAt, right.updatedAt) ||
-            compareTimestampDesc(left.createdAt, right.createdAt) ||
-            compareSourceFilenames(left, right)
-          );
-        case "filename-asc":
-          return (
-            compareSourceFilenames(left, right) ||
-            compareTimestampDesc(left.createdAt, right.createdAt)
-          );
-        case "created-desc":
-        default:
-          return (
-            compareTimestampDesc(left.createdAt, right.createdAt) ||
-            compareSourceFilenames(left, right)
-          );
+      if (mode === "updated-desc") {
+        return (
+          compareTimestampDesc(left.updatedAt, right.updatedAt) ||
+          compareTimestampDesc(left.createdAt, right.createdAt) ||
+          compareSourceFilenames(left, right)
+        );
       }
+
+      if (mode === "filename-asc") {
+        return (
+          compareSourceFilenames(left, right) ||
+          compareTimestampDesc(left.createdAt, right.createdAt)
+        );
+      }
+
+      return (
+        compareTimestampDesc(left.createdAt, right.createdAt) ||
+        compareSourceFilenames(left, right)
+      );
     });
 
     return nextItems;
@@ -1063,9 +1063,7 @@
     }
   }
 
-  async function submitFileImport(payload: {
-    files: File[];
-  }) {
+  async function submitFileImport(payload: { files: File[] }) {
     if (!activeCollection.value) {
       error.value = "请先选择一个资料文件夹";
       return;
@@ -1164,9 +1162,7 @@
   }
 
   async function deleteSource(source: KnowledgeSource) {
-    const accepted = window.confirm(
-      `确认删除资料“${source.sourceFilename}”？`,
-    );
+    const accepted = window.confirm(`确认删除资料“${source.sourceFilename}”？`);
 
     if (!accepted) {
       return;

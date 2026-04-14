@@ -173,7 +173,10 @@ async function runKnowledgeSourceImport(args: {
       userId: args.userId,
       sourceId: source.id,
       documentId,
-      content: source.source_type !== "file" ? source.content ?? undefined : undefined,
+      content:
+        source.source_type !== "file"
+          ? (source.content ?? undefined)
+          : undefined,
       mimeType: source.mime_type ?? undefined,
       byteSize:
         source.byte_size === null || source.byte_size === undefined

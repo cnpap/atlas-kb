@@ -11,7 +11,7 @@ import type {
   WorkspaceFilesystem,
   WriteOptions,
 } from "@mastra/core/workspace";
-import { extractContentFromBytes } from "./tika";
+import { extractContentFromBytes, isEmptyExtractedContentError } from "./tika";
 
 const EXTRACTABLE_EXTENSIONS = new Set(["pdf", "docx", "xlsx"]);
 const EXTRACTABLE_MIME_TYPES = new Set([
@@ -21,6 +21,12 @@ const EXTRACTABLE_MIME_TYPES = new Set([
 ]);
 
 const RAW_WORKSPACE_FILESYSTEM = Symbol("atlas-kb.raw-workspace-filesystem");
+
+export type EmptyExtractedContentMode = "throw" | "empty";
+
+type KnowledgeFilesystemReadOptions = {
+  emptyExtractedContent?: EmptyExtractedContentMode;
+};
 
 function getPathExtension(path: string): string | null {
   const sanitized = path.split("?")[0]?.split("#")[0] ?? path;
@@ -113,8 +119,12 @@ class TikaContentProxyFilesystem implements WorkspaceFilesystem {
   public readonly displayName: string | undefined;
   public readonly description: string | undefined;
   public readonly [RAW_WORKSPACE_FILESYSTEM]: WorkspaceFilesystem;
+  private readonly emptyExtractedContent: EmptyExtractedContentMode;
 
-  public constructor(private readonly filesystem: WorkspaceFilesystem) {
+  public constructor(
+    private readonly filesystem: WorkspaceFilesystem,
+    options: KnowledgeFilesystemReadOptions = {},
+  ) {
     this.id = `${filesystem.id}-content-proxy`;
     this.provider = filesystem.provider;
     this.readOnly = filesystem.readOnly;
@@ -122,6 +132,7 @@ class TikaContentProxyFilesystem implements WorkspaceFilesystem {
     this.displayName = filesystem.displayName;
     this.description = filesystem.description;
     this[RAW_WORKSPACE_FILESYSTEM] = filesystem;
+    this.emptyExtractedContent = options.emptyExtractedContent ?? "throw";
   }
 
   public get status() {
@@ -165,8 +176,14 @@ class TikaContentProxyFilesystem implements WorkspaceFilesystem {
     void options;
 
     const upstream = this.filesystem.getInstructions?.() ?? "";
-    const proxyInstructions =
-      "读取 pdf、docx、xlsx 时会直接返回 Tika 提取后的文本结果，而不是原始二进制。";
+    const proxyInstructions = [
+      "读取 pdf、docx、xlsx 时会直接返回 Tika 提取后的文本结果，而不是原始二进制。",
+      this.emptyExtractedContent === "empty"
+        ? "如果文档无法提取出文本，会返回空内容。"
+        : "",
+    ]
+      .filter(Boolean)
+      .join("");
 
     return upstream ? `${upstream}\n\n${proxyInstructions}` : proxyInstructions;
   }
@@ -187,11 +204,24 @@ class TikaContentProxyFilesystem implements WorkspaceFilesystem {
     }
 
     const fileContent = await this.filesystem.readFile(path);
-    const extracted = await extractContentFromBytes({
-      bytes: toUint8Array(fileContent),
-      fileName: deriveFileName(path),
-      mimeType: stat.mimeType ?? deriveMimeType(path),
-    });
+    let extracted: Awaited<ReturnType<typeof extractContentFromBytes>>;
+
+    try {
+      extracted = await extractContentFromBytes({
+        bytes: toUint8Array(fileContent),
+        fileName: deriveFileName(path),
+        mimeType: stat.mimeType ?? deriveMimeType(path),
+      });
+    } catch (error) {
+      if (
+        this.emptyExtractedContent === "empty" &&
+        isEmptyExtractedContentError(error)
+      ) {
+        return toReadFileResult("", options?.encoding);
+      }
+
+      throw error;
+    }
 
     return toReadFileResult(extracted.text, options?.encoding);
   }
@@ -260,6 +290,7 @@ class TikaContentProxyFilesystem implements WorkspaceFilesystem {
 
 export function wrapKnowledgeFilesystemForReading(
   filesystem: WorkspaceFilesystem,
+  options?: KnowledgeFilesystemReadOptions,
 ): WorkspaceFilesystem {
   if (
     (
@@ -271,5 +302,5 @@ export function wrapKnowledgeFilesystemForReading(
     return filesystem;
   }
 
-  return new TikaContentProxyFilesystem(filesystem);
+  return new TikaContentProxyFilesystem(filesystem, options);
 }

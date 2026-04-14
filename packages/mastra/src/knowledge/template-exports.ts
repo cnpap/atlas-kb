@@ -38,6 +38,7 @@ import {
   unwrapContentProxyFilesystem,
   wrapKnowledgeFilesystemForReading,
 } from "./content-proxy";
+import { isEmptyExtractedContentError } from "./tika";
 
 const TEMPLATE_EXPORT_TIMEOUT_MESSAGE = "模板导出超时，请稍后重试。";
 const TEMPLATE_EXPORT_SOURCE_MOUNT_PATH = "/source";
@@ -47,12 +48,22 @@ const TEMPLATE_EXPORT_INDEX_CHUNK_OVERLAP_CHARS = 200;
 const TEMPLATE_EXPORT_AGENT_MAX_STEPS = 24;
 const TEMPLATE_EXPORT_READ_FILE_MAX_TOKENS = 8_000;
 const TEMPLATE_EXPORT_LIST_FILES_MAX_TOKENS = 3_000;
+const LEARNED_TEXT_EMPTY_MESSAGE = "提取后没有可学习的文本内容";
+const LEARNED_CHUNKS_EMPTY_MESSAGE = "提取后没有可学习的文本分块";
 
 type TemplateReferenceLibraryMount = {
+  files: TemplateReferenceLibraryFile[];
   id: string;
   mountPath: string;
   name: string;
   storagePrefix: string;
+};
+
+type TemplateReferenceLibraryFile = {
+  byteSize?: number;
+  mimeType?: string;
+  sourceFilename: string;
+  sourcePath: string;
 };
 
 type TemplateIndexedFile = {
@@ -62,11 +73,18 @@ type TemplateIndexedFile = {
   relativePath: string;
 };
 
+type TemplateSkippedFile = {
+  originalPath: string;
+  reason: string;
+  relativePath: string;
+};
+
 type TemplateIndexedLibrary = {
   files: TemplateIndexedFile[];
   id: string;
   mountPath: string;
   name: string;
+  skippedFiles: TemplateSkippedFile[];
   storagePrefix: string;
 };
 
@@ -167,16 +185,19 @@ function hasMountPathConflict(left: string, right: string): boolean {
 
 function buildReferenceLibraryMounts(args: {
   template: KnowledgeTemplateDetail;
-  userId: string;
 }): {
   libraries: TemplateReferenceLibraryMount[];
-  mounts: Record<string, WorkspaceFilesystem>;
 } {
-  const mounts: Record<string, WorkspaceFilesystem> = {};
   const libraries: TemplateReferenceLibraryMount[] = [];
   const registeredPaths = [TEMPLATE_EXPORT_SOURCE_MOUNT_PATH];
 
   for (const library of args.template.referenceLibraries) {
+    const files = library.files ?? [];
+
+    if (files.length === 0) {
+      continue;
+    }
+
     const mountPath = normalizeReferenceMountPath(library.storagePrefix);
 
     if (registeredPaths.some((path) => hasMountPathConflict(path, mountPath))) {
@@ -186,12 +207,8 @@ function buildReferenceLibraryMounts(args: {
     }
 
     registeredPaths.push(mountPath);
-    mounts[mountPath] = createKnowledgeStoragePrefixFilesystem({
-      userId: args.userId,
-      storagePrefix: library.storagePrefix,
-      readOnly: true,
-    });
     libraries.push({
+      files,
       id: library.id,
       name: library.name,
       mountPath,
@@ -200,7 +217,6 @@ function buildReferenceLibraryMounts(args: {
   }
 
   return {
-    mounts,
     libraries,
   };
 }
@@ -289,6 +305,126 @@ function toPathRelativeToMount(path: string, mountPath: string): string {
   }
 
   return normalizedPath.slice(normalizedMount.length + 1);
+}
+
+function normalizeStorageObjectPath(path: string): string {
+  const segments = normalizePathSegments(path);
+
+  if (
+    segments.length === 0 ||
+    segments.some((segment) => segment === "." || segment === "..")
+  ) {
+    throw new BadRequestError(`模板资料库文件路径无效：${path}`);
+  }
+
+  return segments.join("/");
+}
+
+function getReferenceFileRelativePath(args: {
+  file: TemplateReferenceLibraryFile;
+  library: TemplateReferenceLibraryMount;
+}): string {
+  const storagePrefix = normalizeStorageObjectPath(args.library.storagePrefix);
+  const sourcePath = normalizeStorageObjectPath(args.file.sourcePath);
+
+  if (
+    sourcePath !== storagePrefix &&
+    !sourcePath.startsWith(`${storagePrefix}/`)
+  ) {
+    throw new BadRequestError(
+      buildTemplateExportErrorMessage({
+        libraryName: args.library.name,
+        storagePrefix: args.library.storagePrefix,
+        message: ` 文件 ${args.file.sourcePath} 不在模板资料库存储前缀 ${args.library.storagePrefix} 内`,
+      }),
+    );
+  }
+
+  const relativePath = sourcePath
+    .slice(storagePrefix.length)
+    .replace(/^\/+/g, "");
+
+  if (!relativePath) {
+    throw new BadRequestError(
+      buildTemplateExportErrorMessage({
+        libraryName: args.library.name,
+        storagePrefix: args.library.storagePrefix,
+        message: ` 文件 ${args.file.sourcePath} 缺少相对文件路径`,
+      }),
+    );
+  }
+
+  return relativePath;
+}
+
+function buildReferenceWorkspaceFilePath(args: {
+  file: TemplateReferenceLibraryFile;
+  library: TemplateReferenceLibraryMount;
+}): string {
+  return `${args.library.mountPath}/${getReferenceFileRelativePath(args)}`;
+}
+
+async function createProjectedReferenceFilesystem(args: {
+  library: TemplateReferenceLibraryMount;
+  tempDir: string;
+  userId: string;
+}): Promise<WorkspaceFilesystem> {
+  const projectedBasePath = join(
+    args.tempDir,
+    "reference-mounts",
+    ...normalizePathSegments(args.library.storagePrefix),
+  );
+  const storageFilesystem = unwrapContentProxyFilesystem(
+    createKnowledgeStoragePrefixFilesystem({
+      userId: args.userId,
+      storagePrefix: args.library.storagePrefix,
+      readOnly: true,
+    }),
+  );
+
+  await mkdirFs(projectedBasePath, {
+    recursive: true,
+  });
+
+  for (const file of args.library.files) {
+    const relativePath = getReferenceFileRelativePath({
+      file,
+      library: args.library,
+    });
+    const projectedAbsolutePath = toProjectedAbsolutePath(
+      projectedBasePath,
+      relativePath,
+    );
+
+    try {
+      const fileContent = await storageFilesystem.readFile(relativePath);
+      await mkdirFs(dirname(projectedAbsolutePath), {
+        recursive: true,
+      });
+      await writeFsFile(projectedAbsolutePath, fileContent);
+    } catch (error) {
+      throw new BadRequestError(
+        buildTemplateExportErrorMessage({
+          filePath: `${args.library.mountPath}/${relativePath}`,
+          libraryName: args.library.name,
+          storagePrefix: args.library.storagePrefix,
+          message: ` 读取失败：${error instanceof Error ? error.message : String(error)}`,
+        }),
+        error,
+      );
+    }
+  }
+
+  return wrapKnowledgeFilesystemForReading(
+    new LocalFilesystem({
+      id: `template-export-reference:${args.userId}:${args.library.id}`,
+      basePath: projectedBasePath,
+      readOnly: true,
+    }),
+    {
+      emptyExtractedContent: "empty",
+    },
+  );
 }
 
 function splitLearnedTextIntoChunks(text: string): string[] {
@@ -391,6 +527,7 @@ async function readLearnedTextFile(args: {
         storagePrefix: args.storagePrefix,
         message: ` 读取失败：${error instanceof Error ? error.message : String(error)}`,
       }),
+      error,
     );
   }
 
@@ -402,7 +539,7 @@ async function readLearnedTextFile(args: {
         filePath: args.filePath,
         libraryName: args.libraryName,
         storagePrefix: args.storagePrefix,
-        message: " 提取后没有可学习的文本内容",
+        message: ` ${LEARNED_TEXT_EMPTY_MESSAGE}`,
       }),
     );
   }
@@ -448,7 +585,7 @@ async function indexLearnedFile(args: {
         filePath: args.filePath,
         libraryName: args.libraryName,
         storagePrefix: args.storagePrefix,
-        message: " 提取后没有可学习的文本分块",
+        message: ` ${LEARNED_CHUNKS_EMPTY_MESSAGE}`,
       }),
     );
   }
@@ -500,61 +637,92 @@ async function indexLearnedFile(args: {
   };
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function getErrorCause(error: unknown): unknown {
+  return error instanceof Error ? error.cause : undefined;
+}
+
+function isSkippableReferenceFileError(error: unknown): boolean {
+  if (isEmptyExtractedContentError(error)) {
+    return true;
+  }
+
+  if (isEmptyExtractedContentError(getErrorCause(error))) {
+    return true;
+  }
+
+  return (
+    error instanceof BadRequestError &&
+    (error.message.includes(LEARNED_TEXT_EMPTY_MESSAGE) ||
+      error.message.includes(LEARNED_CHUNKS_EMPTY_MESSAGE))
+  );
+}
+
 async function prepareReferenceLibrary(args: {
   library: TemplateReferenceLibraryMount;
   workspace: AnyWorkspace;
 }): Promise<TemplateIndexedLibrary> {
-  let files: string[];
-
-  try {
-    files = await listFilesRecursively({
-      filesystem: args.workspace.filesystem,
-      rootPath: args.library.mountPath,
-    });
-  } catch (error) {
-    throw new BadRequestError(
-      buildTemplateExportErrorMessage({
-        libraryName: args.library.name,
-        storagePrefix: args.library.storagePrefix,
-        message: ` 挂载后无法遍历：${error instanceof Error ? error.message : String(error)}`,
-      }),
-    );
-  }
-
-  if (files.length === 0) {
-    throw new BadRequestError(
-      buildTemplateExportErrorMessage({
-        libraryName: args.library.name,
-        storagePrefix: args.library.storagePrefix,
-        message: " 挂载后没有任何可学习文件",
-      }),
-    );
-  }
-
   const preparedFiles: TemplateIndexedFile[] = [];
+  const skippedFiles: TemplateSkippedFile[] = [];
 
-  for (const filePath of files) {
-    preparedFiles.push(
-      await indexLearnedFile({
-        workspace: args.workspace,
-        filePath,
-        relativePath: toPathRelativeToMount(filePath, args.library.mountPath),
-        libraryName: args.library.name,
-        storagePrefix: args.library.storagePrefix,
-        metadata: {
-          contextKind: "reference-library",
-          libraryId: args.library.id,
-          libraryName: args.library.name,
-          mountPath: args.library.mountPath,
-          storagePrefix: args.library.storagePrefix,
-        },
-      }),
+  for (const file of args.library.files) {
+    const filePath = buildReferenceWorkspaceFilePath({
+      file,
+      library: args.library,
+    });
+    const relativePath = toPathRelativeToMount(
+      filePath,
+      args.library.mountPath,
     );
+
+    try {
+      preparedFiles.push(
+        await indexLearnedFile({
+          workspace: args.workspace,
+          filePath,
+          relativePath,
+          libraryName: args.library.name,
+          storagePrefix: args.library.storagePrefix,
+          metadata: {
+            contextKind: "reference-library",
+            libraryId: args.library.id,
+            libraryName: args.library.name,
+            mountPath: args.library.mountPath,
+            sourceFilename: file.sourceFilename,
+            sourceMimeType: file.mimeType,
+            sourcePath: file.sourcePath,
+            storagePrefix: args.library.storagePrefix,
+          },
+        }),
+      );
+    } catch (error) {
+      if (!isSkippableReferenceFileError(error)) {
+        throw error;
+      }
+
+      const skippedFile = {
+        originalPath: filePath,
+        relativePath,
+        reason: getErrorMessage(error),
+      };
+
+      skippedFiles.push(skippedFile);
+      console.warn("[template-export] reference_file_skipped", {
+        filePath,
+        libraryName: args.library.name,
+        reason: skippedFile.reason,
+        storagePrefix: args.library.storagePrefix,
+      });
+    }
   }
 
   return {
     ...args.library,
     files: preparedFiles,
+    skippedFiles,
   };
 }
 
@@ -571,7 +739,7 @@ function buildDirectoryMappings(args: {
   if (args.libraries.length > 0) {
     lines.push("- 参考资料挂载目录：");
   } else {
-    lines.push("- 当前模板未配置参考资料库。");
+    lines.push("- 当前没有可挂载的参考资料文件。");
   }
 
   for (const library of args.libraries) {
@@ -602,7 +770,6 @@ async function prepareTemplateExportContext(args: {
   const sourcePath = `${TEMPLATE_EXPORT_SOURCE_MOUNT_PATH}/${sourceRelativePath}`;
   const referenceLibraries = buildReferenceLibraryMounts({
     template: args.template,
-    userId: args.userId,
   });
   const tempDir = await mkdtemp(join(tmpdir(), "atlas-kb-template-export-"));
   const searchIndexName = buildTemplateExportSearchIndexName({
@@ -620,12 +787,23 @@ async function prepareTemplateExportContext(args: {
     sourceRelativePaths: [sourceRelativePath],
     tempDir,
   });
+  const referenceMounts: Record<string, WorkspaceFilesystem> = {};
+
+  for (const library of referenceLibraries.libraries) {
+    referenceMounts[library.mountPath] =
+      await createProjectedReferenceFilesystem({
+        library,
+        tempDir,
+        userId: args.userId,
+      });
+  }
+
   const workspace = new Workspace({
     id: `template-export:${args.userId}:${args.source.id}:${args.template.id}`,
     name: `${args.template.name} Export Workspace`,
     mounts: {
       [TEMPLATE_EXPORT_SOURCE_MOUNT_PATH]: projectedSourceFilesystem,
-      ...referenceLibraries.mounts,
+      ...referenceMounts,
     },
     tools: {
       [WORKSPACE_TOOLS.FILESYSTEM.READ_FILE]: {
@@ -663,6 +841,7 @@ async function prepareTemplateExportContext(args: {
     userId: args.userId,
     referenceLibraries: referenceLibraries.libraries.map((library) => ({
       id: library.id,
+      fileCount: library.files.length,
       mountPath: library.mountPath,
       name: library.name,
       storagePrefix: library.storagePrefix,
@@ -705,6 +884,8 @@ async function prepareTemplateExportContext(args: {
       name: library.name,
       storagePrefix: library.storagePrefix,
       fileCount: library.files.length,
+      skippedFileCount: library.skippedFiles.length,
+      skippedFiles: library.skippedFiles.map((file) => file.originalPath),
       totalChunkCount: library.files.reduce(
         (sum, file) => sum + file.chunkCount,
         0,
@@ -726,6 +907,10 @@ async function prepareTemplateExportContext(args: {
     totalLearnedFileCount:
       1 +
       preparedLibraries.reduce((sum, library) => sum + library.files.length, 0),
+    totalSkippedReferenceFileCount: preparedLibraries.reduce(
+      (sum, library) => sum + library.skippedFiles.length,
+      0,
+    ),
     userId: args.userId,
   });
 

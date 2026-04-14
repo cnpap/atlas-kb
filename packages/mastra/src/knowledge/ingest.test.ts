@@ -99,7 +99,9 @@ describe.serial("knowledge ingest", () => {
       }
 
       if (url.includes(":6333")) {
-        return jsonResponse(buildMockQdrantResponse(url, init?.method || "GET"));
+        return jsonResponse(
+          buildMockQdrantResponse(url, init?.method || "GET"),
+        );
       }
 
       return jsonResponse({
@@ -342,7 +344,9 @@ describe.serial("knowledge ingest", () => {
       }
 
       if (url.includes(":6333")) {
-        return jsonResponse(buildMockQdrantResponse(url, init?.method || "GET"));
+        return jsonResponse(
+          buildMockQdrantResponse(url, init?.method || "GET"),
+        );
       }
 
       return jsonResponse({
@@ -456,7 +460,9 @@ describe.serial("knowledge ingest", () => {
       }
 
       if (url.includes(":6333")) {
-        return jsonResponse(buildMockQdrantResponse(url, init?.method || "GET"));
+        return jsonResponse(
+          buildMockQdrantResponse(url, init?.method || "GET"),
+        );
       }
 
       return jsonResponse({

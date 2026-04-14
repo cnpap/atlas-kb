@@ -11,6 +11,26 @@ type ExtractedTikaContent = {
   textLength: number;
 };
 
+export const EMPTY_EXTRACTED_CONTENT_MESSAGE = "当前文件没有可索引的文本内容";
+
+export class EmptyExtractedContentError extends Error {
+  public constructor() {
+    super(EMPTY_EXTRACTED_CONTENT_MESSAGE);
+    this.name = "EmptyExtractedContentError";
+  }
+}
+
+export function isEmptyExtractedContentError(
+  error: unknown,
+): error is EmptyExtractedContentError {
+  return (
+    error instanceof EmptyExtractedContentError ||
+    (error instanceof Error &&
+      error.name === "EmptyExtractedContentError" &&
+      error.message === EMPTY_EXTRACTED_CONTENT_MESSAGE)
+  );
+}
+
 function normalizeText(text: string): string {
   return text.replace(/\r\n?/g, "\n").trim();
 }
@@ -80,7 +100,7 @@ export async function extractContentFromBytes(args: {
   const text = normalizeText(document?.["X-TIKA:content"] ?? "");
 
   if (!text) {
-    throw new Error("当前文件没有可索引的文本内容");
+    throw new EmptyExtractedContentError();
   }
 
   return {

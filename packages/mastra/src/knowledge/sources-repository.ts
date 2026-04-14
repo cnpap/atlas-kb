@@ -115,10 +115,7 @@ export async function listAutoRetryableFailedKnowledgeSources(args?: {
     query = query.where("updated_at", "<=", retryBefore);
   }
 
-  const rows = await query
-    .orderBy("updated_at", "asc")
-    .limit(limit)
-    .execute();
+  const rows = await query.orderBy("updated_at", "asc").limit(limit).execute();
 
   return rows.map((row) => ({
     sourceId: row.id,
@@ -209,9 +206,11 @@ export async function createKnowledgeSourceRecord(params: {
     values.title = params.sourceFilename.trim();
   }
 
-  await (db.insertInto("kb_sources") as never as {
-    values(input: Record<string, unknown>): { execute(): Promise<unknown> };
-  })
+  await (
+    db.insertInto("kb_sources") as never as {
+      values(input: Record<string, unknown>): { execute(): Promise<unknown> };
+    }
+  )
     .values(values)
     .execute();
 
@@ -261,15 +260,25 @@ export async function replaceSourceContent(params: {
     values.title = params.sourceFilename.trim();
   }
 
-  await (db.updateTable("kb_sources") as never as {
-    set(input: Record<string, unknown>): {
-      where(column: string, op: string, value: string): {
-        where(column: string, op: string, value: string): {
-          execute(): Promise<unknown>;
+  await (
+    db.updateTable("kb_sources") as never as {
+      set(input: Record<string, unknown>): {
+        where(
+          column: string,
+          op: string,
+          value: string,
+        ): {
+          where(
+            column: string,
+            op: string,
+            value: string,
+          ): {
+            execute(): Promise<unknown>;
+          };
         };
       };
-    };
-  })
+    }
+  )
     .set(values)
     .where("owner_user_id", "=", toDbUserId(params.userId))
     .where("id", "=", params.sourceId)

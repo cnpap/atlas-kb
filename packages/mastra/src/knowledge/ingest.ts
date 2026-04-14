@@ -355,8 +355,7 @@ export async function importKnowledgeFiles(args: {
         userId: args.userId,
         collectionId: args.collectionId,
         file,
-        input: {
-        },
+        input: {},
       });
 
       results.push({
@@ -441,7 +440,8 @@ export async function updateKnowledgeSource(
     collectionId: source.collectionId,
   });
   const currentContent = isContentEditable
-    ? source.content?.trim() || (await readWorkspaceTextContent({ documentId, workspace }))
+    ? source.content?.trim() ||
+      (await readWorkspaceTextContent({ documentId, workspace }))
     : undefined;
   const nextContent =
     input.content !== undefined ? input.content.trim() : currentContent;
@@ -509,7 +509,7 @@ export async function updateKnowledgeSource(
         mimeType: source.mimeType,
         byteSize: isContentEditable
           ? new TextEncoder().encode(nextContent!).byteLength
-          : source.byteSize ?? undefined,
+          : (source.byteSize ?? undefined),
         sourceFilename: nextSourceFilename,
         indexChunkCount: 0,
         status: "processing",

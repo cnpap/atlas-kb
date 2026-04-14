@@ -90,7 +90,8 @@
         return;
       }
 
-      const resolvedFileName = source?.sourceFilename || source?.documentId || "";
+      const resolvedFileName =
+        source?.sourceFilename || source?.documentId || "";
       const nextFileName = splitFileName(resolvedFileName);
       fileNameStem.value = nextFileName.stem;
       fileNameExtension.value = nextFileName.extension;
