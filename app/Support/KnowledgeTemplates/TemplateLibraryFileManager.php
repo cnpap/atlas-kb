@@ -39,10 +39,13 @@ class TemplateLibraryFileManager
         $sourceFilename = $this->sanitizeSourceFilename($file->getClientOriginalName());
         $mimeType = (string) ($file->getMimeType() ?: 'application/octet-stream');
         $sourceDisk = $this->disk();
+        $extension = strtolower(pathinfo($sourceFilename, PATHINFO_EXTENSION));
         $sourcePath = implode('/', array_filter([
             $library->storage_prefix,
             now()->format('Y/m/d'),
-            Str::uuid().'-'.$sourceFilename,
+            $extension !== ''
+                ? Str::uuid().'.'.$extension
+                : (string) Str::uuid(),
         ]));
 
         $stream = fopen($realPath, 'rb');

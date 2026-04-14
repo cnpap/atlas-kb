@@ -87,6 +87,8 @@ test('library files relation manager can upload multiple files and delete a file
 
     foreach ($storedFiles as $storedFile) {
         Storage::disk('kb_templates')->assertExists($storedFile->source_path);
+        expect($storedFile->source_path)->toStartWith('ops/policies/'.now()->format('Y/m/d').'/')
+            ->not->toContain($storedFile->source_filename);
     }
 
     $fileToDelete = $storedFiles->first();
