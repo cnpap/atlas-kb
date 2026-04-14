@@ -5,6 +5,7 @@ namespace App\Http\Resources\Internal;
 use App\Models\KnowledgeTemplate;
 use App\Models\KnowledgeTemplateField;
 use App\Models\KnowledgeTemplateLibrary;
+use App\Models\KnowledgeTemplateLibraryFile;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -36,6 +37,17 @@ class InternalKnowledgeTemplateDetailResource extends JsonResource
                         'name' => $library->name,
                         'storagePrefix' => $library->storage_prefix,
                         'fileCount' => $library->files->count(),
+                        'files' => $library->files
+                            ->map(function (KnowledgeTemplateLibraryFile $file): array {
+                                return [
+                                    'sourcePath' => $file->source_path,
+                                    'sourceFilename' => $file->source_filename,
+                                    'mimeType' => $file->mime_type,
+                                    'byteSize' => $file->byte_size,
+                                ];
+                            })
+                            ->values()
+                            ->all(),
                     ];
                 })
                 ->all(),

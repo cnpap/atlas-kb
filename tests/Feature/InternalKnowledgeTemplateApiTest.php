@@ -7,9 +7,12 @@ use App\Models\KnowledgeTemplateField;
 use App\Models\KnowledgeTemplateLibrary;
 use App\Models\KnowledgeTemplateLibraryFile;
 use App\Models\KnowledgeUser;
+use App\Support\AtlasKb\AtlasKbAgentClient;
 use App\Support\KnowledgeTemplates\TemplateExportService;
 use Carbon\CarbonImmutable;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 
 function atlasKbInternalHeaders(): array
 {
@@ -91,6 +94,10 @@ test('internal template detail returns atlas-kb contract with camel case fields'
 
     KnowledgeTemplateLibraryFile::factory()->create([
         'library_id' => $library->getKey(),
+        'source_path' => 'ops/rules/2026/04/guide.pdf',
+        'source_filename' => 'guide.pdf',
+        'mime_type' => 'application/pdf',
+        'byte_size' => 4096,
     ]);
 
     $response = $this
@@ -105,9 +112,119 @@ test('internal template detail returns atlas-kb contract with camel case fields'
         ->assertJsonPath('data.referenceLibraries.0.name', '规章制度库')
         ->assertJsonPath('data.referenceLibraries.0.storagePrefix', 'ops/rules')
         ->assertJsonPath('data.referenceLibraries.0.fileCount', 1)
+        ->assertJsonPath('data.referenceLibraries.0.files.0.sourcePath', 'ops/rules/2026/04/guide.pdf')
+        ->assertJsonPath('data.referenceLibraries.0.files.0.sourceFilename', 'guide.pdf')
         ->assertJsonMissingPath('data.system_prompt')
         ->assertJsonMissingPath('data.reference_libraries')
         ->assertJsonMissingPath('data.fields.0.locations');
+});
+
+test('atlas kb agent client sends current reference library file list', function () {
+    config()->set('atlas-kb.api_base_url', 'http://atlas-kb.test');
+    config()->set('atlas-kb.internal_secret', 'atlas-kb-test-secret');
+
+    $knowledgeUser = KnowledgeUser::factory()->create();
+    $template = createReadyInternalTemplate([
+        'name' => '拟办模板',
+        'system_prompt' => '请结合资料内容和参考资料库生成拟办意见。',
+    ]);
+
+    KnowledgeTemplateField::factory()->create([
+        'template_id' => $template->getKey(),
+        'name' => 'opinion',
+        'placeholder_name' => 'opinion',
+        'label' => '拟办意见',
+        'description' => '给出拟办建议',
+        'sort_order' => 1,
+    ]);
+
+    $library = KnowledgeTemplateLibrary::factory()->create([
+        'name' => '规章制度库',
+        'storage_prefix' => 'ops/rules',
+    ]);
+    $template->referenceLibraries()->attach($library->getKey());
+
+    KnowledgeTemplateLibraryFile::factory()->create([
+        'library_id' => $library->getKey(),
+        'source_path' => 'ops/rules/2026/04/guide.pdf',
+        'source_filename' => 'guide.pdf',
+        'mime_type' => 'application/pdf',
+        'byte_size' => 4096,
+    ]);
+
+    DB::table('kb_collections')->insert([
+        'id' => 'agent-client-collection',
+        'owner_user_id' => $knowledgeUser->getKey(),
+        'name' => '资料库',
+        'description' => '资料库描述',
+        'color' => '#0f766e',
+        'icon' => 'i-lucide-library',
+        'is_pinned' => false,
+        'created_at' => CarbonImmutable::create(2026, 4, 7, 15, 9, 0, 'UTC'),
+        'updated_at' => CarbonImmutable::create(2026, 4, 7, 15, 9, 0, 'UTC'),
+        'last_activity_at' => CarbonImmutable::create(2026, 4, 7, 15, 9, 0, 'UTC'),
+    ]);
+
+    DB::table('kb_sources')->insert([
+        'id' => 'source-1',
+        'owner_user_id' => $knowledgeUser->getKey(),
+        'collection_id' => 'agent-client-collection',
+        'document_id' => 'source-1.pdf',
+        'content' => '资料正文',
+        'source_type' => 'file',
+        'status' => 'ready',
+        'source_filename' => 'source-1.pdf',
+        'mime_type' => 'application/pdf',
+        'byte_size' => 16,
+        'failure_message' => null,
+        'created_at' => CarbonImmutable::create(2026, 4, 7, 15, 10, 0, 'UTC'),
+        'updated_at' => CarbonImmutable::create(2026, 4, 7, 15, 10, 0, 'UTC'),
+    ]);
+
+    $task = KnowledgeTemplateExportTask::query()->create([
+        'owner_user_id' => $knowledgeUser->getKey(),
+        'source_id' => 'source-1',
+        'source_filename' => 'source-1.pdf',
+        'task_type' => 'template',
+        'template_id' => $template->getKey(),
+        'template_name' => $template->name,
+        'status' => KnowledgeTemplateExportTask::STATUS_PENDING,
+    ]);
+
+    $template->load(['fields', 'referenceLibraries.files']);
+
+    Http::fake([
+        'http://atlas-kb.test/api/kb/internal/template-export-tasks/generate' => Http::response([
+            'data' => [
+                'result' => [
+                    'parameters' => [
+                        'opinion' => '建议按制度办理。',
+                    ],
+                    'citations' => [],
+                ],
+            ],
+        ]),
+    ]);
+
+    app(AtlasKbAgentClient::class)->generateExportPayload(
+        $task,
+        $template,
+        $knowledgeUser,
+    );
+
+    Http::assertSent(function (Request $request): bool {
+        $data = $request->data();
+        $files = data_get($data, 'template.referenceLibraries.0.files');
+
+        return $request->url() === 'http://atlas-kb.test/api/kb/internal/template-export-tasks/generate'
+            && data_get($data, 'template.referenceLibraries.0.storagePrefix') === 'ops/rules'
+            && is_array($files)
+            && count($files) === 1
+            && $files[0]['sourcePath'] === 'ops/rules/2026/04/guide.pdf'
+            && $files[0]['sourceFilename'] === 'guide.pdf'
+            && $files[0]['mimeType'] === 'application/pdf'
+            && $files[0]['byteSize'] === 4096;
+    });
 });
 
 test('internal export task list returns atlas-kb contract with utc z timestamps', function () {

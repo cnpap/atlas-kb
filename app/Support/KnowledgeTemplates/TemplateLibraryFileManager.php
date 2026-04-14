@@ -76,7 +76,11 @@ class TemplateLibraryFileManager
 
     public function deleteStoredFile(string $disk, string $path): void
     {
-        Storage::disk($disk)->delete($path);
+        $deleted = Storage::disk($disk)->delete($path);
+
+        if (! $deleted) {
+            throw new RuntimeException("资料文件从对象存储删除失败：{$path}");
+        }
     }
 
     public function deleteLibraryFiles(KnowledgeTemplateLibrary $library): void

@@ -7,6 +7,7 @@ use App\Filament\Resources\KnowledgeTemplateLibraries\RelationManagers\FilesRela
 use App\Models\KnowledgeTemplateLibrary;
 use App\Models\KnowledgeTemplateLibraryFile;
 use App\Models\User;
+use App\Support\KnowledgeTemplates\TemplateLibraryFileManager;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
@@ -101,6 +102,26 @@ test('library files relation manager can upload multiple files and delete a file
 
     Storage::disk('kb_templates')->assertMissing($fileToDelete->source_path);
     expect(KnowledgeTemplateLibraryFile::query()->whereKey($fileToDelete->getKey())->exists())->toBeFalse();
+});
+
+test('reference library file deletion reports object storage failures', function () {
+    Storage::shouldReceive('disk')
+        ->once()
+        ->with('kb_templates')
+        ->andReturn(new class
+        {
+            public function delete(string $path): bool
+            {
+                expect($path)->toBe('ops/policies/missing.pdf');
+
+                return false;
+            }
+        });
+
+    expect(fn () => app(TemplateLibraryFileManager::class)->deleteStoredFile(
+        'kb_templates',
+        'ops/policies/missing.pdf',
+    ))->toThrow(RuntimeException::class, '资料文件从对象存储删除失败');
 });
 
 test('non admin users cannot access the knowledge template library resource', function () {

@@ -56,6 +56,12 @@ class AtlasKbAgentClient
                         'name' => $library->name,
                         'storagePrefix' => $library->storage_prefix,
                         'fileCount' => $library->files->count(),
+                        'files' => $library->files->map(fn ($file): array => [
+                            'sourcePath' => $file->source_path,
+                            'sourceFilename' => $file->source_filename,
+                            'mimeType' => $file->mime_type,
+                            'byteSize' => $file->byte_size,
+                        ])->values()->all(),
                     ])->values()->all(),
                 ],
             ]);
