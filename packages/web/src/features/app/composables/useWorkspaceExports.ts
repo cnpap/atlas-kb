@@ -7,17 +7,24 @@ import type {
 } from "@atlas-kb/schema";
 import { computed, onBeforeUnmount, ref } from "vue";
 import {
+  cancelKnowledgeExportTaskRequest,
   createKnowledgeExportTaskRequest,
+  deleteKnowledgeExportTaskRequest,
   fetchKnowledgeExportTaskRequest,
   listKnowledgeExportTasksRequest,
   listKnowledgeTemplatesRequest,
+  retryKnowledgeExportTaskRequest,
   updateKnowledgeExportTaskRequest,
 } from "@/lib/api-client";
 
 const EXPORT_POLL_INTERVAL_MS = 4_000;
 
 function isTaskInProgress(task: KnowledgeExportTask): boolean {
-  return task.status === "pending" || task.status === "processing";
+  return (
+    task.status === "pending" ||
+    task.status === "processing" ||
+    task.status === "retrying"
+  );
 }
 
 export function useWorkspaceExports(args: {
@@ -32,7 +39,9 @@ export function useWorkspaceExports(args: {
   const loadingExportTaskDetail = ref(false);
   const loadingExportTasks = ref(false);
   const savingExportTask = ref(false);
+  const exportTaskActionId = ref("");
   const showExportTaskDetailModal = ref(false);
+  const showExportTaskProcessModal = ref(false);
   const showExportTemplateModal = ref(false);
   const creatingExportTask = ref(false);
 
@@ -86,11 +95,9 @@ export function useWorkspaceExports(args: {
           selectedTaskDetail.value = detail.task;
         }
       }
-    } catch (cause) {
+    } catch {
       stopExportTaskPolling();
-      args.onError(
-        cause instanceof Error ? cause.message : "导出任务状态刷新失败",
-      );
+      args.onError("导出任务状态刷新失败，请稍后重试");
     }
   }
 
@@ -125,10 +132,10 @@ export function useWorkspaceExports(args: {
       const data = await listKnowledgeExportTasksRequest();
       exportTasks.value = data.tasks;
       ensureExportTaskPolling();
-    } catch (cause) {
+    } catch {
       exportTasks.value = [];
       stopExportTaskPolling();
-      args.onError(cause instanceof Error ? cause.message : "导出任务加载失败");
+      args.onError("导出任务加载失败，请稍后重试");
     } finally {
       loadingExportTasks.value = false;
     }
@@ -164,8 +171,8 @@ export function useWorkspaceExports(args: {
       await loadExportTasks();
       ensureExportTaskPolling();
       args.onSuccess("导出任务已提交");
-    } catch (cause) {
-      args.onError(cause instanceof Error ? cause.message : "导出任务提交失败");
+    } catch {
+      args.onError("导出任务提交失败，请稍后重试");
     } finally {
       creatingExportTask.value = false;
     }
@@ -180,11 +187,9 @@ export function useWorkspaceExports(args: {
       selectedTaskDetail.value = data.task;
       upsertTaskSummary(data.task);
       ensureExportTaskPolling();
-    } catch (cause) {
+    } catch {
       selectedTaskDetail.value = null;
-      args.onError(
-        cause instanceof Error ? cause.message : "导出任务详情加载失败",
-      );
+      args.onError("导出任务详情加载失败，请稍后重试");
     } finally {
       loadingExportTaskDetail.value = false;
     }
@@ -192,6 +197,27 @@ export function useWorkspaceExports(args: {
 
   function closeExportTaskDetailModal() {
     showExportTaskDetailModal.value = false;
+  }
+
+  async function openExportTaskProcess(taskId: string) {
+    loadingExportTaskDetail.value = true;
+    showExportTaskProcessModal.value = true;
+
+    try {
+      const data = await fetchKnowledgeExportTaskRequest(taskId);
+      selectedTaskDetail.value = data.task;
+      upsertTaskSummary(data.task);
+      ensureExportTaskPolling();
+    } catch {
+      selectedTaskDetail.value = null;
+      args.onError("导出过程加载失败，请稍后重试");
+    } finally {
+      loadingExportTaskDetail.value = false;
+    }
+  }
+
+  function closeExportTaskProcessModal() {
+    showExportTaskProcessModal.value = false;
   }
 
   async function saveExportTask(parameters: KnowledgeExportTaskParameters) {
@@ -219,12 +245,91 @@ export function useWorkspaceExports(args: {
     }
   }
 
+  async function retryExportTask(taskId: string) {
+    exportTaskActionId.value = taskId;
+
+    try {
+      const data = await retryKnowledgeExportTaskRequest({
+        taskId,
+      });
+
+      upsertTaskSummary(data.task);
+
+      if (selectedTaskDetail.value?.id === data.task.id) {
+        selectedTaskDetail.value = data.task;
+      }
+
+      ensureExportTaskPolling();
+      args.onSuccess("导出任务已重新提交");
+    } catch {
+      args.onError("导出任务重试失败，请稍后重试");
+    } finally {
+      exportTaskActionId.value = "";
+    }
+  }
+
+  async function cancelExportTask(taskId: string) {
+    exportTaskActionId.value = taskId;
+
+    try {
+      const data = await cancelKnowledgeExportTaskRequest({
+        taskId,
+      });
+
+      upsertTaskSummary(data.task);
+
+      if (selectedTaskDetail.value?.id === data.task.id) {
+        selectedTaskDetail.value = data.task;
+      }
+
+      ensureExportTaskPolling();
+      args.onSuccess("导出任务已取消");
+    } catch {
+      args.onError("导出任务取消失败，请稍后重试");
+    } finally {
+      exportTaskActionId.value = "";
+    }
+  }
+
+  async function deleteExportTask(taskId: string) {
+    exportTaskActionId.value = taskId;
+
+    try {
+      await deleteKnowledgeExportTaskRequest({
+        taskId,
+      });
+
+      exportTasks.value = exportTasks.value.filter(
+        (task) => task.id !== taskId,
+      );
+
+      if (selectedTaskDetail.value?.id === taskId) {
+        selectedTaskDetail.value = null;
+        showExportTaskDetailModal.value = false;
+        showExportTaskProcessModal.value = false;
+      }
+
+      ensureExportTaskPolling();
+      args.onSuccess("导出任务已删除");
+    } catch {
+      args.onError("导出任务删除失败，请稍后重试");
+    } finally {
+      exportTaskActionId.value = "";
+    }
+  }
+
   onBeforeUnmount(() => {
     stopExportTaskPolling();
   });
 
   return {
+    cancelExportTask,
+    closeExportTaskDetailModal,
+    closeExportTaskProcessModal,
+    closeExportTemplateModal,
     creatingExportTask,
+    deleteExportTask,
+    exportTaskActionId,
     exportTasks,
     exportTemplates,
     loadExportTasks,
@@ -232,16 +337,17 @@ export function useWorkspaceExports(args: {
     loadingExportTaskDetail,
     loadingExportTasks,
     openExportTaskDetail,
+    openExportTaskProcess,
     openExportTemplateModal,
     saveExportTask,
     selectedExportSource,
     selectedTaskDetail,
     showExportTaskDetailModal,
+    showExportTaskProcessModal,
     showExportTemplateModal,
     stopExportTaskPolling,
     submitExportTask,
-    closeExportTaskDetailModal,
-    closeExportTemplateModal,
+    retryExportTask,
     savingExportTask,
   };
 }

@@ -12,6 +12,7 @@
   import { useRoute, useRouter } from "vue-router";
   import CreateCollectionModal from "@/features/app/components/CreateCollectionModal.vue";
   import ExportTaskDetailModal from "@/features/app/components/ExportTaskDetailModal.vue";
+  import ExportTaskProcessModal from "@/features/app/components/ExportTaskProcessModal.vue";
   import ExportTemplateModal from "@/features/app/components/ExportTemplateModal.vue";
   import ImportSourcesModal from "@/features/app/components/ImportSourcesModal.vue";
   import SourceEditorModal from "@/features/app/components/SourceEditorModal.vue";
@@ -328,9 +329,12 @@
   }
 
   const {
+    cancelExportTask,
     closeExportTaskDetailModal,
     closeExportTemplateModal,
     creatingExportTask,
+    deleteExportTask,
+    exportTaskActionId,
     exportTasks,
     exportTemplates,
     loadExportTasks,
@@ -338,12 +342,15 @@
     loadingExportTaskDetail,
     loadingExportTasks,
     openExportTaskDetail,
+    openExportTaskProcess,
     openExportTemplateModal,
+    retryExportTask,
     saveExportTask,
     savingExportTask,
     selectedExportSource,
     selectedTaskDetail,
     showExportTaskDetailModal,
+    showExportTaskProcessModal,
     showExportTemplateModal,
     stopExportTaskPolling,
     submitExportTask,
@@ -1266,6 +1273,10 @@
     await openExportTaskDetail(taskId);
   }
 
+  async function handleOpenExportTaskProcess(taskId: string) {
+    await openExportTaskProcess(taskId);
+  }
+
   function handleDownloadExportTask(task: KnowledgeExportTask) {
     if (!task?.exportFile) {
       return;
@@ -1476,6 +1487,7 @@
       :can-delete-collection="collections.length > 1"
       :deleting-collection="deletingCollection"
       :deleting-role-id="deletingAssistantRoleId"
+      :export-task-action-id="exportTaskActionId"
       :export-tasks="exportTasks"
       :filtered-sources="filteredSources"
       :loading-assistant-roles="loadingAssistantRoles"
@@ -1490,7 +1502,9 @@
       :source-sort="sourceSort"
       :switching-assistant-role="switchingAssistantRole"
       @create-role="createAssistantRole"
+      @cancel-export-task="cancelExportTask"
       @delete-collection="removeCollection"
+      @delete-export-task="deleteExportTask"
       @delete-role="deleteAssistantRole"
       @open-export-modal="handleOpenExportModal"
       @open-task-detail="handleOpenExportTaskDetail"
@@ -1500,7 +1514,9 @@
       @edit-source="openSource"
       @open-import="showImportModal = true"
       @open-panel="openPanel"
+      @open-task-process="handleOpenExportTaskProcess"
       @reorder-roles="reorderAssistantRoles"
+      @retry-export-task="retryExportTask"
       @retry-source="retrySource"
       @save-collection="saveCollection"
       @select-active-role="selectAssistantRole"
@@ -1537,6 +1553,12 @@
     :pending="savingExportTask"
     :task="selectedTaskDetail"
     @submit="saveExportTask"
+  />
+
+  <ExportTaskProcessModal
+    v-model:open="showExportTaskProcessModal"
+    :loading="loadingExportTaskDetail"
+    :task="selectedTaskDetail"
   />
 
   <SourceEditorModal

@@ -3,8 +3,8 @@
     KnowledgeExportTaskDetail,
     KnowledgeExportTaskParameters,
   } from "@atlas-kb/schema";
-  import { computed, reactive, watch } from "vue";
   import { LoaderCircle, Save } from "lucide-vue-next";
+  import { computed, reactive, watch } from "vue";
 
   const props = defineProps<{
     loading?: boolean;
@@ -79,7 +79,7 @@
   <UModal
     :open="open"
     :close="!pending"
-    :title="task ? `${task.templateName} · ${task.sourceFilename}` : '导出任务详情'"
+    title="导出任务编辑"
     description="在这里修改字段并重新保存。"
     @update:open="updateOpen"
   >
@@ -90,6 +90,26 @@
         </div>
 
         <div v-else-if="task" class="space-y-5">
+          <div
+            class="min-w-0 rounded-[8px] border border-[rgba(93,72,34,0.08)] bg-[rgba(255,250,240,0.65)] px-3 py-2"
+          >
+            <div class="flex min-w-0 items-center gap-1.5">
+              <p
+                class="min-w-0 truncate text-sm font-semibold text-[var(--text-strong)]"
+                :title="task.templateName"
+              >
+                {{ task.templateName }}
+              </p>
+              <span class="shrink-0 text-xs text-[var(--text-dim)]">·</span>
+              <p
+                class="min-w-0 truncate text-sm font-semibold text-[var(--text-strong)]"
+                :title="task.sourceFilename"
+              >
+                {{ task.sourceFilename }}
+              </p>
+            </div>
+          </div>
+
           <div v-if="task.canEdit" class="space-y-4">
             <div
               v-for="field in task.template.fields"
@@ -98,10 +118,12 @@
               :data-testid="`export-task-field-${field.name}`"
             >
               <div class="flex items-center justify-between gap-3">
-                <p class="text-sm font-semibold text-[var(--text-strong)]">
+                <p
+                  class="min-w-0 truncate text-sm font-semibold text-[var(--text-strong)]"
+                >
                   {{ field.label }}
                 </p>
-                <span class="text-[10px] text-[var(--text-dim)]">
+                <span class="shrink-0 text-[10px] text-[var(--text-dim)]">
                   {{ field.name }}
                 </span>
               </div>

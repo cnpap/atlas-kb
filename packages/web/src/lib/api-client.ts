@@ -668,6 +668,39 @@ export async function updateKnowledgeExportTaskRequest(params: {
   );
 }
 
+export async function retryKnowledgeExportTaskRequest(params: {
+  taskId: string;
+}): Promise<{ task: KnowledgeExportTaskDetail }> {
+  return requestJson<{ task: KnowledgeExportTaskDetail }>(
+    `/api/kb/export-tasks/${encodeURIComponent(params.taskId)}/retry`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export async function cancelKnowledgeExportTaskRequest(params: {
+  taskId: string;
+}): Promise<{ task: KnowledgeExportTaskDetail }> {
+  return requestJson<{ task: KnowledgeExportTaskDetail }>(
+    `/api/kb/export-tasks/${encodeURIComponent(params.taskId)}/cancel`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export async function deleteKnowledgeExportTaskRequest(params: {
+  taskId: string;
+}): Promise<{ ok: true }> {
+  return requestJson<{ ok: true }>(
+    `/api/kb/export-tasks/${encodeURIComponent(params.taskId)}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
 export async function downloadKnowledgeExportTaskRequest(params: {
   filename?: string;
   taskId: string;

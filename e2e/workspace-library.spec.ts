@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 
 async function openSourceMenu(sourceCard: Locator) {
   const menuButton = sourceCard.getByTestId("source-menu-button");
@@ -263,7 +263,10 @@ test("导出任务支持选择模板、查看详情并保存修改", async ({ pa
     has: page.getByText(sourceTitle, { exact: false }),
   });
   await expect(exportTaskCard).toBeVisible({ timeout: 60_000 });
-  await exportTaskCard.getByRole("button", { name: "查看详情" }).click();
+  await exportTaskCard
+    .locator('[data-testid^="export-task-menu-button-"]')
+    .click();
+  await exportTaskCard.locator('[data-testid^="export-task-detail-"]').click();
   const detailSaveButton = page.getByTestId("export-task-save");
   await expect(detailSaveButton).toBeVisible({ timeout: 60_000 });
 

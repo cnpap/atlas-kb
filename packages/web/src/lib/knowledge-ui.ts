@@ -1,7 +1,13 @@
 import type { KnowledgeSource } from "@atlas-kb/schema";
 
 type SourceStatus = "ready" | "processing" | "failed" | "archived";
-type ExportTaskStatus = "completed" | "failed" | "pending" | "processing";
+type ExportTaskStatus =
+  | "cancelled"
+  | "completed"
+  | "failed"
+  | "pending"
+  | "processing"
+  | "retrying";
 
 const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
   hour: "2-digit",
@@ -108,10 +114,14 @@ export function getExportTaskStatusLabel(status: ExportTaskStatus): string {
       return "待处理";
     case "processing":
       return "导出中";
+    case "retrying":
+      return "重试中";
     case "completed":
       return "已完成";
     case "failed":
       return "失败";
+    case "cancelled":
+      return "已取消";
     default:
       return "未知";
   }
@@ -124,7 +134,10 @@ export function getExportTaskStatusTone(
     case "completed":
       return "ready";
     case "failed":
+    case "cancelled":
       return "failed";
+    case "retrying":
+      return "processing";
     default:
       return "processing";
   }

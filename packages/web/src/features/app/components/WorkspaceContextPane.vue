@@ -5,11 +5,6 @@
     KnowledgeExportTask,
     KnowledgeSource,
   } from "@atlas-kb/schema";
-  import excelIcon from "@/assets/icon/excel.png";
-  import pdfIcon from "@/assets/icon/pdf.png";
-  import pptIcon from "@/assets/icon/ppt.png";
-  import txtIcon from "@/assets/icon/txt.png";
-  import wordIcon from "@/assets/icon/word.png";
   import {
     ChevronDown,
     EllipsisVertical,
@@ -20,6 +15,11 @@
     Upload,
   } from "lucide-vue-next";
   import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+  import excelIcon from "@/assets/icon/excel.png";
+  import pdfIcon from "@/assets/icon/pdf.png";
+  import pptIcon from "@/assets/icon/ppt.png";
+  import txtIcon from "@/assets/icon/txt.png";
+  import wordIcon from "@/assets/icon/word.png";
   import WorkspaceSettingsPane from "@/features/app/components/WorkspaceSettingsPane.vue";
   import {
     formatRelativeTime,
@@ -36,6 +36,7 @@
     canDeleteCollection?: boolean;
     deletingCollection?: boolean;
     deletingRoleId?: string;
+    exportTaskActionId?: string;
     exportTasks: KnowledgeExportTask[];
     filteredSources: KnowledgeSource[];
     loadingAssistantRoles?: boolean;
@@ -54,16 +55,20 @@
   const emit = defineEmits<{
     createRole: [payload: { name: string; stylePrompt: string }];
     deleteCollection: [];
+    deleteExportTask: [taskId: string];
     deleteRole: [roleId: string];
     deleteSource: [source: KnowledgeSource];
+    cancelExportTask: [taskId: string];
     downloadExportTask: [task: KnowledgeExportTask];
     downloadSource: [source: KnowledgeSource];
     editSource: [source: KnowledgeSource];
     openExportModal: [source: KnowledgeSource];
     openImport: [];
     openPanel: [panel: "library" | "exports" | "settings"];
+    openTaskProcess: [taskId: string];
     openTaskDetail: [taskId: string];
     reorderRoles: [roleIds: string[]];
+    retryExportTask: [taskId: string];
     retrySource: [source: KnowledgeSource];
     saveCollection: [payload: { description: string; name: string }];
     selectActiveRole: [roleId: string];
@@ -88,6 +93,7 @@
     | "word";
 
   const sourceMenuId = ref("");
+  const exportTaskMenuId = ref("");
 
   const SOURCE_ICON_BY_KIND: Record<SourceFileKind, string> = {
     default: txtIcon,
@@ -102,15 +108,17 @@
     return value?.split(";", 1)[0]?.trim().toLowerCase() || "";
   }
 
-  function getSourceExtension(source: KnowledgeSource): string {
-    const fileName = source.sourceFilename || source.documentId || "";
+  function getFileExtension(fileName: string): string {
     const match = /\.([a-z0-9]+)$/i.exec(fileName);
     return match?.[1]?.toLowerCase() || "";
   }
 
-  function getSourceFileKind(source: KnowledgeSource): SourceFileKind {
-    const extension = getSourceExtension(source);
-    const mimeType = normalizeMimeType(source.mimeType);
+  function getFileKind(
+    fileName: string,
+    mimeTypeValue?: string,
+  ): SourceFileKind {
+    const extension = getFileExtension(fileName);
+    const mimeType = normalizeMimeType(mimeTypeValue);
 
     if (extension === "pdf" || mimeType === "application/pdf") {
       return "pdf";
@@ -158,7 +166,16 @@
   }
 
   function getSourceIcon(source: KnowledgeSource): string {
-    return SOURCE_ICON_BY_KIND[getSourceFileKind(source)];
+    return SOURCE_ICON_BY_KIND[
+      getFileKind(
+        source.sourceFilename || source.documentId || "",
+        source.mimeType,
+      )
+    ];
+  }
+
+  function getExportTaskIcon(task: KnowledgeExportTask): string {
+    return SOURCE_ICON_BY_KIND[getFileKind(task.sourceFilename)];
   }
 
   function getSourceDisplayName(source: KnowledgeSource): string {
@@ -189,17 +206,27 @@
     sourceMenuId.value = "";
   }
 
+  function closeExportTaskMenu(): void {
+    exportTaskMenuId.value = "";
+  }
+
   function toggleSourceMenu(sourceId: string): void {
     sourceMenuId.value = sourceMenuId.value === sourceId ? "" : sourceId;
   }
 
+  function toggleExportTaskMenu(taskId: string): void {
+    exportTaskMenuId.value = exportTaskMenuId.value === taskId ? "" : taskId;
+  }
+
   function handleDocumentClick(): void {
     closeSourceMenu();
+    closeExportTaskMenu();
   }
 
   function handleDocumentKeydown(event: KeyboardEvent): void {
     if (event.key === "Escape") {
       closeSourceMenu();
+      closeExportTaskMenu();
     }
   }
 
@@ -235,6 +262,36 @@
     }
   }
 
+  function handleExportTaskAction(
+    action: "cancel" | "delete" | "download" | "edit" | "process" | "retry",
+    task: KnowledgeExportTask,
+  ): void {
+    closeExportTaskMenu();
+
+    switch (action) {
+      case "cancel":
+        emit("cancelExportTask", task.id);
+        return;
+      case "delete":
+        emit("deleteExportTask", task.id);
+        return;
+      case "download":
+        emit("downloadExportTask", task);
+        return;
+      case "edit":
+        emit("openTaskDetail", task.id);
+        return;
+      case "process":
+        emit("openTaskProcess", task.id);
+        return;
+      case "retry":
+        emit("retryExportTask", task.id);
+        return;
+      default:
+        return;
+    }
+  }
+
   onMounted(() => {
     document.addEventListener("click", handleDocumentClick);
     document.addEventListener("keydown", handleDocumentKeydown);
@@ -246,9 +303,16 @@
   });
 
   watch(
-    () => [props.panel, props.sourceActionId, props.filteredSources.length],
+    () => [
+      props.exportTaskActionId,
+      props.exportTasks.length,
+      props.filteredSources.length,
+      props.panel,
+      props.sourceActionId,
+    ],
     () => {
       closeSourceMenu();
+      closeExportTaskMenu();
     },
   );
 </script>
@@ -504,59 +568,148 @@
         <article
           v-for="task in exportTasks"
           :key="task.id"
-          class="stack-item !rounded-[8px] !p-3 shadow-none"
+          class="stack-item source-card-surface !rounded-[8px] !px-2.5 !py-2 shadow-none"
         >
-          <div class="flex flex-col gap-3">
-            <div class="flex flex-wrap items-center gap-2">
-              <span
-                class="status-pill"
-                :class="getExportTaskStatusTone(task.status)"
+          <div class="flex flex-col gap-1.5">
+            <div class="flex items-center gap-2.5">
+              <img
+                :src="getExportTaskIcon(task)"
+                alt=""
+                aria-hidden="true"
+                class="h-8 w-8 shrink-0 object-contain"
+                data-testid="export-task-file-icon"
               >
-                {{ getExportTaskStatusLabel(task.status) }}
-              </span>
-              <span class="text-[10px] text-[var(--text-dim)]">
-                {{ formatRelativeTime(task.updatedAt) }}
-              </span>
-            </div>
 
-            <div class="min-w-0">
-              <p
-                class="truncate text-sm font-semibold text-[var(--text-strong)]"
-              >
-                {{ task.templateName }}
-              </p>
-              <p class="mt-1 text-[12px] leading-6 text-[var(--text-muted)]">
-                {{ task.sourceFilename }}
-              </p>
-              <p
-                v-if="task.failureMessage"
-                class="mt-1 text-[12px] leading-6 text-[var(--danger)]"
-              >
-                {{ task.failureMessage }}
-              </p>
+              <div class="min-w-0 flex-1">
+                <div class="flex min-w-0 items-center gap-2">
+                  <p
+                    class="min-w-0 flex-1 truncate text-sm font-medium text-[var(--text-strong)]"
+                    :title="task.templateName"
+                  >
+                    {{ task.templateName }}
+                  </p>
+                  <span
+                    class="status-pill shrink-0"
+                    :class="getExportTaskStatusTone(task.status)"
+                  >
+                    {{ getExportTaskStatusLabel(task.status) }}
+                  </span>
+                </div>
+                <p
+                  class="mt-0.5 truncate text-[11px] leading-5 text-[var(--text-muted)]"
+                  :title="`${task.sourceFilename} · ${formatRelativeTime(task.updatedAt)}`"
+                >
+                  {{ task.sourceFilename }}
+                  · {{ formatRelativeTime(task.updatedAt) }}
+                </p>
+              </div>
+
+              <div class="relative shrink-0" data-testid="export-task-actions">
+                <button
+                  class="soft-button !rounded-[6px] !p-1.5"
+                  :data-testid="`export-task-menu-button-${task.id}`"
+                  type="button"
+                  :disabled="exportTaskActionId === task.id"
+                  @click.stop="toggleExportTaskMenu(task.id)"
+                >
+                  <EllipsisVertical class="size-4" />
+                </button>
+
+                <div
+                  v-if="exportTaskMenuId === task.id"
+                  class="absolute right-0 top-full z-20 mt-2 flex min-w-[132px] flex-col rounded-[10px] border border-[var(--border-soft)] bg-[var(--bg-panel-strong)] p-1.5 shadow-[var(--shadow-floating)]"
+                  data-testid="export-task-menu"
+                  @click.stop
+                >
+                  <button
+                    v-if="task.canCancel"
+                    class="rounded-[8px] px-3 py-2 text-left text-xs font-medium text-[var(--text-strong)] transition hover:bg-[rgba(93,72,34,0.08)]"
+                    :data-testid="`export-task-cancel-${task.id}`"
+                    type="button"
+                    :disabled="exportTaskActionId === task.id"
+                    @click="handleExportTaskAction('cancel', task)"
+                  >
+                    取消
+                  </button>
+                  <button
+                    v-if="task.exportFile"
+                    class="rounded-[8px] px-3 py-2 text-left text-xs font-medium text-[var(--text-strong)] transition hover:bg-[rgba(93,72,34,0.08)]"
+                    :data-testid="`export-task-download-${task.id}`"
+                    type="button"
+                    :disabled="exportTaskActionId === task.id"
+                    @click="handleExportTaskAction('download', task)"
+                  >
+                    下载
+                  </button>
+                  <button
+                    v-if="task.status === 'completed'"
+                    class="rounded-[8px] px-3 py-2 text-left text-xs font-medium text-[var(--text-strong)] transition hover:bg-[rgba(93,72,34,0.08)]"
+                    :data-testid="`export-task-detail-${task.id}`"
+                    type="button"
+                    :disabled="exportTaskActionId === task.id"
+                    @click="handleExportTaskAction('edit', task)"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    v-if="['completed', 'failed', 'cancelled'].includes(task.status)"
+                    class="rounded-[8px] px-3 py-2 text-left text-xs font-medium text-[var(--text-strong)] transition hover:bg-[rgba(93,72,34,0.08)]"
+                    :data-testid="`export-task-process-${task.id}`"
+                    type="button"
+                    :disabled="exportTaskActionId === task.id"
+                    @click="handleExportTaskAction('process', task)"
+                  >
+                    查看过程
+                  </button>
+                  <button
+                    v-if="task.canRetry"
+                    class="rounded-[8px] px-3 py-2 text-left text-xs font-medium text-[var(--text-strong)] transition hover:bg-[rgba(93,72,34,0.08)]"
+                    :data-testid="`export-task-retry-${task.id}`"
+                    type="button"
+                    :disabled="exportTaskActionId === task.id"
+                    @click="handleExportTaskAction('retry', task)"
+                  >
+                    重试
+                  </button>
+                  <button
+                    v-if="task.canDelete"
+                    class="rounded-[8px] px-3 py-2 text-left text-xs font-medium text-[var(--rose)] transition hover:bg-[rgba(154,52,18,0.08)]"
+                    :data-testid="`export-task-delete-${task.id}`"
+                    type="button"
+                    :disabled="exportTaskActionId === task.id"
+                    @click="handleExportTaskAction('delete', task)"
+                  >
+                    删除
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div
-              v-if="task.status === 'completed'"
-              class="flex items-center justify-end gap-2 border-t border-[rgba(93,72,34,0.08)] pt-3"
+              v-if="task.status === 'retrying' || task.status === 'failed' || task.status === 'cancelled'"
+              class="pl-[42px]"
             >
-              <button
-                v-if="task.exportFile"
-                class="soft-button !rounded-[6px] !px-3 !py-2 text-xs"
-                :data-testid="`export-task-download-${task.id}`"
-                type="button"
-                @click="$emit('downloadExportTask', task)"
+              <div
+                class="rounded-[6px] border border-[rgba(93,72,34,0.08)] bg-[rgba(255,250,240,0.65)] px-3 py-2"
+                data-testid="export-task-message"
               >
-                下载
-              </button>
-              <button
-                class="soft-button !rounded-[6px] !px-3 !py-2 text-xs"
-                :data-testid="`export-task-detail-${task.id}`"
-                type="button"
-                @click="$emit('openTaskDetail', task.id)"
-              >
-                查看详情
-              </button>
+                <p class="text-[11px] leading-5 text-[var(--text-muted)]">
+                  <span class="font-medium text-[var(--text-strong)]">
+                    {{ task.status === 'retrying' ? '自动重试：' : task.status === 'cancelled' ? '已取消：' : '导出失败：' }}
+                  </span>
+                  <template v-if="task.status === 'retrying'">
+                    系统将自动重试，已尝试 {{ task.attemptCount }} /
+                    {{ task.maxAttempts }}
+                    次。
+                  </template>
+                  <template v-else-if="task.status === 'cancelled'">
+                    任务已取消，可从菜单重新提交。
+                  </template>
+                  <template v-else>
+                    {{ task.failureMessage || '模板导出失败，请重试。' }}
+                  </template>
+                </p>
+              </div>
             </div>
           </div>
         </article>
