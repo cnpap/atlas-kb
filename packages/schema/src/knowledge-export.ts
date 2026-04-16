@@ -58,8 +58,10 @@ export const KnowledgeTemplateDetailSchema =
 export const KnowledgeExportTaskStatusSchema = z.enum([
   "pending",
   "processing",
+  "retrying",
   "completed",
   "failed",
+  "cancelled",
 ]);
 
 export const KnowledgeTemplateExportFileSchema = z.object({
@@ -78,6 +80,25 @@ export const KnowledgeExportTaskParametersSchema = z.record(
   z.string(),
 );
 
+export const KnowledgeExportProcessTraceItemSchema = z.object({
+  id: z.string().trim().min(1),
+  kind: z.enum([
+    "lifecycle",
+    "thinking",
+    "tool",
+    "file",
+    "search",
+    "result",
+    "error",
+  ]),
+  status: z.enum(["pending", "running", "completed", "failed"]),
+  label: z.string().trim().min(1),
+  detail: z.string().trim().min(1).nullable().optional(),
+  path: z.string().trim().min(1).nullable().optional(),
+  attempt: z.number().int().positive().nullable().optional(),
+  createdAt: TimestampSchema,
+});
+
 export const KnowledgeExportTaskSchema = z.object({
   id: z.string().trim().min(1),
   ownerUserId: z.string().trim().min(1),
@@ -88,12 +109,19 @@ export const KnowledgeExportTaskSchema = z.object({
   templateName: z.string().trim().min(1),
   status: KnowledgeExportTaskStatusSchema,
   failureMessage: z.string().trim().min(1).nullable().optional(),
+  attemptCount: z.number().int().nonnegative().default(0),
+  maxAttempts: z.number().int().positive().default(3),
   exportFile: KnowledgeTemplateExportFileSchema.optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
+  nextRetryAt: TimestampSchema.nullable().optional(),
+  cancelledAt: TimestampSchema.nullable().optional(),
   startedAt: TimestampSchema.nullable().optional(),
   completedAt: TimestampSchema.nullable().optional(),
   failedAt: TimestampSchema.nullable().optional(),
+  canRetry: z.boolean().default(false),
+  canCancel: z.boolean().default(false),
+  canDelete: z.boolean().default(false),
 });
 
 export const KnowledgeExportTaskCreateRequestSchema = z.object({
@@ -108,6 +136,13 @@ export const KnowledgeExportTaskUpdateRequestSchema = z.object({
   parameters: KnowledgeExportTaskParametersSchema,
 });
 
+export const KnowledgeExportTaskActionResponseSchema =
+  createApiSuccessResponseSchema(
+    z.object({
+      ok: z.literal(true),
+    }),
+  );
+
 export const KnowledgeExportTaskGenerateRequestSchema = z.object({
   userId: z.string().trim().min(1),
   sourceId: z.string().trim().min(1),
@@ -117,12 +152,14 @@ export const KnowledgeExportTaskGenerateRequestSchema = z.object({
 export const KnowledgeExportTaskGenerateResultSchema = z.object({
   parameters: z.record(z.string(), z.string()),
   citations: z.array(ChatCitationSchema),
+  processTrace: z.array(KnowledgeExportProcessTraceItemSchema).default([]),
 });
 
 export const KnowledgeExportTaskDetailSchema = KnowledgeExportTaskSchema.extend(
   {
     template: KnowledgeTemplateDetailSchema,
     parameters: KnowledgeExportTaskParametersSchema,
+    processTrace: z.array(KnowledgeExportProcessTraceItemSchema).default([]),
     canEdit: z.boolean(),
   },
 );
@@ -200,6 +237,9 @@ export type KnowledgeTemplateDetail = z.infer<
 >;
 export type KnowledgeExportTaskParameters = z.infer<
   typeof KnowledgeExportTaskParametersSchema
+>;
+export type KnowledgeExportProcessTraceItem = z.infer<
+  typeof KnowledgeExportProcessTraceItemSchema
 >;
 export type KnowledgeExportTaskStatus = z.infer<
   typeof KnowledgeExportTaskStatusSchema

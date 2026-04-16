@@ -1,10 +1,13 @@
 export {
+  cancelKnowledgeExportTaskInAdmin,
   createKnowledgeExportTaskInAdmin,
+  deleteKnowledgeExportTaskInAdmin,
   downloadKnowledgeExportTaskFromAdmin,
   getKnowledgeExportTaskDetailFromAdmin,
   getKnowledgeTemplateDetailFromAdmin,
   listKnowledgeExportTasksFromAdmin,
   listKnowledgeTemplatesFromAdmin,
+  retryKnowledgeExportTaskInAdmin,
   updateKnowledgeExportTaskInAdmin,
 } from "./admin-client";
 export { answerKnowledgeQuestion, runKnowledgeAgentQuestion } from "./agent";
@@ -51,8 +54,8 @@ export {
   deleteKnowledgeCollection,
   deleteKnowledgeSource,
   ensureDefaultKnowledgeCollection,
-  getDashboardSummary,
   getChatMessageById,
+  getDashboardSummary,
   getKnowledgeCollectionSourcesData,
   listKnowledgeCollections,
   requireChatMessage,

@@ -163,6 +163,54 @@ export async function updateKnowledgeExportTaskInAdmin(args: {
   return payload.data;
 }
 
+export async function retryKnowledgeExportTaskInAdmin(args: {
+  taskId: string;
+  userId: string;
+}): Promise<KnowledgeExportTaskDetail> {
+  const payload = await requestAdminInternal<{
+    data: KnowledgeExportTaskDetail;
+  }>(
+    `/api/internal/knowledge-template-export-tasks/${encodeURIComponent(args.taskId)}/retry?user_id=${encodeURIComponent(args.userId)}`,
+    {
+      method: "POST",
+    },
+  );
+
+  return payload.data;
+}
+
+export async function cancelKnowledgeExportTaskInAdmin(args: {
+  taskId: string;
+  userId: string;
+}): Promise<KnowledgeExportTaskDetail> {
+  const payload = await requestAdminInternal<{
+    data: KnowledgeExportTaskDetail;
+  }>(
+    `/api/internal/knowledge-template-export-tasks/${encodeURIComponent(args.taskId)}/cancel?user_id=${encodeURIComponent(args.userId)}`,
+    {
+      method: "POST",
+    },
+  );
+
+  return payload.data;
+}
+
+export async function deleteKnowledgeExportTaskInAdmin(args: {
+  taskId: string;
+  userId: string;
+}): Promise<{ ok: true }> {
+  const payload = await requestAdminInternal<{
+    data: { ok: true };
+  }>(
+    `/api/internal/knowledge-template-export-tasks/${encodeURIComponent(args.taskId)}?user_id=${encodeURIComponent(args.userId)}`,
+    {
+      method: "DELETE",
+    },
+  );
+
+  return payload.data;
+}
+
 export async function downloadKnowledgeExportTaskFromAdmin(args: {
   taskId: string;
   userId: string;

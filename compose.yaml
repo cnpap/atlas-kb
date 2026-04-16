@@ -1,12 +1,23 @@
 name: ${COMPOSE_PROJECT_NAME:-atlas-kb}
 
 services:
+  tika:
+    image: apache/tika:3.3.0.0
+    pull_policy: missing
+    restart: unless-stopped
+    networks:
+      atlas-app-network:
+        aliases:
+          - tika
+
   api:
     image: ${ATLAS_KB_API_IMAGE:?ATLAS_KB_API_IMAGE is required}
     pull_policy: never
     restart: unless-stopped
     env_file:
       - .env.deploy
+    depends_on:
+      - tika
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

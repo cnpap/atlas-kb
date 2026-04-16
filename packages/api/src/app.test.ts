@@ -202,12 +202,25 @@ function mockProviders() {
       failedAt?: string;
       failureMessage?: string;
       id: string;
+      attemptCount: number;
+      canCancel: boolean;
+      canDelete: boolean;
       ownerUserId: string;
       parameters: Record<string, string>;
+      maxAttempts: number;
+      nextRetryAt?: string | null;
+      cancelledAt?: string | null;
+      canRetry: boolean;
       sourceId: string;
       sourceFilename: string;
       startedAt?: string;
-      status: "completed" | "failed" | "pending" | "processing";
+      status:
+        | "cancelled"
+        | "completed"
+        | "failed"
+        | "pending"
+        | "processing"
+        | "retrying";
       taskType: string;
       template: typeof templateDetail;
       templateId: string;
@@ -224,12 +237,17 @@ function mockProviders() {
     templateId: templateDetail.id,
     templateName: templateDetail.name,
     status: "completed",
+    attemptCount: 1,
+    maxAttempts: 3,
     parameters: {
       document_title: "既有标题",
       opinion: "既有拟办意见",
     },
     template: templateDetail,
     canEdit: true,
+    canRetry: false,
+    canCancel: false,
+    canDelete: true,
     createdAt: "2026-04-07T15:14:00.000Z",
     updatedAt: "2026-04-07T15:15:00.000Z",
     completedAt: "2026-04-07T15:15:00.000Z",
@@ -335,6 +353,48 @@ function mockProviders() {
           });
         }
 
+        if (parsedUrl.pathname.endsWith("/retry")) {
+          task.status = "pending";
+          task.attemptCount = 0;
+          task.canEdit = false;
+          task.canRetry = false;
+          task.canCancel = true;
+          task.canDelete = false;
+          task.failureMessage = undefined;
+          task.nextRetryAt = null;
+          task.cancelledAt = null;
+          task.updatedAt = "2026-04-07T15:19:00.000Z";
+
+          return jsonResponse({
+            data: task,
+          });
+        }
+
+        if (parsedUrl.pathname.endsWith("/cancel")) {
+          task.status = "cancelled";
+          task.canEdit = false;
+          task.canRetry = true;
+          task.canCancel = false;
+          task.canDelete = true;
+          task.nextRetryAt = null;
+          task.cancelledAt = "2026-04-07T15:19:00.000Z";
+          task.updatedAt = task.cancelledAt;
+
+          return jsonResponse({
+            data: task,
+          });
+        }
+
+        if ((init?.method || "GET").toUpperCase() === "DELETE") {
+          adminExportTasks.delete(task.id);
+
+          return jsonResponse({
+            data: {
+              ok: true,
+            },
+          });
+        }
+
         if ((init?.method || "GET").toUpperCase() === "PATCH") {
           const nextParameters =
             body.parameters && typeof body.parameters === "object"
@@ -345,6 +405,7 @@ function mockProviders() {
             ...nextParameters,
           };
           task.updatedAt = "2026-04-07T15:18:00.000Z";
+          task.canEdit = true;
           task.exportFile = {
             id: "export-updated",
             templateId: task.templateId,
@@ -379,9 +440,14 @@ function mockProviders() {
           templateId: String(body.template_id ?? templateDetail.id),
           templateName: templateDetail.name,
           status: "pending" as const,
+          attemptCount: 0,
+          maxAttempts: 3,
           parameters: {},
           template: templateDetail,
           canEdit: false,
+          canRetry: false,
+          canCancel: true,
+          canDelete: false,
           createdAt,
           updatedAt: createdAt,
         };
@@ -2100,6 +2166,69 @@ describe.serial("@atlas-kb/api knowledge endpoints", () => {
       expect(updatedTask.task.exportFile?.outputFilename).toBe(
         "拟办意见-已更新.xlsx",
       );
+
+      const cancelResponse = await app.handle(
+        new Request(
+          `http://localhost/api/kb/export-tasks/${createdTask.task.id}/cancel`,
+          {
+            method: "POST",
+            headers: authHeaders(workspaceSession.token),
+          },
+        ),
+      );
+      const cancelledTask = await readJson<{
+        task: {
+          canRetry: boolean;
+          status: string;
+        };
+      }>(cancelResponse);
+
+      expect(cancelledTask.task.status).toBe("cancelled");
+      expect(cancelledTask.task.canRetry).toBe(true);
+
+      const retryResponse = await app.handle(
+        new Request(
+          `http://localhost/api/kb/export-tasks/${createdTask.task.id}/retry`,
+          {
+            method: "POST",
+            headers: authHeaders(workspaceSession.token),
+          },
+        ),
+      );
+      const retriedTask = await readJson<{
+        task: {
+          attemptCount: number;
+          status: string;
+        };
+      }>(retryResponse);
+
+      expect(retriedTask.task.status).toBe("pending");
+      expect(retriedTask.task.attemptCount).toBe(0);
+
+      await app.handle(
+        new Request(
+          `http://localhost/api/kb/export-tasks/${createdTask.task.id}/cancel`,
+          {
+            method: "POST",
+            headers: authHeaders(workspaceSession.token),
+          },
+        ),
+      );
+
+      const deleteResponse = await app.handle(
+        new Request(
+          `http://localhost/api/kb/export-tasks/${createdTask.task.id}`,
+          {
+            method: "DELETE",
+            headers: authHeaders(workspaceSession.token),
+          },
+        ),
+      );
+      const deletedTask = await readJson<{
+        ok: true;
+      }>(deleteResponse);
+
+      expect(deletedTask.ok).toBe(true);
     },
   );
 

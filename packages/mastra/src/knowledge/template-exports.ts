@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir as mkdirFs,
   mkdtemp,
@@ -13,20 +13,28 @@ import {
   UpstreamServiceError,
 } from "@atlas-kb/errors";
 import type {
+  ChatReplyStreamDataEvent,
+  KnowledgeExportProcessTraceItem,
   KnowledgeExportTaskGenerateResult,
   KnowledgeTemplateDetail,
 } from "@atlas-kb/schema";
 import { buildKnowledgeTemplateExportStructuredOutputSchema } from "@atlas-kb/schema";
+import type { ChunkType } from "@mastra/core/stream";
 import {
-  LocalFilesystem,
   type AnyWorkspace,
+  LocalFilesystem,
   WORKSPACE_TOOLS,
   Workspace,
   type WorkspaceFilesystem,
 } from "@mastra/core/workspace";
 import { createTemplateExportAgent } from "../agents";
 import { mapRuntimeModelError } from "../models/runtime-model";
+import { createChatReplyStreamEventMapper } from "./chat-stream-events";
 import { getTemplateExportTimeoutMs } from "./config";
+import {
+  unwrapContentProxyFilesystem,
+  wrapKnowledgeFilesystemForReading,
+} from "./content-proxy";
 import { requireKnowledgeSource } from "./repository";
 import {
   createKnowledgeCollectionFilesystem,
@@ -34,10 +42,6 @@ import {
   createKnowledgeStoragePrefixFilesystem,
   deleteKnowledgeSearchIndex,
 } from "./runtime";
-import {
-  unwrapContentProxyFilesystem,
-  wrapKnowledgeFilesystemForReading,
-} from "./content-proxy";
 import { isEmptyExtractedContentError } from "./tika";
 
 const TEMPLATE_EXPORT_TIMEOUT_MESSAGE = "模板导出超时，请稍后重试。";
@@ -97,11 +101,113 @@ type PreparedTemplateExportContext = {
   workspace: AnyWorkspace;
 };
 
+type TemplateExportTraceCollector = {
+  add: (item: {
+    detail?: string | null;
+    kind: KnowledgeExportProcessTraceItem["kind"];
+    label: string;
+    path?: string | null;
+    status: KnowledgeExportProcessTraceItem["status"];
+  }) => void;
+  addChatEvent: (event: ChatReplyStreamDataEvent) => void;
+  items: () => KnowledgeExportProcessTraceItem[];
+};
+
 class TemplateExportTimeoutError extends Error {
   constructor() {
     super(TEMPLATE_EXPORT_TIMEOUT_MESSAGE);
     this.name = "TemplateExportTimeoutError";
   }
+}
+
+function createTemplateExportTraceCollector(): TemplateExportTraceCollector {
+  const items: KnowledgeExportProcessTraceItem[] = [];
+
+  function add(item: {
+    detail?: string | null;
+    kind: KnowledgeExportProcessTraceItem["kind"];
+    label: string;
+    path?: string | null;
+    status: KnowledgeExportProcessTraceItem["status"];
+  }) {
+    items.push({
+      id: randomUUID(),
+      kind: item.kind,
+      status: item.status,
+      label: item.label,
+      detail: item.detail ?? null,
+      path: item.path ?? null,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  function addChatEvent(event: ChatReplyStreamDataEvent) {
+    switch (event.type) {
+      case "reply-progress-started":
+        add({
+          kind: "lifecycle",
+          status: "running",
+          label: "AI 开始处理导出任务",
+        });
+        return;
+      case "reply-progress-thinking":
+        add({
+          kind: "thinking",
+          status: "running",
+          label: event.label,
+        });
+        return;
+      case "reply-progress-tool-started":
+      case "reply-progress-tool-succeeded":
+      case "reply-progress-tool-failed": {
+        const isSearch =
+          event.toolName === "mastra_workspace_search" ||
+          event.toolName === "search_knowledge";
+        const isFailed = event.type === "reply-progress-tool-failed";
+        const isCompleted = event.type === "reply-progress-tool-succeeded";
+
+        add({
+          kind: event.toolPath ? "file" : isSearch ? "search" : "tool",
+          status: isFailed ? "failed" : isCompleted ? "completed" : "running",
+          label: event.toolLabel,
+          detail: event.toolDetail ?? null,
+          path: event.toolPath ?? null,
+        });
+        return;
+      }
+      case "reply-progress-step-finished":
+        add({
+          kind: "lifecycle",
+          status: "completed",
+          label: "AI 完成一轮分析",
+        });
+        return;
+      case "reply-progress-finished":
+        add({
+          kind: "result",
+          status: "completed",
+          label: "AI 完成字段生成",
+        });
+        return;
+      case "reply-progress-failed":
+      case "reply-error":
+        add({
+          kind: "error",
+          status: "failed",
+          label: event.message,
+        });
+        return;
+      case "reply-accepted":
+      case "reply-completed":
+        return;
+    }
+  }
+
+  return {
+    add,
+    addChatEvent,
+    items: () => [...items],
+  };
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -226,7 +332,7 @@ function buildTemplateExportSearchIndexName(args: {
   templateId: string;
   userId: string;
 }) {
-  const seed = `${args.userId}_${args.sourceId}_${args.templateId}_${crypto.randomUUID().replaceAll("-", "_")}`;
+  const seed = `${args.userId}_${args.sourceId}_${args.templateId}_${randomUUID().replaceAll("-", "_")}`;
   const sanitized = seed.replace(/[^a-zA-Z0-9_]+/g, "_").slice(0, 44);
   return `atlas_tpl_export_${sanitized || "run"}`;
 }
@@ -663,6 +769,7 @@ function isSkippableReferenceFileError(error: unknown): boolean {
 
 async function prepareReferenceLibrary(args: {
   library: TemplateReferenceLibraryMount;
+  trace: TemplateExportTraceCollector;
   workspace: AnyWorkspace;
 }): Promise<TemplateIndexedLibrary> {
   const preparedFiles: TemplateIndexedFile[] = [];
@@ -698,6 +805,13 @@ async function prepareReferenceLibrary(args: {
           },
         }),
       );
+      args.trace.add({
+        kind: "file",
+        status: "completed",
+        label: "已读取并索引参考资料",
+        detail: args.library.name,
+        path: filePath,
+      });
     } catch (error) {
       if (!isSkippableReferenceFileError(error)) {
         throw error;
@@ -710,6 +824,13 @@ async function prepareReferenceLibrary(args: {
       };
 
       skippedFiles.push(skippedFile);
+      args.trace.add({
+        kind: "file",
+        status: "failed",
+        label: "参考资料已跳过",
+        detail: skippedFile.reason,
+        path: filePath,
+      });
       console.warn("[template-export] reference_file_skipped", {
         filePath,
         libraryName: args.library.name,
@@ -762,8 +883,16 @@ function buildReferenceMountDirectories(
 async function prepareTemplateExportContext(args: {
   source: Awaited<ReturnType<typeof requireKnowledgeSource>>;
   template: KnowledgeTemplateDetail;
+  trace: TemplateExportTraceCollector;
   userId: string;
 }): Promise<PreparedTemplateExportContext> {
+  args.trace.add({
+    kind: "lifecycle",
+    status: "running",
+    label: "正在准备导出工作区",
+    detail: args.template.name,
+  });
+
   const sourceRelativePath = buildWorkspaceRelativePath(
     args.source.documentId ?? args.source.sourceFilename ?? "",
   );
@@ -817,6 +946,12 @@ async function prepareTemplateExportContext(args: {
   });
 
   await workspace.init();
+  args.trace.add({
+    kind: "lifecycle",
+    status: "completed",
+    label: "导出工作区已挂载",
+    detail: `主资料目录 ${TEMPLATE_EXPORT_SOURCE_MOUNT_PATH}`,
+  });
 
   let sourceDirectoryFiles: string[];
 
@@ -859,12 +994,20 @@ async function prepareTemplateExportContext(args: {
       mountPath: TEMPLATE_EXPORT_SOURCE_MOUNT_PATH,
     },
   });
+  args.trace.add({
+    kind: "file",
+    status: "completed",
+    label: "已读取并索引主资料",
+    detail: args.source.sourceFilename,
+    path: preparedSource.originalPath,
+  });
   const preparedLibraries: TemplateIndexedLibrary[] = [];
 
   for (const library of referenceLibraries.libraries) {
     preparedLibraries.push(
       await prepareReferenceLibrary({
         library,
+        trace: args.trace,
         workspace,
       }),
     );
@@ -982,6 +1125,7 @@ function requireStructuredOutputObject(args: {
 async function generateWithAgent(args: {
   source: Awaited<ReturnType<typeof requireKnowledgeSource>>;
   template: KnowledgeTemplateDetail;
+  trace: TemplateExportTraceCollector;
   userId: string;
 }): Promise<Record<string, string>> {
   let preparedContext: PreparedTemplateExportContext | undefined;
@@ -1012,11 +1156,32 @@ async function generateWithAgent(args: {
           "只返回结构化 JSON 对象。所有字段值都必须是字符串，无法确认时返回空字符串。",
       },
     };
-    const output = await withTimeout(
-      agent.generate(
+    const progressMapper = createChatReplyStreamEventMapper();
+    const stream = await withTimeout(
+      agent.stream(
         `请基于当前 workspace 中的主资料和模板资料库文件，完成模板《${args.template.name}》的字段提取。`,
         options,
       ),
+      getTemplateExportTimeoutMs(),
+    );
+    const output = await withTimeout(
+      (async () => {
+        for await (const chunk of stream.fullStream as AsyncIterable<
+          ChunkType<undefined>
+        >) {
+          for (const event of progressMapper.mapChunk(chunk)) {
+            args.trace.addChatEvent(event);
+          }
+        }
+
+        const finishedEvent = progressMapper.ensureFinished();
+
+        if (finishedEvent) {
+          args.trace.addChatEvent(finishedEvent);
+        }
+
+        return stream.getFullOutput();
+      })(),
       getTemplateExportTimeoutMs(),
     );
 
@@ -1029,14 +1194,30 @@ async function generateWithAgent(args: {
       userId: args.userId,
     });
 
-    return mapStructuredOutputToParameters({
+    const parameters = mapStructuredOutputToParameters({
       template: args.template,
       output: requireStructuredOutputObject({
         template: args.template,
         output,
       }),
     });
+
+    args.trace.add({
+      kind: "result",
+      status: "completed",
+      label: "字段参数已生成",
+      detail: `共 ${Object.keys(parameters).length} 个字段`,
+    });
+
+    return parameters;
   } catch (error) {
+    args.trace.add({
+      kind: "error",
+      status: "failed",
+      label: "导出过程失败",
+      detail: getErrorMessage(error),
+    });
+
     throw mapTemplateExportError(error);
   } finally {
     await preparedContext?.workspace.destroy().catch(() => undefined);
@@ -1060,13 +1241,16 @@ export async function generateKnowledgeTemplateExportPayload(args: {
   userId: string;
 }): Promise<KnowledgeExportTaskGenerateResult> {
   const source = await requireKnowledgeSource(args.userId, args.sourceId);
+  const trace = createTemplateExportTraceCollector();
 
   return {
     parameters: await generateWithAgent({
       source,
       template: args.template,
+      trace,
       userId: args.userId,
     }),
     citations: [],
+    processTrace: trace.items(),
   };
 }

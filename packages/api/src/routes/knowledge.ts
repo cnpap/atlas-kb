@@ -1,14 +1,18 @@
+import { BadRequestError, UnauthorizedError } from "@atlas-kb/errors";
 import {
   answerKnowledgeQuestion,
+  cancelKnowledgeExportTaskInAdmin,
   createAssistantRole,
   createKnowledgeCollection,
   createKnowledgeExportTaskInAdmin,
   deleteAssistantRole,
   deleteKnowledgeCollection,
+  deleteKnowledgeExportTaskInAdmin,
   deleteKnowledgeSource,
   downloadKnowledgeExportTaskFromAdmin,
   generateKnowledgeTemplateExportPayload,
   getActiveAssistantRole,
+  getInternalSecret,
   getKnowledgeCollectionSourcesData,
   getKnowledgeExportTaskDetailFromAdmin,
   getKnowledgeSourceDownloadUrl,
@@ -16,22 +20,21 @@ import {
   importKnowledgeFile,
   importKnowledgeText,
   listAssistantRoles,
-  listKnowledgeExportTasksFromAdmin,
   listKnowledgeCollections,
+  listKnowledgeExportTasksFromAdmin,
   listKnowledgeTemplatesFromAdmin,
   reorderAssistantRoles,
   requireKnowledgeCollection,
   requireKnowledgeSource,
+  retryKnowledgeExportTaskInAdmin,
   retryKnowledgeSourceImport,
   searchKnowledge,
   setActiveAssistantRole,
   updateAssistantRole,
-  updateKnowledgeExportTaskInAdmin,
   updateKnowledgeCollection,
+  updateKnowledgeExportTaskInAdmin,
   updateKnowledgeSource,
-  getInternalSecret,
 } from "@atlas-kb/mastra/knowledge";
-import { BadRequestError, UnauthorizedError } from "@atlas-kb/errors";
 import {
   AskKnowledgeRequestSchema,
   AskKnowledgeResponseSchema,
@@ -41,29 +44,30 @@ import {
   AssistantRoleOrderRequestSchema,
   AssistantRoleOrderResponseSchema,
   AssistantRoleResponseSchema,
-  AssistantRolesResponseSchema,
   AssistantRoleSelectionRequestSchema,
   AssistantRoleSelectionResponseSchema,
+  AssistantRolesResponseSchema,
   AssistantRoleUpdateRequestSchema,
   KnowledgeCollectionCreateRequestSchema,
   KnowledgeCollectionIdParamsSchema,
   KnowledgeCollectionResponseSchema,
   KnowledgeCollectionsResponseSchema,
   KnowledgeCollectionUpdateRequestSchema,
+  KnowledgeExportTaskActionResponseSchema,
   KnowledgeExportTaskCreateRequestSchema,
   KnowledgeExportTaskDetailResponseSchema,
   KnowledgeExportTaskGenerateRequestSchema,
   KnowledgeExportTaskGenerateResponseSchema,
   KnowledgeExportTaskIdParamsSchema,
   KnowledgeExportTaskResponseSchema,
-  KnowledgeExportTaskUpdateRequestSchema,
   KnowledgeExportTasksQuerySchema,
   KnowledgeExportTasksResponseSchema,
+  KnowledgeExportTaskUpdateRequestSchema,
   KnowledgeImportResponseSchema,
   KnowledgeSourceIdParamsSchema,
   KnowledgeSourceResponseSchema,
-  KnowledgeSourceUpdateRequestSchema,
   KnowledgeSourcesResponseSchema,
+  KnowledgeSourceUpdateRequestSchema,
   KnowledgeTemplateIdParamsSchema,
   KnowledgeTemplateResponseSchema,
   KnowledgeTemplatesResponseSchema,
@@ -452,6 +456,54 @@ export const knowledgeRoutes = new Elysia({ prefix: "/api/kb" })
       body: KnowledgeExportTaskUpdateRequestSchema,
       params: KnowledgeExportTaskIdParamsSchema,
       response: KnowledgeExportTaskDetailResponseSchema,
+    },
+  )
+  .post(
+    "/export-tasks/:taskId/retry",
+    async ({ headers, params }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success({
+        task: await retryKnowledgeExportTaskInAdmin({
+          userId: session.user.id,
+          taskId: params.taskId,
+        }),
+      });
+    },
+    {
+      params: KnowledgeExportTaskIdParamsSchema,
+      response: KnowledgeExportTaskDetailResponseSchema,
+    },
+  )
+  .post(
+    "/export-tasks/:taskId/cancel",
+    async ({ headers, params }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success({
+        task: await cancelKnowledgeExportTaskInAdmin({
+          userId: session.user.id,
+          taskId: params.taskId,
+        }),
+      });
+    },
+    {
+      params: KnowledgeExportTaskIdParamsSchema,
+      response: KnowledgeExportTaskDetailResponseSchema,
+    },
+  )
+  .delete(
+    "/export-tasks/:taskId",
+    async ({ headers, params }) => {
+      const session = await requireAuthenticatedSession(headers.authorization);
+      return success(
+        await deleteKnowledgeExportTaskInAdmin({
+          userId: session.user.id,
+          taskId: params.taskId,
+        }),
+      );
+    },
+    {
+      params: KnowledgeExportTaskIdParamsSchema,
+      response: KnowledgeExportTaskActionResponseSchema,
     },
   )
   .post(
