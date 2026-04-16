@@ -96,7 +96,7 @@ router.afterEach((to) => {
   document.title =
     typeof to.meta.title === "string" && to.meta.title.trim()
       ? to.meta.title
-      : "知识库";
+      : "数据局政务智能体";
 });
 
 export { router };

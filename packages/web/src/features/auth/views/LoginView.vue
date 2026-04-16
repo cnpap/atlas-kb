@@ -20,7 +20,7 @@
   const password = ref("");
   const error = ref("");
 
-  const systemName = import.meta.env.VITE_APP_TITLE || "数据局知识管理系统";
+  const systemName = import.meta.env.VITE_APP_TITLE || "数据局政务智能体";
 
   const nextPath = computed(() => {
     const next = route.query.next;
@@ -79,7 +79,7 @@
         <p
           class="text-lg xl:text-xl text-[var(--text-muted)] leading-relaxed max-w-lg"
         >
-          集中管理单位内部的规章制度、学习材料与业务文档，为您提供安全、便捷的搜索与问答服务。
+          围绕单位内部资料、业务规则与办理流程，提供公文写作、智能分办和资料问答支持。
         </p>
       </div>
 
@@ -97,7 +97,7 @@
             统一资料库
           </h3>
           <p class="text-[14px] text-[var(--text-muted)] leading-relaxed">
-            所有文件统一存放，分类清晰，不用担心找不到资料。
+            内部资料、制度文件和业务材料统一管理，便于查找和引用。
           </p>
         </div>
         <div class="group">
@@ -107,10 +107,10 @@
             02
           </div>
           <h3 class="text-[16px] font-medium text-[var(--text-strong)] mb-2">
-            快捷搜索
+            公文写作
           </h3>
           <p class="text-[14px] text-[var(--text-muted)] leading-relaxed">
-            输入关键词，系统直接帮您定位到具体的文件和段落。
+            根据资料和业务要求，辅助起草、梳理和完善公文内容。
           </p>
         </div>
         <div class="group">
@@ -120,10 +120,10 @@
             03
           </div>
           <h3 class="text-[16px] font-medium text-[var(--text-strong)] mb-2">
-            智能问答
+            智能分办
           </h3>
           <p class="text-[14px] text-[var(--text-muted)] leading-relaxed">
-            向系统提问业务问题，系统会根据内部资料自动总结答案。
+            结合事项内容和资料依据，辅助判断受理方向和协同部门。
           </p>
         </div>
       </div>

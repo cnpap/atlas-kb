@@ -1177,6 +1177,8 @@ describe.serial("@atlas-kb/mastra workspace search flow", () => {
         "如果你还没有查看工具结果，不要直接下结论",
       );
       expect(String(text)).toContain("请查看文件列表");
+      expect(String(text)).toContain("公文写作");
+      expect(String(text)).toContain("智能分办");
       expect(String(text)).toContain("不要主动暴露内部标识、集合 id");
       expect(String(text)).not.toContain(
         '当前绑定的资料文件夹是 "research-space"',
